@@ -24,6 +24,7 @@ type AdminMessage struct {
 	SourceChatID     int64
 	CopiedFromChatID int64
 	CopyMessageIDs   []int
+	Buttons          [][]Button
 }
 
 // Button is one inline keyboard button (text + opaque callback data ≤64 bytes).

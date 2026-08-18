@@ -92,6 +92,13 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	// shutdownCtx names ctx distinctly for use inside the default handler
+	// below, whose own ctx parameter shadows this one: callback jobs run
+	// asynchronously via the sequencer, after the handler call that
+	// submitted them returns, so they must observe process shutdown
+	// (shutdownCtx) rather than the update-scoped ctx the library hands the
+	// handler, which the library may treat as done once the handler returns.
+	shutdownCtx := ctx
 
 	go func() {
 		if err := cfgStore.Watch(ctx, cfgPath); err != nil {
@@ -140,14 +147,27 @@ func main() {
 				handler.OnEditedMessage(ctx, update.ID, telegram.ToDomainMessage(update.EditedMessage))
 			case update.CallbackQuery != nil:
 				cb := update.CallbackQuery
-				err := adminHandler.Handle(ctx, admin.Callback{
-					ID:        cb.ID,
-					Data:      cb.Data,
-					PresserID: cb.From.ID,
+				// Offload onto the sequencer: WithNotAsyncHandlers runs this
+				// inline on the single poll-consumer goroutine, and
+				// adminHandler.Handle does DB + GetChatAdministrators
+				// (network) + AnswerCallback work that would otherwise stall
+				// polling. All admin callbacks share one bucket (cfg's admin
+				// chat id) — fine since they're low volume; seq.Wait() at
+				// shutdown drains this job like any other. Use shutdownCtx
+				// (the process's shutdown-aware context, same one passed to
+				// handler.SetContext), not the per-update ctx the library
+				// hands this closure, since the job runs after this handler
+				// call returns.
+				seq.Submit(cfgStore.Current().AdminChatID, func() {
+					err := adminHandler.Handle(shutdownCtx, admin.Callback{
+						ID:        cb.ID,
+						Data:      cb.Data,
+						PresserID: cb.From.ID,
+					})
+					if err != nil {
+						log.Printf("admin callback: %v", err)
+					}
 				})
-				if err != nil {
-					log.Printf("admin callback: %v", err)
-				}
 			}
 		}),
 	}
@@ -159,6 +179,7 @@ func main() {
 
 	livePort := telegram.NewLivePort(b, disp, priorityFor)
 	machine := incident.New(livePort, db, cfg.AdminChatID)
+	machine.SetButtons(admin.Buttons)
 	handler = telegram.NewHandler(db, seq, cfgStore, machine)
 	handler.SetContext(ctx) // so an album flush triggered off-request during shutdown observes cancellation instead of blocking forever
 	adminHandler = admin.NewHandler(livePort, db, operatorSet(cfg))

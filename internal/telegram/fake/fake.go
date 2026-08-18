@@ -18,6 +18,10 @@ type Fake struct {
 	SendAdminID  int
 	Admins       []telegram.Member
 	BanSenderErr error
+
+	// LastAdmin captures the most recent AdminMessage passed to SendAdmin, so
+	// tests can assert on fields SendAdmin doesn't otherwise record.
+	LastAdmin telegram.AdminMessage
 }
 
 func New() *Fake { return &Fake{} }
@@ -64,7 +68,10 @@ func (f *Fake) RestrictMember(_ context.Context, _, _ int64, _ telegram.Perms, _
 	return nil
 }
 
-func (f *Fake) SendAdmin(_ context.Context, _ int64, _ telegram.AdminMessage) (int, error) {
+func (f *Fake) SendAdmin(_ context.Context, _ int64, msg telegram.AdminMessage) (int, error) {
+	f.mu.Lock()
+	f.LastAdmin = msg
+	f.mu.Unlock()
 	f.log("SendAdmin")
 	return f.SendAdminID, nil
 }

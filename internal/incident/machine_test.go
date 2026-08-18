@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stufently/telegram-antispam/internal/domain"
+	"github.com/stufently/telegram-antispam/internal/telegram"
 	"github.com/stufently/telegram-antispam/internal/telegram/fake"
 )
 
@@ -161,5 +162,19 @@ func TestHardDenyNotifiesAdminOnEvidenceFailure(t *testing.T) {
 	}
 	if !notified {
 		t.Fatalf("hard-deny with failed evidence must still notify admin; calls=%v", f.Calls())
+	}
+}
+
+func TestButtonsAttachedToAdminMessage(t *testing.T) {
+	f := fake.New()
+	m := New(f, &stubRepo{fresh: true}, 999)
+	m.SetButtons(func(key string) [][]telegram.Button {
+		return [][]telegram.Button{{{Text: "FP", Data: "fp:" + key}}}
+	})
+	if err := m.Handle(context.Background(), liveIncident(true)); err != nil { // dry-run: still sends admin
+		t.Fatal(err)
+	}
+	if len(f.LastAdmin.Buttons) == 0 {
+		t.Fatal("admin message should carry action buttons")
 	}
 }

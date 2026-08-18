@@ -26,10 +26,23 @@ type Machine struct {
 	port        telegram.Port
 	repo        Repo
 	adminChatID int64
+
+	// buttonsFor renders the admin action buttons for an incident key. It is
+	// a func rather than a direct import of package admin because package
+	// admin (Handler.dispatch) needs telegram.Port too, and importing it
+	// here would create an import cycle; main wires the real implementation
+	// via SetButtons.
+	buttonsFor func(incidentKey string) [][]telegram.Button
 }
 
 func New(port telegram.Port, repo Repo, adminChatID int64) *Machine {
 	return &Machine{port: port, repo: repo, adminChatID: adminChatID}
+}
+
+// SetButtons installs a provider that renders the admin action buttons for an
+// incident key. If unset, the admin message has no buttons.
+func (m *Machine) SetButtons(fn func(incidentKey string) [][]telegram.Button) {
+	m.buttonsFor = fn
 }
 
 func (m *Machine) Handle(ctx context.Context, inc domain.Incident) error {
@@ -55,23 +68,33 @@ func (m *Machine) Handle(ctx context.Context, inc domain.Incident) error {
 		}
 		// hard deny: proceed without copied evidence but notify admins so
 		// they know an action was taken without a copied evidence trail.
-		if _, err := m.port.SendAdmin(ctx, m.adminChatID, telegram.AdminMessage{
-			IncidentKey:      fmt.Sprintf("%d", id),
+		key := fmt.Sprintf("%d", id)
+		msg := telegram.AdminMessage{
+			IncidentKey:      key,
 			SourceChatID:     inc.ChatID,
 			CopiedFromChatID: inc.ChatID,
 			CopyMessageIDs:   nil,
 			Text:             fmt.Sprintf("evidence copy failed: %v; %s", copyErr, inc.Verdict.Reason),
-		}); err != nil {
+		}
+		if m.buttonsFor != nil {
+			msg.Buttons = m.buttonsFor(key)
+		}
+		if _, err := m.port.SendAdmin(ctx, m.adminChatID, msg); err != nil {
 			return fmt.Errorf("send admin: %w", err)
 		}
 	} else {
-		if _, err := m.port.SendAdmin(ctx, m.adminChatID, telegram.AdminMessage{
-			IncidentKey:      fmt.Sprintf("%d", id),
+		key := fmt.Sprintf("%d", id)
+		msg := telegram.AdminMessage{
+			IncidentKey:      key,
 			SourceChatID:     inc.ChatID,
 			CopiedFromChatID: inc.ChatID,
 			CopyMessageIDs:   adminIDs,
 			Text:             inc.Verdict.Reason,
-		}); err != nil {
+		}
+		if m.buttonsFor != nil {
+			msg.Buttons = m.buttonsFor(key)
+		}
+		if _, err := m.port.SendAdmin(ctx, m.adminChatID, msg); err != nil {
 			return fmt.Errorf("send admin: %w", err)
 		}
 		if err := m.repo.AddEvidence(id, m.adminChatID, adminIDs); err != nil {

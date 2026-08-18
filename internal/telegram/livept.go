@@ -185,7 +185,11 @@ func (p *LivePort) RestrictMember(ctx context.Context, chat, user int64, perms P
 
 func (p *LivePort) SendAdmin(ctx context.Context, adminChat int64, msg AdminMessage) (int, error) {
 	return submitSync(ctx, p.disp, adminChat, p.prio("SendAdmin"), func(ctx context.Context) (int, error) {
-		res, err := p.b.SendMessage(ctx, &bot.SendMessageParams{ChatID: adminChat, Text: msg.Text})
+		params := &bot.SendMessageParams{ChatID: adminChat, Text: msg.Text}
+		if len(msg.Buttons) > 0 {
+			params.ReplyMarkup = models.InlineKeyboardMarkup{InlineKeyboard: toInlineKeyboard(msg.Buttons)}
+		}
+		res, err := p.b.SendMessage(ctx, params)
 		if err != nil {
 			return 0, mapRetry(err)
 		}

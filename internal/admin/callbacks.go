@@ -110,6 +110,12 @@ func (h *Handler) Authorized(ctx context.Context, sourceChatID, presserID int64)
 // incident's source chat, RBAC-check, dispatch, answer. No action branch
 // below the Authorized call may run when it returns false.
 func (h *Handler) Handle(ctx context.Context, cb Callback) error {
+	if h.db == nil {
+		// Defensive: the real wiring always passes a live db. Answer rather
+		// than dispatch against a nil store, which would panic.
+		return h.port.AnswerCallback(ctx, cb.ID, "admin store unavailable")
+	}
+
 	act, key, ok := ParseCallback(cb.Data)
 	if !ok {
 		return h.port.AnswerCallback(ctx, cb.ID, "invalid callback")

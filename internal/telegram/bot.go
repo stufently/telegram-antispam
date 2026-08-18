@@ -180,7 +180,11 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message) {
 
 	dryRun := cfg.Chats.StartInDryRun
 	if row, found, err := h.db.GetChat(first.ChatID); err != nil {
+		// Fail closed: an unreadable Enabled/DryRun gate must not fall
+		// through to acting with a guessed default (which could act live
+		// against a chat the admin actually disabled or is running dry-run).
 		log.Printf("lookup chat %d dry-run: %v", first.ChatID, err)
+		return
 	} else if found {
 		if !row.Enabled {
 			// An admin explicitly disabled this chat (DisableChat); an
