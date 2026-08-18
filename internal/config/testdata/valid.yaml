@@ -1,0 +1,7 @@
+bot_token: "12345:AA"
+admin_chat_id: -1009999
+action: delete_mute
+chats:
+  mode: auto
+  start_in_dry_run: true
+  allowlist: []
