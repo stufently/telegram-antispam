@@ -37,3 +37,29 @@ func TestFakeImplementsPortAndLogsOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestFakeM2Methods(t *testing.T) {
+	f := New()
+	f.Admins = []telegram.Member{{UserID: 5, Status: "administrator"}}
+	ctx := context.Background()
+	if err := f.BanSenderChat(ctx, -100123, -100888); err != nil {
+		t.Fatal(err)
+	}
+	admins, err := f.GetChatAdministrators(ctx, -100123)
+	if err != nil || len(admins) != 1 || admins[0].UserID != 5 {
+		t.Fatalf("admins=%v err=%v", admins, err)
+	}
+	if err := f.AnswerCallback(ctx, "cb1", "done"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.EditAdminMarkup(ctx, 999, 7, [][]telegram.Button{{{Text: "x", Data: "d"}}}); err != nil {
+		t.Fatal(err)
+	}
+	got := f.Calls()
+	want := []string{"BanSenderChat", "GetChatAdministrators", "AnswerCallback", "EditAdminMarkup"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("call %d=%q want %q (all=%v)", i, got[i], want[i], got)
+		}
+	}
+}

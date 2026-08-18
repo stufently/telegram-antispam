@@ -58,3 +58,13 @@ func (db *DB) AddEvidence(incidentID int64, adminChatID int64, adminMessageIDs [
 		return nil
 	})
 }
+
+// GetIncidentChat returns the source chat_id for an incident. It lets the
+// admin callback handler resolve RBAC scope (which chat's admin list to
+// check) from an opaque incident key without carrying the chat id on every
+// callback payload.
+func (db *DB) GetIncidentChat(id int64) (int64, error) {
+	var chatID int64
+	err := db.Read().QueryRow("SELECT chat_id FROM incidents WHERE id=?", id).Scan(&chatID)
+	return chatID, err
+}
