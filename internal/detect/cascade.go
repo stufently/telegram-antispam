@@ -68,12 +68,14 @@ func (c Cascade) Decide(m domain.Message, edited bool) (domain.Verdict, bool) {
 	trusted := IsTrusted(c.Trust, m.ChatID, m.Sender.UserID, c.TrustThreshold)
 
 	// Blocklist stage: a hit on the global banlist is an authoritative,
-	// cheap (local lookup) signal, checked ahead of the more expensive
-	// rules/behavior/Bayes stages. Only applies to non-trusted senders —
-	// established local members are exempt, consistent with the trust
-	// gate used by the other opt-in stages below. Admins are already
-	// immune via the gate above.
-	if c.BlocklistEnabled && !trusted && c.Blocklist != nil && c.Blocklist.Listed(m.Sender.UserID) {
+	// cheap (local lookup) hard signal, checked ahead of the more expensive
+	// rules/behavior/Bayes stages. Per spec §5.2 the blocklist applies to
+	// EVERYONE regardless of trust — trust only skips the expensive semantic
+	// stages, it never grants immunity; this is the explicit defense against
+	// warmed-up and later-hijacked accounts (a locally-trusted account that
+	// is subsequently sold and globally CAS/LOLS-banned must still be caught).
+	// Admins are already immune via the §4 gate above, which runs first.
+	if c.BlocklistEnabled && c.Blocklist != nil && c.Blocklist.Listed(m.Sender.UserID) {
 		return c.actionable(domain.Signal{Name: "blocklist"}), true
 	}
 

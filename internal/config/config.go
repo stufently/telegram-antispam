@@ -324,13 +324,17 @@ func (c *Config) applyBlocklistDefaults() {
 	if c.Blocklist.CasFullURL == "" {
 		c.Blocklist.CasFullURL = "https://api.cas.chat/export.csv"
 	}
-	if c.Blocklist.FullRefresh == 0 {
+	// Intervals are clamped at <= 0 (not just == 0): a negative full/delta
+	// interval would panic time.NewTicker inside the syncer goroutine and
+	// crash the process, and a non-positive HTTP timeout would disable the
+	// fetch deadline. A non-positive value is treated as unset → default.
+	if c.Blocklist.FullRefresh <= 0 {
 		c.Blocklist.FullRefresh = Duration(6 * time.Hour)
 	}
-	if c.Blocklist.DeltaRefresh == 0 {
+	if c.Blocklist.DeltaRefresh <= 0 {
 		c.Blocklist.DeltaRefresh = Duration(1 * time.Hour)
 	}
-	if c.Blocklist.HTTPTimeout == 0 {
+	if c.Blocklist.HTTPTimeout <= 0 {
 		c.Blocklist.HTTPTimeout = Duration(30 * time.Second)
 	}
 }

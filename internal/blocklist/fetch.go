@@ -45,6 +45,10 @@ func FetchIDs(ctx context.Context, client *http.Client, url string) ([]int64, er
 	if err != nil {
 		return nil, fmt.Errorf("blocklist fetch %s: %w", url, err)
 	}
+	// Set an explicit User-Agent: some CDNs in front of the blocklist hosts
+	// reject the default Go-http-client UA (which would come back as a non-2xx
+	// error, or worse a 200 challenge page that parses to zero ids).
+	req.Header.Set("User-Agent", "telegram-antispam-blocklist/1.0 (+https://github.com/stufently/telegram-antispam)")
 
 	resp, err := client.Do(req)
 	if err != nil {

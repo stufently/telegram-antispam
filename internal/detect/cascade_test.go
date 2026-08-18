@@ -238,7 +238,7 @@ func (f fakeBlocklist) Listed(id int64) bool { return f.ids[id] }
 // stage: a global-banlist hit is authoritative but only applies to
 // non-trusted, non-admin senders, consistent with the trust gate and the
 // §4 admin-immunity gate that runs ahead of it.
-func TestCascadeDecide_BlocklistUntrustedOnly(t *testing.T) {
+func TestCascadeDecide_BlocklistAppliesToEveryone(t *testing.T) {
 	const chatID = int64(1)
 
 	baseCascade := func() Cascade {
@@ -267,11 +267,16 @@ func TestCascadeDecide_BlocklistUntrustedOnly(t *testing.T) {
 		t.Errorf("expected reason blocklist, got %q", v.Reason)
 	}
 
-	// Same listed sender but trusted: blocklist stage skipped.
+	// Same listed sender but TRUSTED: still flagged. Spec §5.2 — trust never
+	// grants blocklist immunity (the warmed-up/hijacked-account defense).
 	c2 := baseCascade()
 	c2.Trust = &fakeTrustSource{counts: map[[2]int64]int{{chatID, 2}: 10}}
-	if v2, actionable2 := c2.Decide(m, false); actionable2 {
-		t.Fatalf("expected trusted listed sender to be skipped, got %+v", v2)
+	v2, actionable2 := c2.Decide(m, false)
+	if !actionable2 {
+		t.Fatalf("expected trusted listed sender to STILL be flagged (spec §5.2), got %+v", v2)
+	}
+	if v2.Reason != "blocklist" {
+		t.Errorf("expected reason blocklist for trusted listed sender, got %q", v2.Reason)
 	}
 
 	// Listed sender who is also an admin: admin-immunity gate wins.

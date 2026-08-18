@@ -163,3 +163,47 @@ func TestRunBootstrapsAndStopsOnCancel(t *testing.T) {
 		t.Fatal("Run() did not return after ctx cancel")
 	}
 }
+
+// TestRefreshFullEmptyBothKeepsLastGood guards the CDN-challenge footgun: a
+// 2xx response that parses to zero ids must be treated as a FAILURE, never a
+// successful empty list — otherwise both sources returning empty would swap
+// in an empty set and silently wipe the last-good snapshot (total, silent
+// loss of protection). The real LOLS/CAS full lists are never empty.
+func TestRefreshFullEmptyBothKeepsLastGood(t *testing.T) {
+	b := New()
+	b.cfg = Config{LolsFullURL: "lols", CasFullURL: "cas"}
+	b.Swap(BuildSet([]int64{111, 222}))
+
+	// Both sources succeed at the HTTP level but parse to zero ids.
+	b.fetch = scriptedFetch(map[string][]int64{"lols": {}, "cas": {}}, nil)
+
+	err := b.RefreshFull(context.Background())
+	if err == nil {
+		t.Fatal("RefreshFull() error = nil, want non-nil when both sources return empty")
+	}
+	if !b.Listed(111) || !b.Listed(222) || b.Len() != 2 {
+		t.Fatalf("empty-both refresh wiped snapshot (Len=%d); fail-open violated", b.Len())
+	}
+}
+
+// TestRefreshFullOneEmptyOtherRealSwapsToReal: one source empty (treated as
+// failure), the other returns a real list ⇒ swap to the real one, with an
+// informational error for the empty source.
+func TestRefreshFullOneEmptyOtherRealSwapsToReal(t *testing.T) {
+	b := New()
+	b.cfg = Config{LolsFullURL: "lols", CasFullURL: "cas"}
+	b.Swap(BuildSet([]int64{999}))
+
+	b.fetch = scriptedFetch(map[string][]int64{"lols": {}, "cas": {7, 8}}, nil)
+
+	err := b.RefreshFull(context.Background())
+	if err == nil {
+		t.Fatal("expected informational error for the empty source")
+	}
+	if !b.Listed(7) || !b.Listed(8) {
+		t.Fatal("expected snapshot to contain the real (cas) ids")
+	}
+	if b.Listed(999) {
+		t.Error("prior-only id should be gone after a partial full refresh swap")
+	}
+}

@@ -3,6 +3,7 @@ package blocklist
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 )
@@ -21,22 +22,31 @@ func (b *Blocklist) RefreshFull(ctx context.Context) error {
 	var lists [][]int64
 	var errs []error
 
-	lolsIDs, lolsErr := b.fetch(ctx, b.cfg.LolsFullURL)
-	if lolsErr != nil {
-		errs = append(errs, lolsErr)
-	} else {
-		lists = append(lists, lolsIDs)
-	}
-
-	casIDs, casErr := b.fetch(ctx, b.cfg.CasFullURL)
-	if casErr != nil {
-		errs = append(errs, casErr)
-	} else {
-		lists = append(lists, casIDs)
+	for _, src := range []struct{ name, url string }{
+		{"lols", b.cfg.LolsFullURL},
+		{"cas", b.cfg.CasFullURL},
+	} {
+		ids, err := b.fetch(ctx, src.url)
+		switch {
+		case err != nil:
+			errs = append(errs, fmt.Errorf("%s: %w", src.name, err))
+		case len(ids) == 0:
+			// A 2xx response that parses to zero ids (e.g. a CDN challenge
+			// or maintenance HTML page served with status 200) is treated
+			// as a FAILURE, not a successful empty list. The real LOLS/CAS
+			// full lists are never empty (millions of ids); letting an empty
+			// result through would BuildSet an empty set and silently wipe
+			// the last-good snapshot — a total, silent loss of protection.
+			// (The 1h delta legitimately can be empty, so this guard lives
+			// only in RefreshFull, never in RefreshDelta.)
+			errs = append(errs, fmt.Errorf("%s: empty list from %s (treated as failure)", src.name, src.url))
+		default:
+			lists = append(lists, ids)
+		}
 	}
 
 	if len(lists) == 0 {
-		// Both fetches failed: keep the last-good snapshot.
+		// Every source failed or returned empty: keep the last-good snapshot.
 		return errors.Join(errs...)
 	}
 
