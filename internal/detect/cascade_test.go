@@ -234,10 +234,11 @@ type fakeBlocklist struct{ ids map[int64]bool }
 
 func (f fakeBlocklist) Listed(id int64) bool { return f.ids[id] }
 
-// TestCascadeDecide_BlocklistUntrustedOnly guards the blocklist cascade
-// stage: a global-banlist hit is authoritative but only applies to
-// non-trusted, non-admin senders, consistent with the trust gate and the
-// §4 admin-immunity gate that runs ahead of it.
+// TestCascadeDecide_BlocklistAppliesToEveryone guards the blocklist cascade
+// stage: a global-banlist hit is authoritative and applies to EVERYONE
+// regardless of trust (spec §5.2 — trust never grants blocklist immunity;
+// the warmed-up/hijacked-account defense). Only current admins are exempt,
+// via the §4 admin-immunity gate that runs ahead of it.
 func TestCascadeDecide_BlocklistAppliesToEveryone(t *testing.T) {
 	const chatID = int64(1)
 
