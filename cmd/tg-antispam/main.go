@@ -74,6 +74,23 @@ func (c *chatLimiters) get(chat int64) *rate.Limiter {
 	return l
 }
 
+// bayesAdapter adapts *store.DB to detect.BayesSource, converting the
+// store's 4-int BayesTotals return into the detect.BayesCounts shape the
+// cascade's Bayes stage expects.
+type bayesAdapter struct{ db *store.DB }
+
+func (a bayesAdapter) TokenCounts(scope string, tokens []string) (map[string]int, map[string]int, error) {
+	return a.db.TokenCounts(scope, tokens)
+}
+
+func (a bayesAdapter) Totals(scope string) (detect.BayesCounts, error) {
+	sd, hd, st, ht, err := a.db.BayesTotals(scope)
+	if err != nil {
+		return detect.BayesCounts{}, err
+	}
+	return detect.BayesCounts{SpamDocs: sd, HamDocs: hd, SpamTokenTotal: st, HamTokenTotal: ht}, nil
+}
+
 func main() {
 	// Handle import subcommand if present
 	if len(os.Args) > 1 && os.Args[1] == "import" {
@@ -233,10 +250,15 @@ func main() {
 			BlockLinksForUntrusted: *cfg.Detection.Rules.BlockLinksForUntrusted,
 			BannedDomains:          cfg.Detection.Rules.BannedDomains,
 		},
-		Behavior:       behaviorCfg,
-		TrustThreshold: *cfg.Detection.TrustThreshold,
-		DefaultAction:  cfg.Action,
-		DefaultScope:   domain.ScopeGlobal,
+		Behavior:        behaviorCfg,
+		TrustThreshold:  *cfg.Detection.TrustThreshold,
+		DefaultAction:   cfg.Action,
+		DefaultScope:    domain.ScopeGlobal,
+		Bayes:           bayesAdapter{db: db},
+		BayesScope:      "global",
+		BayesThreshold:  *cfg.Detection.BayesThreshold,
+		BayesVocabGuess: cfg.Detection.BayesVocabGuess,
+		BayesEnabled:    *cfg.Detection.BayesEnabled,
 	}
 	handler.SetDecide(func(m domain.Message) (domain.Verdict, bool) {
 		return cascade.Decide(m, false)
