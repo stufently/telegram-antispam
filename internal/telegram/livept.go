@@ -224,11 +224,15 @@ func memberFromChatMember(cm models.ChatMember) Member {
 	switch cm.Type {
 	case models.ChatMemberTypeOwner:
 		if cm.Owner != nil && cm.Owner.User != nil {
-			return memberFromUser(*cm.Owner.User, string(cm.Owner.Status))
+			m := memberFromUser(*cm.Owner.User, string(cm.Owner.Status))
+			m.CustomTitle = cm.Owner.CustomTitle
+			return m
 		}
 	case models.ChatMemberTypeAdministrator:
 		if cm.Administrator != nil {
-			return memberFromUser(cm.Administrator.User, string(cm.Administrator.Status))
+			m := memberFromUser(cm.Administrator.User, string(cm.Administrator.Status))
+			m.CustomTitle = cm.Administrator.CustomTitle
+			return m
 		}
 	case models.ChatMemberTypeMember:
 		if cm.Member != nil && cm.Member.User != nil {
@@ -248,6 +252,14 @@ func memberFromChatMember(cm models.ChatMember) Member {
 		}
 	}
 	return Member{Status: string(cm.Type)}
+}
+
+// MemberFromChatMember flattens a library ChatMember (e.g. a chat_member
+// update's NewChatMember) into the narrow Member type. Exported so the
+// command wiring can build a watch.MemberEvent without importing library
+// internals or duplicating the tagged-union switch.
+func MemberFromChatMember(cm models.ChatMember) Member {
+	return memberFromChatMember(cm)
 }
 
 func memberFromUser(u models.User, status string) Member {
@@ -271,6 +283,23 @@ func (p *LivePort) EditAdminMarkup(ctx context.Context, adminChat int64, message
 			ReplyMarkup: models.InlineKeyboardMarkup{InlineKeyboard: toInlineKeyboard(buttons)},
 		})
 		return mapRetry(err)
+	})
+}
+
+func (p *LivePort) DeleteMessageReaction(ctx context.Context, chat int64, messageID int, userID int64) error {
+	return submitSyncErr(ctx, p.disp, chat, p.prio("DeleteMessageReaction"), func(ctx context.Context) error {
+		_, err := p.b.DeleteMessageReaction(ctx, &bot.DeleteMessageReactionParams{ChatID: chat, MessageID: messageID, UserID: userID})
+		return mapRetry(err)
+	})
+}
+
+func (p *LivePort) SendEphemeral(ctx context.Context, chat, userID int64, text string) (int, error) {
+	return submitSync(ctx, p.disp, chat, p.prio("SendEphemeral"), func(ctx context.Context) (int, error) {
+		msg, err := p.b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chat, ReceiverUserID: userID, Text: text})
+		if err != nil {
+			return 0, mapRetry(err)
+		}
+		return msg.EphemeralMessageID, nil
 	})
 }
 

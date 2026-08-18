@@ -17,11 +17,30 @@ type Fake struct {
 	CopyErr      error
 	SendAdminID  int
 	Admins       []telegram.Member
+	AdminsErr    error
 	BanSenderErr error
+	EphemeralID  int
+	EphemeralErr error
 
 	// LastAdmin captures the most recent AdminMessage passed to SendAdmin, so
 	// tests can assert on fields SendAdmin doesn't otherwise record.
 	LastAdmin telegram.AdminMessage
+
+	// LastReactionDelete captures the most recent args passed to
+	// DeleteMessageReaction, so tests can assert on fields the call log
+	// doesn't otherwise record.
+	LastReactionDelete struct {
+		Chat      int64
+		MessageID int
+		UserID    int64
+	}
+
+	// LastEphemeral captures the most recent args passed to SendEphemeral, so
+	// tests can assert on fields the call log doesn't otherwise record.
+	LastEphemeral struct {
+		Chat, UserID int64
+		Text         string
+	}
 }
 
 func New() *Fake { return &Fake{} }
@@ -83,6 +102,9 @@ func (f *Fake) BanSenderChat(_ context.Context, _, _ int64) error {
 
 func (f *Fake) GetChatAdministrators(_ context.Context, _ int64) ([]telegram.Member, error) {
 	f.log("GetChatAdministrators")
+	if f.AdminsErr != nil {
+		return nil, f.AdminsErr
+	}
 	return f.Admins, nil
 }
 
@@ -94,4 +116,24 @@ func (f *Fake) AnswerCallback(_ context.Context, _, _ string) error {
 func (f *Fake) EditAdminMarkup(_ context.Context, _ int64, _ int, _ [][]telegram.Button) error {
 	f.log("EditAdminMarkup")
 	return nil
+}
+
+func (f *Fake) DeleteMessageReaction(_ context.Context, chat int64, messageID int, userID int64) error {
+	f.mu.Lock()
+	f.LastReactionDelete.Chat = chat
+	f.LastReactionDelete.MessageID = messageID
+	f.LastReactionDelete.UserID = userID
+	f.mu.Unlock()
+	f.log("DeleteMessageReaction")
+	return nil
+}
+
+func (f *Fake) SendEphemeral(_ context.Context, chat, userID int64, text string) (int, error) {
+	f.mu.Lock()
+	f.LastEphemeral.Chat = chat
+	f.LastEphemeral.UserID = userID
+	f.LastEphemeral.Text = text
+	f.mu.Unlock()
+	f.log("SendEphemeral")
+	return f.EphemeralID, f.EphemeralErr
 }

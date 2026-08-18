@@ -63,3 +63,44 @@ func TestFakeM2Methods(t *testing.T) {
 		}
 	}
 }
+
+func TestFakeDeleteMessageReaction(t *testing.T) {
+	f := New()
+	ctx := context.Background()
+	if err := f.DeleteMessageReaction(ctx, 7, 9, 2); err != nil {
+		t.Fatal(err)
+	}
+	got := f.Calls()
+	want := []string{"DeleteMessageReaction"}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("calls=%v want=%v", got, want)
+	}
+	if f.LastReactionDelete.Chat != 7 || f.LastReactionDelete.MessageID != 9 || f.LastReactionDelete.UserID != 2 {
+		t.Fatalf("LastReactionDelete=%+v want {Chat:7 MessageID:9 UserID:2}", f.LastReactionDelete)
+	}
+}
+
+func TestFakeSendEphemeral(t *testing.T) {
+	f := New()
+	f.EphemeralID = 55
+	ctx := context.Background()
+	id, err := f.SendEphemeral(ctx, 7, 2, "hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != f.EphemeralID {
+		t.Fatalf("id=%d want %d", id, f.EphemeralID)
+	}
+	got := f.Calls()
+	want := []string{"SendEphemeral"}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("calls=%v want=%v", got, want)
+	}
+	wantLast := struct {
+		Chat, UserID int64
+		Text         string
+	}{7, 2, "hi"}
+	if f.LastEphemeral != wantLast {
+		t.Fatalf("LastEphemeral=%+v want %+v", f.LastEphemeral, wantLast)
+	}
+}

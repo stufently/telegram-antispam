@@ -110,6 +110,53 @@ type Detection struct {
 	// BayesVocabGuess is the estimated vocabulary size used for Laplace
 	// smoothing (see detect.BayesLogRatio's vocabGuess param). Default: 5000.
 	BayesVocabGuess int `yaml:"bayes_vocab_guess"`
+
+	// FakeAdminEnabled turns the M5 fake-admin detector on or off. *bool
+	// for the usual nil-vs-false reason: an explicit "false" must not be
+	// re-promoted to the default "true". Default: true.
+	FakeAdminEnabled *bool `yaml:"fake_admin_enabled"`
+	// FakeAdminMaxDistance is the maximum edit distance between a
+	// display name and a trusted admin name for the fake-admin detector
+	// to flag it as an impersonation attempt. A plain int (not a
+	// pointer): 0 is not a meaningful configuration (it would only match
+	// identical strings, which isn't a useful "unset vs disabled"
+	// distinction here), so the zero value doubles as "unset" and gets
+	// the default. Default: 1.
+	FakeAdminMaxDistance int `yaml:"fake_admin_max_distance"`
+	// FakeAdminSuspiciousTags is the list of substrings in a display
+	// name (e.g. "admin", "support") that the fake-admin detector treats
+	// as suspicious. nil (key absent from YAML) means "unset" and gets
+	// the default list; an explicit empty list in YAML ([]) means
+	// "disable the suspicious-tag check" and is preserved as empty, not
+	// re-defaulted — a YAML [] unmarshals to a non-nil empty slice, so
+	// applyDetectionDefaults can tell the two apart with a nil check.
+	// Default: ["admin", "support", "verified", "moderator"].
+	FakeAdminSuspiciousTags []string `yaml:"fake_admin_suspicious_tags"`
+	// AdminCacheTTLSeconds is how long the fake-admin detector caches the
+	// chat's real admin list before refreshing it, in seconds. A plain
+	// int (not a pointer): 0 is not a meaningful TTL (it would disable
+	// caching in a way nobody would configure on purpose), so the zero
+	// value doubles as "unset" and gets the default. Default: 300.
+	AdminCacheTTLSeconds int `yaml:"admin_cache_ttl_seconds"`
+
+	// ReactionCleanupEnabled turns the M5 reaction-cleanup feature on or
+	// off. *bool for the usual nil-vs-false reason: an explicit "false"
+	// must not be re-promoted to the default "true". Default: true.
+	ReactionCleanupEnabled *bool `yaml:"reaction_cleanup_enabled"`
+
+	// EphemeralNoticeEnabled turns the M5 ephemeral moderation-notice
+	// feature on or off. *bool for the usual nil-vs-false reason, even
+	// though the default itself is false here: an explicit "true" must
+	// not be left indistinguishable from "unset" (both would otherwise
+	// read as the zero value). Default: false — off by default, since
+	// delivery to a chat isn't guaranteed and the notice text is
+	// chat-specific (see EphemeralNoticeText).
+	EphemeralNoticeEnabled *bool `yaml:"ephemeral_notice_enabled"`
+	// EphemeralNoticeText is the text of the ephemeral moderation notice
+	// posted when EphemeralNoticeEnabled is true. Plain string: there is
+	// no meaningful distinction between "unset" and "" here, since an
+	// empty notice text is simply "no notice to show". Default: "".
+	EphemeralNoticeText string `yaml:"ephemeral_notice_text"`
 }
 
 type Config struct {
@@ -143,15 +190,19 @@ func Parse(b []byte) (*Config, error) {
 // applyDetectionDefaults fills in sane defaults for any Detection field left
 // unset in the YAML. Pointer fields (TrustThreshold, DupThreshold,
 // ShortLen, ShortFloodThreshold, BlockLinksForUntrusted, BayesEnabled,
-// BayesThreshold) are treated as unset only when nil, so an explicit "0"
-// (or "false") in the config file is always honored rather than clobbered
-// — 0 is a documented, meaningful value for the threshold fields (see
-// DetectionBehavior and Detection docs). Duration window fields are
-// treated as unset at their zero value, since a 0 window is not a
-// documented "disable" and isn't a value anyone would configure on
-// purpose. BayesVocabGuess is likewise treated as unset at its zero
-// value, since 0 is not a meaningful vocabulary-size guess (see Detection
-// doc).
+// BayesThreshold, FakeAdminEnabled, ReactionCleanupEnabled,
+// EphemeralNoticeEnabled) are treated as unset only when nil, so an
+// explicit "0" (or "false"/"true") in the config file is always honored
+// rather than clobbered — 0 is a documented, meaningful value for the
+// threshold fields (see DetectionBehavior and Detection docs). Duration
+// window fields are treated as unset at their zero value, since a 0
+// window is not a documented "disable" and isn't a value anyone would
+// configure on purpose. BayesVocabGuess, FakeAdminMaxDistance, and
+// AdminCacheTTLSeconds are likewise treated as unset at their zero value,
+// since 0 is not a meaningful configuration for any of them (see
+// Detection doc). FakeAdminSuspiciousTags is treated as unset only when
+// nil, so an explicit empty list ([]) is preserved rather than
+// re-defaulted (see Detection doc).
 func (c *Config) applyDetectionDefaults() {
 	if c.Detection.TrustThreshold == nil {
 		def := 5
@@ -193,6 +244,29 @@ func (c *Config) applyDetectionDefaults() {
 	if c.Detection.BayesVocabGuess == 0 {
 		c.Detection.BayesVocabGuess = 5000
 	}
+	if c.Detection.FakeAdminEnabled == nil {
+		def := true
+		c.Detection.FakeAdminEnabled = &def
+	}
+	if c.Detection.FakeAdminMaxDistance == 0 {
+		c.Detection.FakeAdminMaxDistance = 1
+	}
+	if c.Detection.FakeAdminSuspiciousTags == nil {
+		c.Detection.FakeAdminSuspiciousTags = []string{"admin", "support", "verified", "moderator"}
+	}
+	if c.Detection.AdminCacheTTLSeconds == 0 {
+		c.Detection.AdminCacheTTLSeconds = 300
+	}
+	if c.Detection.ReactionCleanupEnabled == nil {
+		def := true
+		c.Detection.ReactionCleanupEnabled = &def
+	}
+	if c.Detection.EphemeralNoticeEnabled == nil {
+		def := false
+		c.Detection.EphemeralNoticeEnabled = &def
+	}
+	// EphemeralNoticeText defaults to "", which is already the zero
+	// value, so there is nothing to fill in.
 }
 
 func (c *Config) Validate() error {

@@ -67,6 +67,14 @@ CREATE TABLE IF NOT EXISTS bayes_totals (
 	tokens INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY(scope, label)
 );
+CREATE TABLE IF NOT EXISTS user_identity (
+	chat_id      INTEGER NOT NULL,
+	user_id      INTEGER NOT NULL,
+	username     TEXT    NOT NULL DEFAULT '',
+	display_name TEXT    NOT NULL DEFAULT '',
+	updated_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+	PRIMARY KEY(chat_id, user_id)
+);
 `
 
 // Migrate creates all tables if absent, then applies any additive column

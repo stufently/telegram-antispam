@@ -165,6 +165,78 @@ func TestHardDenyNotifiesAdminOnEvidenceFailure(t *testing.T) {
 	}
 }
 
+func TestEphemeralNoticeOnLiveSanction(t *testing.T) {
+	f := fake.New()
+	m := New(f, &stubRepo{fresh: true}, 999)
+	m.EphemeralNotice = true
+	m.EphemeralText = "removed pending review"
+	if err := m.Handle(context.Background(), liveIncident(false)); err != nil {
+		t.Fatal(err)
+	}
+	calls := f.Calls()
+	idx := map[string]int{}
+	count := map[string]int{}
+	for i, c := range calls {
+		count[c]++
+		if _, ok := idx[c]; !ok {
+			idx[c] = i
+		}
+	}
+	if count["SendEphemeral"] != 1 {
+		t.Fatalf("SendEphemeral called %d times, want 1; calls=%v", count["SendEphemeral"], calls)
+	}
+	if !(idx["DeleteMessages"] < idx["SendEphemeral"]) {
+		t.Fatalf("ephemeral notice must follow delete; calls=%v", calls)
+	}
+	want := struct {
+		Chat, UserID int64
+		Text         string
+	}{Chat: -100123, UserID: 7, Text: "removed pending review"}
+	if f.LastEphemeral.Chat != want.Chat || f.LastEphemeral.UserID != want.UserID || f.LastEphemeral.Text != want.Text {
+		t.Fatalf("LastEphemeral = %+v, want %+v", f.LastEphemeral, want)
+	}
+}
+
+func TestEphemeralNoticeSkippedOnDryRun(t *testing.T) {
+	f := fake.New()
+	m := New(f, &stubRepo{fresh: true}, 999)
+	m.EphemeralNotice = true
+	m.EphemeralText = "removed pending review"
+	if err := m.Handle(context.Background(), liveIncident(true)); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range f.Calls() {
+		if c == "SendEphemeral" {
+			t.Fatalf("dry-run must not send ephemeral notice; calls=%v", f.Calls())
+		}
+	}
+}
+
+func TestEphemeralNoticeSkippedWhenDisabled(t *testing.T) {
+	f := fake.New()
+	m := New(f, &stubRepo{fresh: true}, 999)
+	// EphemeralNotice defaults to false.
+	if err := m.Handle(context.Background(), liveIncident(false)); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range f.Calls() {
+		if c == "SendEphemeral" {
+			t.Fatalf("disabled ephemeral notice must not be sent; calls=%v", f.Calls())
+		}
+	}
+}
+
+func TestEphemeralNoticeErrorIsBestEffort(t *testing.T) {
+	f := fake.New()
+	f.EphemeralErr = errors.New("send failed")
+	m := New(f, &stubRepo{fresh: true}, 999)
+	m.EphemeralNotice = true
+	m.EphemeralText = "removed pending review"
+	if err := m.Handle(context.Background(), liveIncident(false)); err != nil {
+		t.Fatalf("ephemeral notice error must not fail Handle, got %v", err)
+	}
+}
+
 func TestButtonsAttachedToAdminMessage(t *testing.T) {
 	f := fake.New()
 	m := New(f, &stubRepo{fresh: true}, 999)
