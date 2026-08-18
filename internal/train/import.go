@@ -27,28 +27,19 @@ func SampleHash(text string) string {
 }
 
 // ImportSample records one labeled training sample. It normalizes and
-// tokenizes text, then attempts to insert its hash into the samples table.
-// If the hash is new (added), the sample's tokens are bumped into the
-// bayes feature store and ImportSample returns true. If the hash already
-// exists, no bump happens — a re-import of the same text is a no-op, so
-// repeated imports never double-count a sample's tokens.
+// tokenizes text, then atomically inserts its hash into the samples table
+// and, if the hash is new (added), bumps the sample's tokens into the
+// bayes feature store — both in one transaction via db.RecordSample, so a
+// sample row can never commit without its token counts (or vice versa). If
+// the hash already exists, nothing is bumped — a re-import of the same
+// text is a no-op, so repeated imports never double-count a sample's
+// tokens.
 func ImportSample(db *store.DB, scope, label, origin, text string) (bool, error) {
 	n := detect.Normalize(domain.Message{Text: text})
 	tokens := detect.Tokenize(n)
 	hash := SampleHash(text)
 
-	fresh, err := db.InsertSample(scope, label, origin, hash)
-	if err != nil {
-		return false, err
-	}
-	if !fresh {
-		return false, nil
-	}
-
-	if err := db.BumpBayes(scope, label, tokens); err != nil {
-		return false, err
-	}
-	return true, nil
+	return db.RecordSample(scope, label, origin, hash, tokens)
 }
 
 // ImportFile imports one sample per non-empty (trimmed) line of the file at

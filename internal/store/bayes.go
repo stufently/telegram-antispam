@@ -2,35 +2,44 @@ package store
 
 import "database/sql"
 
-// BumpBayes records one labeled training sample's tokens into the naive
-// Bayes feature store, all within a single transaction. Each token is
-// bumped once per occurrence in tokens, so a token repeated within the
-// same sample accrues multiple counts (e.g. tokens=["a","a"] bumps "a"'s
-// count by 2). bayes_totals.docs is incremented once per call and
+// bumpBayesTx applies one labeled sample's tokens to the naive Bayes
+// feature store on an already-open transaction, so callers that need the
+// bump to commit atomically with another write (see RecordSample) can
+// share their tx instead of opening a second one. Each token is bumped
+// once per occurrence in tokens, so a token repeated within the same
+// sample accrues multiple counts (e.g. tokens=["a","a"] bumps "a"'s count
+// by 2). bayes_totals.docs is incremented once per call and
 // bayes_totals.tokens is incremented by len(tokens).
-func (db *DB) BumpBayes(scope, label string, tokens []string) error {
-	return db.Write(func(tx *sql.Tx) error {
-		for _, tok := range tokens {
-			if _, err := tx.Exec(`
+func bumpBayesTx(tx *sql.Tx, scope, label string, tokens []string) error {
+	for _, tok := range tokens {
+		if _, err := tx.Exec(`
 INSERT INTO bayes_tokens(scope, token, label, count)
 VALUES(?, ?, ?, 1)
 ON CONFLICT(scope, token, label) DO UPDATE SET
 	count = count + 1`,
-				scope, tok, label,
-			); err != nil {
-				return err
-			}
+			scope, tok, label,
+		); err != nil {
+			return err
 		}
+	}
 
-		_, err := tx.Exec(`
+	_, err := tx.Exec(`
 INSERT INTO bayes_totals(scope, label, docs, tokens)
 VALUES(?, ?, 1, ?)
 ON CONFLICT(scope, label) DO UPDATE SET
 	docs   = docs + 1,
 	tokens = tokens + excluded.tokens`,
-			scope, label, len(tokens),
-		)
-		return err
+		scope, label, len(tokens),
+	)
+	return err
+}
+
+// BumpBayes records one labeled training sample's tokens into the naive
+// Bayes feature store, all within a single transaction. See bumpBayesTx for
+// the counting rules.
+func (db *DB) BumpBayes(scope, label string, tokens []string) error {
+	return db.Write(func(tx *sql.Tx) error {
+		return bumpBayesTx(tx, scope, label, tokens)
 	})
 }
 

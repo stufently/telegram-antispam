@@ -26,3 +26,34 @@ func (db *DB) InsertSample(scope, label, origin, normalizedHash string) (bool, e
 	})
 	return fresh, err
 }
+
+// RecordSample inserts a labeled sample and, if it is new, bumps its tokens
+// into the naive Bayes feature store — both in a single transaction. This
+// closes the atomicity gap InsertSample+BumpBayes (called separately) would
+// leave open: if the sample row committed but a later, separate bump
+// failed, the row's existence would forever short-circuit re-import
+// (InsertSample would keep returning fresh=false) while its tokens were
+// never counted, silently losing that training data with no way to retry.
+// Doing both writes on one tx means either both commit or neither does.
+func (db *DB) RecordSample(scope, label, origin, hash string, tokens []string) (bool, error) {
+	var added bool
+	err := db.Write(func(tx *sql.Tx) error {
+		res, err := tx.Exec(
+			`INSERT OR IGNORE INTO samples(scope, label, origin, normalized_hash) VALUES(?,?,?,?)`,
+			scope, label, origin, hash,
+		)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		added = n == 1
+		if !added {
+			return nil
+		}
+		return bumpBayesTx(tx, scope, label, tokens)
+	})
+	return added, err
+}
