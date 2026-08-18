@@ -148,6 +148,40 @@ func TestMemHistory_DupAndShortAreIndependentCounters(t *testing.T) {
 	}
 }
 
+func TestMemHistory_DistinctWindowsDoNotCrossPrune(t *testing.T) {
+	clock := newFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	h := NewMemHistory()
+	h.now = clock.Now
+
+	shortWindow := 30 * time.Second
+	dupWindow := 5 * time.Second
+
+	// Three short messages at t=0,1,2 -> counts 1,2,3.
+	if got := h.RecentShortCount(1, 2, shortWindow); got != 1 {
+		t.Fatalf("short @t=0: got %d, want 1", got)
+	}
+	clock.Advance(time.Second)
+	if got := h.RecentShortCount(1, 2, shortWindow); got != 2 {
+		t.Fatalf("short @t=1: got %d, want 2", got)
+	}
+	clock.Advance(time.Second)
+	if got := h.RecentShortCount(1, 2, shortWindow); got != 3 {
+		t.Fatalf("short @t=2: got %d, want 3", got)
+	}
+
+	// A duplicate check at t=10 with a much smaller window (5s) must not
+	// evict the still-valid (within 30s) short events recorded above.
+	clock.Advance(8 * time.Second) // now t=10
+	h.RecordAndCountDup(1, 2, "hash-a", dupWindow)
+
+	// A 4th short message at t=11 should see all 4 short events (t=0,1,2,11
+	// are all within the 30s short window), not just itself.
+	clock.Advance(time.Second) // now t=11
+	if got := h.RecentShortCount(1, 2, shortWindow); got != 4 {
+		t.Fatalf("short @t=11 after interleaved dup check: got %d, want 4", got)
+	}
+}
+
 func TestMemHistory_Sweep_DropsOldEvents(t *testing.T) {
 	clock := newFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	h := NewMemHistory()
