@@ -47,12 +47,62 @@ CREATE TABLE IF NOT EXISTS samples (
 	normalized_hash TEXT NOT NULL,
 	UNIQUE(scope, label, normalized_hash)
 );
+CREATE TABLE IF NOT EXISTS users (
+	chat_id          INTEGER NOT NULL,
+	user_id          INTEGER NOT NULL,
+	meaningful_count INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY(chat_id, user_id)
+);
 `
 
-// Migrate creates all tables if absent. It is idempotent.
+// Migrate creates all tables if absent, then applies any additive column
+// migrations needed by pre-existing databases. It is idempotent.
 func (db *DB) Migrate() error {
 	return db.Write(func(tx *sql.Tx) error {
-		_, err := tx.Exec(schema)
-		return err
+		if _, err := tx.Exec(schema); err != nil {
+			return err
+		}
+		return addColumnIfMissing(tx, "users", "meaningful_count",
+			"INTEGER NOT NULL DEFAULT 0")
 	})
+}
+
+// addColumnIfMissing adds a column to table via ALTER TABLE if it is not
+// already present, using PRAGMA table_info to check first. SQLite's ALTER
+// TABLE ... ADD COLUMN has no "IF NOT EXISTS" form, and re-running it on a
+// column that already exists (e.g. one created fresh by the CREATE TABLE
+// above) errors with "duplicate column name" — this guard makes the
+// operation safe to run on both fresh and pre-existing databases.
+func addColumnIfMissing(tx *sql.Tx, table, column, columnDef string) error {
+	rows, err := tx.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	found := false
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			ctype     string
+			notNull   int
+			dfltValue sql.NullString
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	_, err = tx.Exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + columnDef)
+	return err
 }

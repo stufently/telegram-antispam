@@ -17,7 +17,7 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err := db.Migrate(); err != nil {
 		t.Fatalf("second migrate failed: %v", err)
 	}
-	for _, tbl := range []string{"updates", "chats", "chat_aliases", "incidents", "evidence", "audit", "samples"} {
+	for _, tbl := range []string{"updates", "chats", "chat_aliases", "incidents", "evidence", "audit", "samples", "users"} {
 		var name string
 		err := db.Read().QueryRow(
 			"SELECT name FROM sqlite_master WHERE type='table' AND name=?", tbl,
