@@ -59,19 +59,31 @@ type DetectionRules struct {
 }
 
 // DetectionBehavior configures the pure behavioral detector (detect.BehaviorCfg).
+//
+// DupThreshold, ShortLen, and ShortFloodThreshold are *int (rather than
+// int) so that Defaults can tell "unset in YAML" (nil, gets the default)
+// apart from an explicit "0" in the config file. This matters because 0 is
+// a documented, meaningful value here: detect.CheckBehavior treats
+// DupThreshold/ShortFloodThreshold <= 0 as "check disabled" — a plain int
+// can't distinguish "user asked to disable this check" from "user didn't
+// set this field" since both leave the field at its zero value.
 type DetectionBehavior struct {
-	DupThreshold        int      `yaml:"dup_threshold"`
+	DupThreshold        *int     `yaml:"dup_threshold"`
 	DupWindow           Duration `yaml:"dup_window"`
-	ShortLen            int      `yaml:"short_len"`
-	ShortFloodThreshold int      `yaml:"short_flood_threshold"`
+	ShortLen            *int     `yaml:"short_len"`
+	ShortFloodThreshold *int     `yaml:"short_flood_threshold"`
 	ShortWindow         Duration `yaml:"short_window"`
 	FlagEdits           bool     `yaml:"flag_edits"`
 }
 
 // Detection configures the M3 detection cascade (internal/detect): the
 // trust gate threshold plus the hard-rule and behavioral detector configs.
+//
+// TrustThreshold is a *int for the same reason as DupThreshold etc: 0 is a
+// meaningful explicit value (everyone is immediately trusted) and must not
+// be silently promoted to the default.
 type Detection struct {
-	TrustThreshold int               `yaml:"trust_threshold"`
+	TrustThreshold *int              `yaml:"trust_threshold"`
 	Rules          DetectionRules    `yaml:"rules"`
 	Behavior       DetectionBehavior `yaml:"behavior"`
 }
@@ -105,31 +117,38 @@ func Parse(b []byte) (*Config, error) {
 }
 
 // applyDetectionDefaults fills in sane defaults for any Detection field left
-// unset in the YAML. Numeric/duration fields are treated as unset when they
-// are still at their zero value (0 is never a meaningful configured value
-// for these thresholds/windows), and are otherwise left as explicitly
-// configured. BlockLinksForUntrusted uses a *bool specifically so an
-// explicit "false" is never confused with "unset".
+// unset in the YAML. Pointer fields (TrustThreshold, DupThreshold,
+// ShortLen, ShortFloodThreshold, BlockLinksForUntrusted) are treated as
+// unset only when nil, so an explicit "0" (or "false") in the config file
+// is always honored rather than clobbered — 0 is a documented, meaningful
+// value for the threshold fields (see DetectionBehavior doc). Duration
+// window fields are treated as unset at their zero value, since a 0
+// window is not a documented "disable" and isn't a value anyone would
+// configure on purpose.
 func (c *Config) applyDetectionDefaults() {
-	if c.Detection.TrustThreshold == 0 {
-		c.Detection.TrustThreshold = 5
+	if c.Detection.TrustThreshold == nil {
+		def := 5
+		c.Detection.TrustThreshold = &def
 	}
 	if c.Detection.Rules.BlockLinksForUntrusted == nil {
 		def := true
 		c.Detection.Rules.BlockLinksForUntrusted = &def
 	}
 	b := &c.Detection.Behavior
-	if b.DupThreshold == 0 {
-		b.DupThreshold = 3
+	if b.DupThreshold == nil {
+		def := 3
+		b.DupThreshold = &def
 	}
 	if b.DupWindow == 0 {
 		b.DupWindow = Duration(60 * time.Second)
 	}
-	if b.ShortLen == 0 {
-		b.ShortLen = 10
+	if b.ShortLen == nil {
+		def := 10
+		b.ShortLen = &def
 	}
-	if b.ShortFloodThreshold == 0 {
-		b.ShortFloodThreshold = 5
+	if b.ShortFloodThreshold == nil {
+		def := 5
+		b.ShortFloodThreshold = &def
 	}
 	if b.ShortWindow == 0 {
 		b.ShortWindow = Duration(30 * time.Second)

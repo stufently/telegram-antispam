@@ -11,7 +11,8 @@ chats:
 # here as comments. Durations are Go duration strings (e.g. "60s", "5m").
 detection:
   # Meaningful messages a (chat, user) needs before being treated as
-  # trusted (exempt from the link-block rule below). Default: 5.
+  # trusted (exempt from the link-block rule below). Default: 5. An
+  # explicit 0 is honored (everyone is trusted immediately).
   trust_threshold: 5
 
   rules:
