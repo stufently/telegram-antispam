@@ -212,3 +212,78 @@ func TestM5EphemeralNoticeExplicitValuesHonored(t *testing.T) {
 		t.Errorf("EphemeralNoticeText: want explicit \"removed\", got %q", d.EphemeralNoticeText)
 	}
 }
+
+const baseValidYAML = "bot_token: \"12345:AA\"\n" +
+	"admin_chat_id: -1009999\n" +
+	"action: delete_mute\n" +
+	"chats:\n" +
+	"  mode: auto\n"
+
+// TestBlocklistDefaultsAppliedWhenUnset checks that omitting the blocklist:
+// block entirely still yields a fully-populated Blocklist config, with the
+// documented defaults (see config.example.yaml).
+func TestBlocklistDefaultsAppliedWhenUnset(t *testing.T) {
+	c, err := Parse([]byte(baseValidYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bl := c.Blocklist
+	if bl.Enabled == nil || !*bl.Enabled {
+		t.Errorf("Enabled: want default true, got %v", bl.Enabled)
+	}
+	if bl.LolsFullURL != "https://lols.bot/spam/banlist.txt" {
+		t.Errorf("LolsFullURL: want default, got %q", bl.LolsFullURL)
+	}
+	if bl.LolsDeltaURL != "https://lols.bot/spam/banlist-1h.txt" {
+		t.Errorf("LolsDeltaURL: want default, got %q", bl.LolsDeltaURL)
+	}
+	if bl.CasFullURL != "https://api.cas.chat/export.csv" {
+		t.Errorf("CasFullURL: want default, got %q", bl.CasFullURL)
+	}
+	if bl.FullRefresh.Duration() != 6*time.Hour {
+		t.Errorf("FullRefresh: want 6h default, got %v", bl.FullRefresh.Duration())
+	}
+	if bl.DeltaRefresh.Duration() != 1*time.Hour {
+		t.Errorf("DeltaRefresh: want 1h default, got %v", bl.DeltaRefresh.Duration())
+	}
+	if bl.HTTPTimeout.Duration() != 30*time.Second {
+		t.Errorf("HTTPTimeout: want 30s default, got %v", bl.HTTPTimeout.Duration())
+	}
+}
+
+// TestBlocklistExplicitValuesNotOverridden checks that explicit
+// blocklist.enabled: false and blocklist.full_refresh: 12h are honored
+// rather than clobbered by defaults, while the fields left unset in this
+// YAML still get their documented defaults.
+func TestBlocklistExplicitValuesNotOverridden(t *testing.T) {
+	yaml := baseValidYAML +
+		"blocklist:\n" +
+		"  enabled: false\n" +
+		"  full_refresh: 12h\n"
+	c, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bl := c.Blocklist
+	if bl.Enabled == nil || *bl.Enabled {
+		t.Errorf("Enabled: want explicit false, got %v", bl.Enabled)
+	}
+	if bl.FullRefresh.Duration() != 12*time.Hour {
+		t.Errorf("FullRefresh: want explicit 12h, got %v", bl.FullRefresh.Duration())
+	}
+	if bl.LolsFullURL != "https://lols.bot/spam/banlist.txt" {
+		t.Errorf("LolsFullURL: want default, got %q", bl.LolsFullURL)
+	}
+	if bl.LolsDeltaURL != "https://lols.bot/spam/banlist-1h.txt" {
+		t.Errorf("LolsDeltaURL: want default, got %q", bl.LolsDeltaURL)
+	}
+	if bl.CasFullURL != "https://api.cas.chat/export.csv" {
+		t.Errorf("CasFullURL: want default, got %q", bl.CasFullURL)
+	}
+	if bl.DeltaRefresh.Duration() != 1*time.Hour {
+		t.Errorf("DeltaRefresh: want 1h default, got %v", bl.DeltaRefresh.Duration())
+	}
+	if bl.HTTPTimeout.Duration() != 30*time.Second {
+		t.Errorf("HTTPTimeout: want 30s default, got %v", bl.HTTPTimeout.Duration())
+	}
+}
