@@ -10,11 +10,16 @@ import (
 )
 
 // stubRepo is a minimal in-memory Repo.
-type stubRepo struct{ state domain.IncidentState }
+type stubRepo struct {
+	state domain.IncidentState
+	fresh bool
+}
 
-func (r *stubRepo) InsertPending(int64, int, int64, bool) (int64, bool, error) { return 1, true, nil }
-func (r *stubRepo) SetIncidentState(_ int64, s domain.IncidentState) error     { r.state = s; return nil }
-func (r *stubRepo) AddEvidence(int64, int64, []int) error                      { return nil }
+func (r *stubRepo) InsertPending(int64, int, int64, bool) (int64, bool, error) {
+	return 1, r.fresh, nil
+}
+func (r *stubRepo) SetIncidentState(_ int64, s domain.IncidentState) error { r.state = s; return nil }
+func (r *stubRepo) AddEvidence(int64, int64, []int) error                 { return nil }
 
 func liveIncident(dry bool) domain.Incident {
 	return domain.Incident{
@@ -26,7 +31,7 @@ func liveIncident(dry bool) domain.Incident {
 
 func TestEvidenceBeforeActionAndDelete(t *testing.T) {
 	f := fake.New()
-	m := New(f, &stubRepo{}, 999)
+	m := New(f, &stubRepo{fresh: true}, 999)
 	if err := m.Handle(context.Background(), liveIncident(false)); err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +53,7 @@ func TestEvidenceBeforeActionAndDelete(t *testing.T) {
 
 func TestDryRunSkipsDestructiveCalls(t *testing.T) {
 	f := fake.New()
-	m := New(f, &stubRepo{}, 999)
+	m := New(f, &stubRepo{fresh: true}, 999)
 	if err := m.Handle(context.Background(), liveIncident(true)); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +67,7 @@ func TestDryRunSkipsDestructiveCalls(t *testing.T) {
 func TestEvidenceFailureStopsBeforeAction(t *testing.T) {
 	f := fake.New()
 	f.CopyErr = errors.New("copy failed")
-	repo := &stubRepo{}
+	repo := &stubRepo{fresh: true}
 	m := New(f, repo, 999)
 	inc := liveIncident(false)
 	inc.Verdict.Confidence = 0.4 // low confidence
@@ -80,7 +85,7 @@ func TestEvidenceFailureStopsBeforeAction(t *testing.T) {
 func TestEvidenceFailureHighConfidenceStillActs(t *testing.T) {
 	f := fake.New()
 	f.CopyErr = errors.New("copy failed")
-	repo := &stubRepo{}
+	repo := &stubRepo{fresh: true}
 	m := New(f, repo, 999)
 	inc := liveIncident(false) // Action ban, not dry-run
 	inc.Verdict.Confidence = 0.99 // hard deny, >= hardConfidence (0.9)
@@ -107,7 +112,7 @@ func TestEvidenceFailureHighConfidenceStillActs(t *testing.T) {
 
 func TestDryRunStillCopiesEvidence(t *testing.T) {
 	f := fake.New()
-	m := New(f, &stubRepo{}, 999)
+	m := New(f, &stubRepo{fresh: true}, 999)
 	if err := m.Handle(context.Background(), liveIncident(true)); err != nil {
 		t.Fatal(err)
 	}
@@ -122,5 +127,39 @@ func TestDryRunStillCopiesEvidence(t *testing.T) {
 	}
 	if !copied || !notified {
 		t.Fatalf("dry-run must still copy evidence and notify admin; calls=%v", f.Calls())
+	}
+}
+
+func TestReprocessGuardSkipsDuplicate(t *testing.T) {
+	f := fake.New()
+	repo := &stubRepo{fresh: false} // incident already exists
+	m := New(f, repo, 999)
+	if err := m.Handle(context.Background(), liveIncident(false)); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range f.Calls() {
+		if c == "CopyMessages" || c == "BanMember" {
+			t.Fatalf("duplicate incident must be skipped; calls=%v", f.Calls())
+		}
+	}
+}
+
+func TestHardDenyNotifiesAdminOnEvidenceFailure(t *testing.T) {
+	f := fake.New()
+	f.CopyErr = errors.New("copy failed")
+	m := New(f, &stubRepo{fresh: true}, 999)
+	inc := liveIncident(false)
+	inc.Verdict.Confidence = 0.99
+	if err := m.Handle(context.Background(), inc); err != nil {
+		t.Fatal(err)
+	}
+	var notified bool
+	for _, c := range f.Calls() {
+		if c == "SendAdmin" {
+			notified = true
+		}
+	}
+	if !notified {
+		t.Fatalf("hard-deny with failed evidence must still notify admin; calls=%v", f.Calls())
 	}
 }

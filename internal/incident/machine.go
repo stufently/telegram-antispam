@@ -36,26 +36,40 @@ func (m *Machine) Handle(ctx context.Context, inc domain.Incident) error {
 	if len(inc.MessageIDs) == 0 {
 		return fmt.Errorf("incident has no message ids")
 	}
-	id, _, err := m.repo.InsertPending(inc.ChatID, inc.MessageIDs[0], inc.Sender.UserID, inc.DryRun)
+	id, fresh, err := m.repo.InsertPending(inc.ChatID, inc.MessageIDs[0], inc.Sender.UserID, inc.DryRun)
 	if err != nil {
 		return fmt.Errorf("insert pending: %w", err)
+	}
+	if !fresh {
+		// reprocess guard: this incident was already recorded, so evidence
+		// was already copied and any action already taken. Skip entirely.
+		return nil
 	}
 
 	// 1. evidence BEFORE any destructive action.
 	adminIDs, copyErr := m.port.CopyMessages(ctx, m.adminChatID, inc.ChatID, inc.MessageIDs)
 	if copyErr != nil {
+		_ = m.repo.SetIncidentState(id, domain.StateEvidenceFailed)
 		if inc.Verdict.Confidence < hardConfidence {
-			_ = m.repo.SetIncidentState(id, domain.StateEvidenceFailed)
 			return fmt.Errorf("evidence copy failed, not acting on low confidence: %w", copyErr)
 		}
-		// hard deny: proceed without copied evidence but record the failure.
-		_ = m.repo.SetIncidentState(id, domain.StateEvidenceFailed)
+		// hard deny: proceed without copied evidence but notify admins so
+		// they know an action was taken without a copied evidence trail.
+		if _, err := m.port.SendAdmin(ctx, m.adminChatID, telegram.AdminMessage{
+			IncidentKey:      fmt.Sprintf("%d", id),
+			SourceChatID:     inc.ChatID,
+			CopiedFromChatID: inc.ChatID,
+			CopyMessageIDs:   nil,
+			Text:             fmt.Sprintf("evidence copy failed: %v; %s", copyErr, inc.Verdict.Reason),
+		}); err != nil {
+			return fmt.Errorf("send admin: %w", err)
+		}
 	} else {
 		if _, err := m.port.SendAdmin(ctx, m.adminChatID, telegram.AdminMessage{
 			IncidentKey:      fmt.Sprintf("%d", id),
 			SourceChatID:     inc.ChatID,
 			CopiedFromChatID: inc.ChatID,
-			CopyMessageIDs:   inc.MessageIDs,
+			CopyMessageIDs:   adminIDs,
 			Text:             inc.Verdict.Reason,
 		}); err != nil {
 			return fmt.Errorf("send admin: %w", err)
