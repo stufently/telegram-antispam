@@ -60,3 +60,34 @@ detection:
   # likelihoods (detect.BayesLogRatio's vocabGuess param). 0 is not a
   # meaningful guess, so it is always treated as "unset". Default: 5000.
   bayes_vocab_guess: 5000
+
+  # M5 fake-admin detector: flags newcomers whose display name
+  # impersonates a real chat admin (e.g. "Admin Support"). Turn the
+  # whole detector on or off. Default: true.
+  fake_admin_enabled: true
+  # Maximum edit distance between a display name and a real admin's name
+  # for the detector to flag it as impersonation. 0 is not a meaningful
+  # value (it would only match identical strings), so it is always
+  # treated as "unset". Default: 1.
+  fake_admin_max_distance: 1
+  # Substrings in a display name treated as suspicious admin-impersonation
+  # signals, case-insensitive. An explicit empty list ([]) disables this
+  # check. Default: [admin, support, verified, moderator].
+  fake_admin_suspicious_tags: [admin, support, verified, moderator]
+  # How long the fake-admin detector caches a chat's real admin list
+  # before refreshing it, in seconds. 0 is not a meaningful TTL, so it is
+  # always treated as "unset". Default: 300.
+  admin_cache_ttl_seconds: 300
+
+  # M5 reaction-cleanup: removes the bot's own reactions/artifacts once a
+  # moderation action has been taken. Default: true.
+  reaction_cleanup_enabled: true
+
+  # M5 ephemeral moderation notice: posts a short-lived notice in the
+  # chat when a message is removed. Off by default since delivery to a
+  # chat isn't guaranteed and the notice text is chat-specific. Default:
+  # false.
+  ephemeral_notice_enabled: false
+  # Text of the ephemeral moderation notice, shown only when
+  # ephemeral_notice_enabled is true. Default: "" (no default text).
+  ephemeral_notice_text: ""

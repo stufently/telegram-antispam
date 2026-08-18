@@ -67,6 +67,35 @@ func TestDetectionDefaultsAppliedWhenUnset(t *testing.T) {
 	if d.BayesVocabGuess != 5000 {
 		t.Errorf("BayesVocabGuess: want default 5000, got %v", d.BayesVocabGuess)
 	}
+	if d.FakeAdminEnabled == nil || !*d.FakeAdminEnabled {
+		t.Errorf("FakeAdminEnabled: want default true, got %v", d.FakeAdminEnabled)
+	}
+	if d.FakeAdminMaxDistance != 1 {
+		t.Errorf("FakeAdminMaxDistance: want default 1, got %v", d.FakeAdminMaxDistance)
+	}
+	wantTags := []string{"admin", "support", "verified", "moderator"}
+	if len(d.FakeAdminSuspiciousTags) != len(wantTags) {
+		t.Errorf("FakeAdminSuspiciousTags: want %v, got %v", wantTags, d.FakeAdminSuspiciousTags)
+	} else {
+		for i, tag := range wantTags {
+			if d.FakeAdminSuspiciousTags[i] != tag {
+				t.Errorf("FakeAdminSuspiciousTags: want %v, got %v", wantTags, d.FakeAdminSuspiciousTags)
+				break
+			}
+		}
+	}
+	if d.AdminCacheTTLSeconds != 300 {
+		t.Errorf("AdminCacheTTLSeconds: want default 300, got %v", d.AdminCacheTTLSeconds)
+	}
+	if d.ReactionCleanupEnabled == nil || !*d.ReactionCleanupEnabled {
+		t.Errorf("ReactionCleanupEnabled: want default true, got %v", d.ReactionCleanupEnabled)
+	}
+	if d.EphemeralNoticeEnabled == nil || *d.EphemeralNoticeEnabled {
+		t.Errorf("EphemeralNoticeEnabled: want default false, got %v", d.EphemeralNoticeEnabled)
+	}
+	if d.EphemeralNoticeText != "" {
+		t.Errorf("EphemeralNoticeText: want default \"\", got %q", d.EphemeralNoticeText)
+	}
 }
 
 func TestDetectionExplicitValuesNotOverridden(t *testing.T) {
@@ -142,5 +171,44 @@ func TestDetectionExplicitZeroThresholdsHonored(t *testing.T) {
 	}
 	if d.BayesVocabGuess != 5000 {
 		t.Errorf("BayesVocabGuess: want default 5000 (unset in this file), got %v", d.BayesVocabGuess)
+	}
+}
+
+// TestM5FakeAdminExplicitEmptyTagsHonored guards against the classic
+// nil-vs-empty bug: an explicit empty list for fake_admin_suspicious_tags
+// disables the suspicious-tag check and must not be re-defaulted back to
+// the non-empty default list. fake_admin_enabled: false must also be
+// honored rather than re-promoted to the default true.
+func TestM5FakeAdminExplicitEmptyTagsHonored(t *testing.T) {
+	c, err := Load("testdata/m5_custom.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := c.Detection
+	if d.FakeAdminEnabled == nil || *d.FakeAdminEnabled {
+		t.Errorf("FakeAdminEnabled: want explicit false, got %v", d.FakeAdminEnabled)
+	}
+	if d.FakeAdminSuspiciousTags == nil {
+		t.Error("FakeAdminSuspiciousTags: want explicit empty non-nil slice, got nil")
+	}
+	if len(d.FakeAdminSuspiciousTags) != 0 {
+		t.Errorf("FakeAdminSuspiciousTags: want explicit empty (len 0), got %v", d.FakeAdminSuspiciousTags)
+	}
+}
+
+// TestM5EphemeralNoticeExplicitValuesHonored checks that an explicit
+// ephemeral_notice_enabled: true plus ephemeral_notice_text are both
+// honored rather than clobbered by defaults.
+func TestM5EphemeralNoticeExplicitValuesHonored(t *testing.T) {
+	c, err := Load("testdata/m5_ephemeral.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := c.Detection
+	if d.EphemeralNoticeEnabled == nil || !*d.EphemeralNoticeEnabled {
+		t.Errorf("EphemeralNoticeEnabled: want explicit true, got %v", d.EphemeralNoticeEnabled)
+	}
+	if d.EphemeralNoticeText != "removed" {
+		t.Errorf("EphemeralNoticeText: want explicit \"removed\", got %q", d.EphemeralNoticeText)
 	}
 }
