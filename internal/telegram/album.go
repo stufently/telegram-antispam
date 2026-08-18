@@ -63,11 +63,23 @@ func (a *AlbumBuffer) fire(k albumKey) {
 	}
 }
 
-// Stop cancels all pending timers (call at shutdown).
+// Stop cancels all pending timers and flushes whatever parts each group had
+// buffered so far (call at shutdown). Without this, album parts that never
+// reach their window before shutdown would otherwise be silently dropped —
+// already marked seen via MarkUpdateSeen, so a restart would never see them
+// again either.
 func (a *AlbumBuffer) Stop() {
 	a.mu.Lock()
+	pending := a.pending
+	a.pending = map[albumKey][]domain.Message{}
 	for _, t := range a.timers {
 		t.Stop()
 	}
+	a.timers = map[albumKey]*time.Timer{}
 	a.mu.Unlock()
+	for _, parts := range pending {
+		if len(parts) > 0 {
+			a.flush(parts)
+		}
+	}
 }

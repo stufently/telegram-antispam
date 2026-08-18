@@ -40,3 +40,33 @@ func TestAlbumBufferGroupsParts(t *testing.T) {
 		t.Fatalf("parts out of order: %v", flushed[0])
 	}
 }
+
+func TestAlbumBufferStopFlushesPendingParts(t *testing.T) {
+	var mu sync.Mutex
+	var flushed [][]domain.Message
+	a := NewAlbumBuffer(time.Hour, func(parts []domain.Message) {
+		mu.Lock()
+		cp := append([]domain.Message(nil), parts...)
+		flushed = append(flushed, cp)
+		mu.Unlock()
+	})
+	a.afterFunc = func(_ time.Duration, fn func()) *time.Timer { return time.NewTimer(time.Hour) } // never fires on its own
+
+	if a.Add(domain.Message{ChatID: -1, MessageID: 20, MediaGroupID: "g"}) {
+		t.Fatal("first album part must be buffered")
+	}
+	if a.Add(domain.Message{ChatID: -1, MessageID: 21, MediaGroupID: "g"}) {
+		t.Fatal("second album part must be buffered")
+	}
+
+	a.Stop() // shutdown before the window elapses must not silently drop buffered parts
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(flushed) != 1 || len(flushed[0]) != 2 {
+		t.Fatalf("expected Stop to flush the buffered group, got %v", flushed)
+	}
+	if flushed[0][0].MessageID != 20 || flushed[0][1].MessageID != 21 {
+		t.Fatalf("parts out of order: %v", flushed[0])
+	}
+}
