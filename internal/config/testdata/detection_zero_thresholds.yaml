@@ -9,3 +9,4 @@ detection:
   behavior:
     dup_threshold: 0
     short_flood_threshold: 0
+  bayes_threshold: 0.0

@@ -58,6 +58,15 @@ func TestDetectionDefaultsAppliedWhenUnset(t *testing.T) {
 	if d.Rules.BlockLinksForUntrusted == nil || !*d.Rules.BlockLinksForUntrusted {
 		t.Errorf("BlockLinksForUntrusted: want default true, got %v", d.Rules.BlockLinksForUntrusted)
 	}
+	if d.BayesEnabled == nil || !*d.BayesEnabled {
+		t.Errorf("BayesEnabled: want default true, got %v", d.BayesEnabled)
+	}
+	if d.BayesThreshold == nil || *d.BayesThreshold != 0.0 {
+		t.Errorf("BayesThreshold: want default 0.0, got %v", d.BayesThreshold)
+	}
+	if d.BayesVocabGuess != 5000 {
+		t.Errorf("BayesVocabGuess: want default 5000, got %v", d.BayesVocabGuess)
+	}
 }
 
 func TestDetectionExplicitValuesNotOverridden(t *testing.T) {
@@ -83,6 +92,15 @@ func TestDetectionExplicitValuesNotOverridden(t *testing.T) {
 	}
 	if len(d.Rules.DenyStopwords) != 1 || d.Rules.DenyStopwords[0] != "casino" {
 		t.Errorf("DenyStopwords: want [casino], got %v", d.Rules.DenyStopwords)
+	}
+	if d.BayesEnabled == nil || *d.BayesEnabled {
+		t.Errorf("BayesEnabled: want explicit false, got %v", d.BayesEnabled)
+	}
+	if d.BayesThreshold == nil || *d.BayesThreshold != 2.5 {
+		t.Errorf("BayesThreshold: want explicit 2.5, got %v", d.BayesThreshold)
+	}
+	if d.BayesVocabGuess != 8000 {
+		t.Errorf("BayesVocabGuess: want explicit 8000, got %v", d.BayesVocabGuess)
 	}
 }
 
@@ -110,5 +128,19 @@ func TestDetectionExplicitZeroThresholdsHonored(t *testing.T) {
 	}
 	if d.Behavior.ShortLen == nil || *d.Behavior.ShortLen != 10 {
 		t.Errorf("ShortLen: want default 10 (unset in this file), got %v", d.Behavior.ShortLen)
+	}
+	// bayes_threshold: 0.0 is explicit in this file, same value as the
+	// default, but must still come out non-nil via the pointer (proving
+	// applyDetectionDefaults' nil-check, not a `== 0` check, gates it).
+	if d.BayesThreshold == nil || *d.BayesThreshold != 0.0 {
+		t.Errorf("BayesThreshold: want explicit 0.0 honored, got %v", d.BayesThreshold)
+	}
+	// BayesEnabled/BayesVocabGuess are left unset in this file and must
+	// still get their defaults.
+	if d.BayesEnabled == nil || !*d.BayesEnabled {
+		t.Errorf("BayesEnabled: want default true (unset in this file), got %v", d.BayesEnabled)
+	}
+	if d.BayesVocabGuess != 5000 {
+		t.Errorf("BayesVocabGuess: want default 5000 (unset in this file), got %v", d.BayesVocabGuess)
 	}
 }

@@ -46,3 +46,17 @@ detection:
     short_window: 30s
     # Flag edited messages as a signal on their own. Default: false.
     flag_edits: false
+
+  # M4 naive-Bayes borderline stage (internal/detect.BayesIsSpam), run
+  # over messages the earlier rule/behavior stages didn't already decide.
+  # Turn the whole stage on or off. Default: true.
+  bayes_enabled: true
+  # Minimum log-ratio (see detect.BayesLogRatio) at or above which a
+  # message is flagged spam-leaning; 0.0 means "the scorer favors spam at
+  # all, however slightly". Default: 0.0. An explicit 0.0 is honored the
+  # same as leaving this unset.
+  bayes_threshold: 0.0
+  # Estimated vocabulary size used for Laplace smoothing of per-token
+  # likelihoods (detect.BayesLogRatio's vocabGuess param). 0 is not a
+  # meaningful guess, so it is always treated as "unset". Default: 5000.
+  bayes_vocab_guess: 5000

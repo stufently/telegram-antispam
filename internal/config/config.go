@@ -76,16 +76,40 @@ type DetectionBehavior struct {
 	FlagEdits           bool     `yaml:"flag_edits"`
 }
 
-// Detection configures the M3 detection cascade (internal/detect): the
-// trust gate threshold plus the hard-rule and behavioral detector configs.
+// Detection configures the M3/M4 detection cascade (internal/detect): the
+// trust gate threshold, the hard-rule and behavioral detector configs, and
+// the M4 naive-Bayes borderline stage (internal/detect.BayesIsSpam).
 //
 // TrustThreshold is a *int for the same reason as DupThreshold etc: 0 is a
 // meaningful explicit value (everyone is immediately trusted) and must not
 // be silently promoted to the default.
+//
+// BayesThreshold is a *float64 for the same nil-vs-zero reason: 0.0 is
+// this field's own documented default (a non-negative log-ratio is
+// spam-leaning, so threshold 0.0 flags any message the scorer favors
+// spam for at all), and a plain float64 can't tell "user explicitly
+// wrote 0.0" apart from "user didn't set this field" since both leave
+// the field at its zero value.
+//
+// BayesVocabGuess is a plain int (not a pointer): unlike the threshold,
+// 0 is not a meaningful configuration for a vocabulary-size guess (it
+// would make every Laplace-smoothed likelihood denominator degenerate),
+// so the zero value doubles as "unset" and gets the default.
 type Detection struct {
 	TrustThreshold *int              `yaml:"trust_threshold"`
 	Rules          DetectionRules    `yaml:"rules"`
 	Behavior       DetectionBehavior `yaml:"behavior"`
+
+	// BayesEnabled turns the M4 naive-Bayes borderline stage on or off.
+	// *bool for the usual nil-vs-false reason: an explicit "false" must
+	// not be re-promoted to the default "true". Default: true.
+	BayesEnabled *bool `yaml:"bayes_enabled"`
+	// BayesThreshold is the minimum log-ratio (see detect.BayesLogRatio)
+	// at or above which a message is flagged spam-leaning. Default: 0.0.
+	BayesThreshold *float64 `yaml:"bayes_threshold"`
+	// BayesVocabGuess is the estimated vocabulary size used for Laplace
+	// smoothing (see detect.BayesLogRatio's vocabGuess param). Default: 5000.
+	BayesVocabGuess int `yaml:"bayes_vocab_guess"`
 }
 
 type Config struct {
@@ -118,13 +142,16 @@ func Parse(b []byte) (*Config, error) {
 
 // applyDetectionDefaults fills in sane defaults for any Detection field left
 // unset in the YAML. Pointer fields (TrustThreshold, DupThreshold,
-// ShortLen, ShortFloodThreshold, BlockLinksForUntrusted) are treated as
-// unset only when nil, so an explicit "0" (or "false") in the config file
-// is always honored rather than clobbered — 0 is a documented, meaningful
-// value for the threshold fields (see DetectionBehavior doc). Duration
-// window fields are treated as unset at their zero value, since a 0
-// window is not a documented "disable" and isn't a value anyone would
-// configure on purpose.
+// ShortLen, ShortFloodThreshold, BlockLinksForUntrusted, BayesEnabled,
+// BayesThreshold) are treated as unset only when nil, so an explicit "0"
+// (or "false") in the config file is always honored rather than clobbered
+// — 0 is a documented, meaningful value for the threshold fields (see
+// DetectionBehavior and Detection docs). Duration window fields are
+// treated as unset at their zero value, since a 0 window is not a
+// documented "disable" and isn't a value anyone would configure on
+// purpose. BayesVocabGuess is likewise treated as unset at its zero
+// value, since 0 is not a meaningful vocabulary-size guess (see Detection
+// doc).
 func (c *Config) applyDetectionDefaults() {
 	if c.Detection.TrustThreshold == nil {
 		def := 5
@@ -155,6 +182,17 @@ func (c *Config) applyDetectionDefaults() {
 	}
 	// FlagEdits defaults to false, which is already the zero value, so
 	// there is nothing to fill in.
+	if c.Detection.BayesEnabled == nil {
+		def := true
+		c.Detection.BayesEnabled = &def
+	}
+	if c.Detection.BayesThreshold == nil {
+		def := 0.0
+		c.Detection.BayesThreshold = &def
+	}
+	if c.Detection.BayesVocabGuess == 0 {
+		c.Detection.BayesVocabGuess = 5000
+	}
 }
 
 func (c *Config) Validate() error {
