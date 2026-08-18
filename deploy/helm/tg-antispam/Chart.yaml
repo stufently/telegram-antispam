@@ -1,0 +1,6 @@
+apiVersion: v2
+name: tg-antispam
+description: A Telegram anti-spam bot (LOLS/CAS blocklists, Bayes, fake-admin detection).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

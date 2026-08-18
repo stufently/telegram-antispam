@@ -1,0 +1,27 @@
+image:
+  repository: ghcr.io/stufently/telegram-antispam
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1 # single writer (SQLite) — do NOT scale beyond 1
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+metricsPort: 9090
+
+persistence:
+  # SQLite lives on a PVC. size is small; the blocklist mirror is in-memory.
+  size: 1Gi
+  storageClass: ""
+
+# The bot config.yaml, rendered into a ConfigMap. Provide your real values here
+# (or via a separate Secret for bot_token in production).
+config: |
+  bot_token: ""
+  admin_chat_id: 0
+  action: delete_mute
