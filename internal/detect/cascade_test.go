@@ -194,3 +194,38 @@ func TestCascadeDecide_FakeAdminUntrustedOnly(t *testing.T) {
 		t.Fatal("trusted sender must skip fake-admin")
 	}
 }
+
+// TestCascadeDecide_CurrentAdminImmune guards the spec §4 invariant that a
+// current chat admin's message is never moderated. Without the immunity gate
+// a real admin matches their own admin-list entry at distance 0 and is
+// flagged fake_admin on every message (self-perpetuating, since trust only
+// bumps on non-actionable verdicts).
+func TestCascadeDecide_CurrentAdminImmune(t *testing.T) {
+	// Admin user 42 with an identity that would otherwise self-match the
+	// fake-admin near-match check.
+	admins := fakeAdminSrc{a: []AdminIdentity{{UserID: 42, Username: "alice_admin", DisplayName: "Alice"}}}
+	c := Cascade{
+		Trust:          &fakeTrustSource{counts: map[[2]int64]int{}}, // untrusted
+		Hist:           &fakeHistory{},
+		Rules:          Rules{},
+		Behavior:       BehaviorCfg{},
+		TrustThreshold: 5,
+		Admins:         admins,
+		FakeAdmin:      FakeAdminCfg{Enabled: true, MaxDistance: 1, SuspiciousTags: []string{"admin"}},
+		DefaultAction:  domain.ActionDeleteMute,
+		DefaultScope:   domain.ScopeGlobal,
+	}
+	// The admin posts, with their own admin name AND a suspicious tag — both
+	// would flag a non-admin. As a current admin they must be immune.
+	m := domain.Message{ChatID: 1, Sender: domain.Sender{UserID: 42, Username: "alice_admin", DisplayName: "Alice"}, SenderTag: "Admin"}
+	if v, ok := c.Decide(m, false); ok {
+		t.Fatalf("current admin must be immune, got actionable %+v", v)
+	}
+
+	// A non-admin impersonator (different UserID) with the same near-match
+	// name is still flagged — immunity is keyed on UserID, not name.
+	imp := domain.Message{ChatID: 1, Sender: domain.Sender{UserID: 99, Username: "alice_admln", DisplayName: "Alice"}}
+	if _, ok := c.Decide(imp, false); !ok {
+		t.Fatal("non-admin impersonator must still be flagged")
+	}
+}
