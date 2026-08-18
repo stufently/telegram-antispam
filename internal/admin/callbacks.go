@@ -155,12 +155,12 @@ func (h *Handler) Handle(ctx context.Context, cb Callback) error {
 func (h *Handler) dispatch(act Action, incidentKey string) (string, error) {
 	switch act {
 	case ActFalsePositive:
-		if err := h.db.InsertSample("incident", string(act), "user", incidentKey); err != nil {
+		if _, err := h.db.InsertSample("incident", string(act), "user", incidentKey); err != nil {
 			return "", err
 		}
 		return "marked false positive", nil
 	case ActConfirmSpam:
-		if err := h.db.InsertSample("incident", string(act), "user", incidentKey); err != nil {
+		if _, err := h.db.InsertSample("incident", string(act), "user", incidentKey); err != nil {
 			return "", err
 		}
 		return "confirmed spam", nil
