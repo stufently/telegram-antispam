@@ -3,3 +3,6 @@
 !*.env.example
 probe.env
 /.worktrees/
+
+/.gopath/
+/tg-antispam
