@@ -10,13 +10,18 @@ import "github.com/stufently/telegram-antispam/internal/domain"
 // M3 detection pipeline over one message. It carries no mutable state of its
 // own, so Decide is pure with respect to Cascade itself.
 type Cascade struct {
-	Trust          TrustSource
-	Hist           History
-	Rules          Rules
-	Behavior       BehaviorCfg
-	TrustThreshold int
-	DefaultAction  domain.Action
-	DefaultScope   domain.Scope
+	Trust           TrustSource
+	Hist            History
+	Rules           Rules
+	Behavior        BehaviorCfg
+	TrustThreshold  int
+	DefaultAction   domain.Action
+	DefaultScope    domain.Scope
+	Bayes           BayesSource
+	BayesScope      string
+	BayesThreshold  float64
+	BayesVocabGuess int
+	BayesEnabled    bool
 }
 
 // Decide runs the cascade over one message: normalize, resolve trust, then
@@ -38,6 +43,13 @@ func (c Cascade) Decide(m domain.Message, edited bool) (domain.Verdict, bool) {
 
 	if sig, hit := CheckBehavior(c.Hist, m.ChatID, m.Sender.UserID, n, edited, c.Behavior); hit {
 		return c.actionable(sig), true
+	}
+
+	if c.BayesEnabled && !trusted {
+		tokens := Tokenize(n)
+		if spam, _, _ := BayesIsSpam(c.Bayes, c.BayesScope, tokens, c.BayesVocabGuess, c.BayesThreshold); spam {
+			return c.actionable(domain.Signal{Name: "bayes"}), true
+		}
 	}
 
 	return domain.Verdict{Action: domain.ActionNone}, false

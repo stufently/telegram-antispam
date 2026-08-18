@@ -14,3 +14,6 @@ detection:
     dup_threshold: 2
     dup_window: 90s
     flag_edits: true
+  bayes_enabled: false
+  bayes_threshold: 2.5
+  bayes_vocab_guess: 8000

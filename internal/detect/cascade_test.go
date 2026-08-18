@@ -111,3 +111,57 @@ func TestCascadeDecide_UntrustedLinkActionable(t *testing.T) {
 		t.Errorf("expected configured default action/scope, got %v/%v", v.Action, v.Scope)
 	}
 }
+
+func TestCascadeDecide_BayesSpamActionableForUntrustedOnly(t *testing.T) {
+	bayes := fakeBayes{
+		spam: map[string]int{"casino": 50},
+		ham:  map[string]int{"casino": 0},
+		c:    BayesCounts{SpamDocs: 100, HamDocs: 100, SpamTokenTotal: 500, HamTokenTotal: 500},
+	}
+	hist := &fakeHistory{}
+	m := domain.Message{
+		ChatID: -300,
+		Sender: domain.Sender{UserID: 3},
+		Text:   "casino casino casino",
+	}
+
+	untrustedTrust := &fakeTrustSource{counts: map[[2]int64]int{}}
+	c := Cascade{
+		Trust:           untrustedTrust,
+		Hist:            hist,
+		Rules:           Rules{},
+		Behavior:        BehaviorCfg{},
+		TrustThreshold:  5,
+		DefaultAction:   domain.ActionDeleteMute,
+		DefaultScope:    domain.ScopeChat,
+		Bayes:           bayes,
+		BayesScope:      "global",
+		BayesThreshold:  0.0,
+		BayesVocabGuess: 1000,
+		BayesEnabled:    true,
+	}
+
+	v, actionable := c.Decide(m, false)
+
+	if !actionable {
+		t.Fatalf("expected actionable verdict for bayes spam signal, got %+v", v)
+	}
+	if len(v.Signals) != 1 || v.Signals[0].Name != "bayes" {
+		t.Errorf("expected bayes signal, got %+v", v.Signals)
+	}
+	if v.Reason != "bayes" {
+		t.Errorf("expected reason bayes, got %q", v.Reason)
+	}
+
+	trustedTrust := &fakeTrustSource{counts: map[[2]int64]int{{-300, 3}: 10}}
+	c.Trust = trustedTrust
+
+	v2, actionable2 := c.Decide(m, false)
+
+	if actionable2 {
+		t.Fatalf("expected bayes to be skipped for trusted sender, got %+v", v2)
+	}
+	if v2.Action != domain.ActionNone {
+		t.Errorf("expected ActionNone for trusted sender, got %v", v2.Action)
+	}
+}

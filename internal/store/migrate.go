@@ -53,6 +53,20 @@ CREATE TABLE IF NOT EXISTS users (
 	meaningful_count INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY(chat_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS bayes_tokens (
+	scope TEXT    NOT NULL,
+	token TEXT    NOT NULL,
+	label TEXT    NOT NULL,
+	count INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY(scope, token, label)
+);
+CREATE TABLE IF NOT EXISTS bayes_totals (
+	scope  TEXT    NOT NULL,
+	label  TEXT    NOT NULL,
+	docs   INTEGER NOT NULL DEFAULT 0,
+	tokens INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY(scope, label)
+);
 `
 
 // Migrate creates all tables if absent, then applies any additive column

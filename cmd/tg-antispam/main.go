@@ -22,6 +22,7 @@ import (
 	"github.com/stufently/telegram-antispam/internal/queue"
 	"github.com/stufently/telegram-antispam/internal/store"
 	"github.com/stufently/telegram-antispam/internal/telegram"
+	"github.com/stufently/telegram-antispam/internal/train"
 	"github.com/stufently/telegram-antispam/internal/version"
 )
 
@@ -74,7 +75,36 @@ func (c *chatLimiters) get(chat int64) *rate.Limiter {
 	return l
 }
 
+// bayesAdapter adapts *store.DB to detect.BayesSource, converting the
+// store's 4-int BayesTotals return into the detect.BayesCounts shape the
+// cascade's Bayes stage expects.
+type bayesAdapter struct{ db *store.DB }
+
+func (a bayesAdapter) TokenCounts(scope string, tokens []string) (map[string]int, map[string]int, error) {
+	return a.db.TokenCounts(scope, tokens)
+}
+
+func (a bayesAdapter) Totals(scope string) (detect.BayesCounts, error) {
+	sd, hd, st, ht, err := a.db.BayesTotals(scope)
+	if err != nil {
+		return detect.BayesCounts{}, err
+	}
+	return detect.BayesCounts{SpamDocs: sd, HamDocs: hd, SpamTokenTotal: st, HamTokenTotal: ht}, nil
+}
+
 func main() {
+	// Handle import subcommand if present
+	if len(os.Args) > 1 && os.Args[1] == "import" {
+		added, skipped, err := runImport(os.Args[2:], func(p string) (*store.DB, error) {
+			return store.Open(p)
+		})
+		if err != nil {
+			log.Fatalf("import: %v", err)
+		}
+		log.Printf("imported: added=%d skipped=%d", added, skipped)
+		os.Exit(0)
+	}
+
 	log.Printf("tg-antispam %s starting", version.String())
 
 	cfgPath := os.Getenv("CONFIG_PATH")
@@ -171,6 +201,15 @@ func main() {
 				// hands this closure, since the job runs after this handler
 				// call returns.
 				seq.Submit(cfgStore.Current().AdminChatID, func() {
+					// EvidenceText is intentionally left empty here: M2 does
+					// not persist the offending message's text/tokens (the
+					// admin notification carries only the verdict reason, and
+					// the evidence is copied as separate messages), so there
+					// is nothing to hand the best-effort Bayes trainer at
+					// callback time. Admin-feedback training therefore no-ops
+					// in production until a later milestone persists incident
+					// tokens (privacy-safe — Bayes stores only counts). The
+					// offline `tg-antispam import` path trains fully today.
 					err := adminHandler.Handle(shutdownCtx, admin.Callback{
 						ID:        cb.ID,
 						Data:      cb.Data,
@@ -195,6 +234,10 @@ func main() {
 	handler = telegram.NewHandler(db, seq, cfgStore, machine)
 	handler.SetContext(ctx) // so an album flush triggered off-request during shutdown observes cancellation instead of blocking forever
 	adminHandler = admin.NewHandler(livePort, db, operatorSet(cfg))
+	adminHandler.SetTrainer(func(scope, label, text string) error {
+		_, err := train.ImportSample(db, scope, label, "user", text)
+		return err
+	})
 
 	// The M3 detection cascade: db satisfies detect.TrustSource (trust is
 	// store-backed and durable), while the sliding-window duplicate/short
@@ -221,10 +264,15 @@ func main() {
 			BlockLinksForUntrusted: *cfg.Detection.Rules.BlockLinksForUntrusted,
 			BannedDomains:          cfg.Detection.Rules.BannedDomains,
 		},
-		Behavior:       behaviorCfg,
-		TrustThreshold: *cfg.Detection.TrustThreshold,
-		DefaultAction:  cfg.Action,
-		DefaultScope:   domain.ScopeGlobal,
+		Behavior:        behaviorCfg,
+		TrustThreshold:  *cfg.Detection.TrustThreshold,
+		DefaultAction:   cfg.Action,
+		DefaultScope:    domain.ScopeGlobal,
+		Bayes:           bayesAdapter{db: db},
+		BayesScope:      "global",
+		BayesThreshold:  *cfg.Detection.BayesThreshold,
+		BayesVocabGuess: cfg.Detection.BayesVocabGuess,
+		BayesEnabled:    *cfg.Detection.BayesEnabled,
 	}
 	handler.SetDecide(func(m domain.Message) (domain.Verdict, bool) {
 		return cascade.Decide(m, false)
