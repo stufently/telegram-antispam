@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	tgbot "github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -15,12 +16,19 @@ import (
 
 	"github.com/stufently/telegram-antispam/internal/admin"
 	"github.com/stufently/telegram-antispam/internal/config"
+	"github.com/stufently/telegram-antispam/internal/detect"
+	"github.com/stufently/telegram-antispam/internal/domain"
 	"github.com/stufently/telegram-antispam/internal/incident"
 	"github.com/stufently/telegram-antispam/internal/queue"
 	"github.com/stufently/telegram-antispam/internal/store"
 	"github.com/stufently/telegram-antispam/internal/telegram"
 	"github.com/stufently/telegram-antispam/internal/version"
 )
+
+// historySweepInterval is how often the in-memory detection history
+// (duplicate/short-message sliding windows) is swept to drop stale events
+// and bound memory usage.
+const historySweepInterval = 5 * time.Minute
 
 // globalRateLimit and globalRateBurst bound total outbound Telegram calls
 // across all chats; perChatRateLimit/perChatRateBurst bound calls to any one
@@ -187,6 +195,67 @@ func main() {
 	handler = telegram.NewHandler(db, seq, cfgStore, machine)
 	handler.SetContext(ctx) // so an album flush triggered off-request during shutdown observes cancellation instead of blocking forever
 	adminHandler = admin.NewHandler(livePort, db, operatorSet(cfg))
+
+	// The M3 detection cascade: db satisfies detect.TrustSource (trust is
+	// store-backed and durable), while the sliding-window duplicate/short
+	// history is in-memory (hist) and swept periodically below so it
+	// doesn't grow unbounded. cfg (loaded once at startup) rather than
+	// cfgStore.Current() mirrors how machine/handler are already built from
+	// the startup snapshot; the config watcher's hot-reload does not
+	// currently extend to rebuilding the cascade.
+	hist := detect.NewMemHistory()
+	behaviorCfg := detect.BehaviorCfg{
+		DupThreshold:        *cfg.Detection.Behavior.DupThreshold,
+		DupWindow:           cfg.Detection.Behavior.DupWindow.Duration(),
+		ShortLen:            *cfg.Detection.Behavior.ShortLen,
+		ShortFloodThreshold: *cfg.Detection.Behavior.ShortFloodThreshold,
+		ShortWindow:         cfg.Detection.Behavior.ShortWindow.Duration(),
+		FlagEdits:           cfg.Detection.Behavior.FlagEdits,
+	}
+	cascade := detect.Cascade{
+		Trust: db,
+		Hist:  hist,
+		Rules: detect.Rules{
+			DenyStopwords:          cfg.Detection.Rules.DenyStopwords,
+			AllowStopwords:         cfg.Detection.Rules.AllowStopwords,
+			BlockLinksForUntrusted: *cfg.Detection.Rules.BlockLinksForUntrusted,
+			BannedDomains:          cfg.Detection.Rules.BannedDomains,
+		},
+		Behavior:       behaviorCfg,
+		TrustThreshold: *cfg.Detection.TrustThreshold,
+		DefaultAction:  cfg.Action,
+		DefaultScope:   domain.ScopeGlobal,
+	}
+	handler.SetDecide(func(m domain.Message) (domain.Verdict, bool) {
+		return cascade.Decide(m, false)
+	})
+	handler.SetEditedDecide(func(m domain.Message) (domain.Verdict, bool) {
+		return cascade.Decide(m, true)
+	})
+
+	// Periodically sweep hist so stale duplicate/short-message events don't
+	// accumulate forever. maxAge is a couple of windows wide so a burst
+	// right at sweep time is never pruned mid-window; the ticker itself
+	// (not maxAge) is what bounds memory growth.
+	sweepMaxAge := 2 * behaviorCfg.DupWindow
+	if w := 2 * behaviorCfg.ShortWindow; w > sweepMaxAge {
+		sweepMaxAge = w
+	}
+	if sweepMaxAge <= 0 {
+		sweepMaxAge = time.Hour
+	}
+	go func() {
+		ticker := time.NewTicker(historySweepInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				hist.Sweep(sweepMaxAge)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	log.Print("long polling started")
 	b.Start(ctx) // blocks until ctx is cancelled (SIGINT/SIGTERM)

@@ -5,3 +5,44 @@ chats:
   mode: auto
   start_in_dry_run: true
   allowlist: []
+
+# detection configures the M3 detection cascade (internal/detect). Every
+# field below is optional; unset fields fall back to the defaults shown
+# here as comments. Durations are Go duration strings (e.g. "60s", "5m").
+detection:
+  # Meaningful messages a (chat, user) needs before being treated as
+  # trusted (exempt from the link-block rule below). Default: 5. An
+  # explicit 0 is honored (everyone is trusted immediately).
+  trust_threshold: 5
+
+  rules:
+    # Substrings that, if present in a message, are always treated as
+    # spam. Case-insensitive. Default: [].
+    deny_stopwords: []
+    # Substrings that override a deny_stopwords match when also present
+    # (e.g. to whitelist a phrase that contains a banned word as a
+    # substring). Default: [].
+    allow_stopwords: []
+    # Block messages containing links from users who are not yet
+    # trusted (see trust_threshold). Default: true.
+    block_links_for_untrusted: true
+    # Domains that are always treated as spam links, regardless of trust.
+    # Default: [].
+    banned_domains: []
+
+  behavior:
+    # Duplicate-message count within dup_window that triggers a hit.
+    # 0 disables this check. Default: 3.
+    dup_threshold: 3
+    # Sliding window for duplicate-message counting. Default: 60s.
+    dup_window: 60s
+    # Messages at or below this length (in runes) count as "short" for
+    # short-message flood detection. Default: 10.
+    short_len: 10
+    # Short-message count within short_window that triggers a hit.
+    # 0 disables this check. Default: 5.
+    short_flood_threshold: 5
+    # Sliding window for short-message flood counting. Default: 30s.
+    short_window: 30s
+    # Flag edited messages as a signal on their own. Default: false.
+    flag_edits: false

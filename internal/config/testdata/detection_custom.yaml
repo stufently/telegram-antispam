@@ -1,0 +1,16 @@
+bot_token: "12345:AA"
+admin_chat_id: -1009999
+action: delete_mute
+chats:
+  mode: auto
+  start_in_dry_run: true
+  allowlist: []
+detection:
+  trust_threshold: 8
+  rules:
+    deny_stopwords: ["casino"]
+    block_links_for_untrusted: false
+  behavior:
+    dup_threshold: 2
+    dup_window: 90s
+    flag_edits: true

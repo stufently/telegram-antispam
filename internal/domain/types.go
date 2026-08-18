@@ -9,6 +9,16 @@ type Sender struct {
 	DisplayName  string
 }
 
+// Entity is a normalized Telegram message entity (from Entities or
+// CaptionEntities), used by detectors to inspect links, mentions, and other
+// marked-up spans without depending on library types.
+type Entity struct {
+	Type   string
+	URL    string
+	Offset int
+	Length int
+}
+
 // Message is the normalized-envelope of an incoming Telegram message. Text
 // normalization for detection happens later; this is the delivery-layer view.
 type Message struct {
@@ -21,6 +31,12 @@ type Message struct {
 	Date               int64
 	IsAutomaticForward bool
 	LinkedChatID       int64
+	Entities           []Entity
+	SenderTag          string
+	ExternalReplyText  string
+	PollOptionTexts    []string
+	EditDate           int64
+	HasMedia           bool
 }
 
 // Signal is one explainable reason produced by a detector.

@@ -20,7 +20,7 @@ func (r *stubRepo) InsertPending(int64, int, int64, bool) (int64, bool, error) {
 	return 1, r.fresh, nil
 }
 func (r *stubRepo) SetIncidentState(_ int64, s domain.IncidentState) error { r.state = s; return nil }
-func (r *stubRepo) AddEvidence(int64, int64, []int) error                 { return nil }
+func (r *stubRepo) AddEvidence(int64, int64, []int) error                  { return nil }
 
 func liveIncident(dry bool) domain.Incident {
 	return domain.Incident{
@@ -88,7 +88,7 @@ func TestEvidenceFailureHighConfidenceStillActs(t *testing.T) {
 	f.CopyErr = errors.New("copy failed")
 	repo := &stubRepo{fresh: true}
 	m := New(f, repo, 999)
-	inc := liveIncident(false) // Action ban, not dry-run
+	inc := liveIncident(false)    // Action ban, not dry-run
 	inc.Verdict.Confidence = 0.99 // hard deny, >= hardConfidence (0.9)
 
 	if err := m.Handle(context.Background(), inc); err != nil {
