@@ -32,6 +32,24 @@ func ToDomainMessage(m *models.Message) domain.Message {
 	}
 	sender.Kind = detect.ClassifySender(in)
 
+	entities := toDomainEntities(m.Entities)
+	entities = append(entities, toDomainEntities(m.CaptionEntities)...)
+
+	var externalReplyText string
+	if m.ExternalReply != nil && m.Quote != nil {
+		externalReplyText = m.Quote.Text
+	}
+
+	var pollOptionTexts []string
+	if m.Poll != nil {
+		for _, opt := range m.Poll.Options {
+			pollOptionTexts = append(pollOptionTexts, opt.Text)
+		}
+	}
+
+	hasMedia := m.Photo != nil || m.Video != nil || m.Document != nil ||
+		m.Audio != nil || m.Voice != nil || m.Sticker != nil || m.Animation != nil
+
 	return domain.Message{
 		ChatID:             m.Chat.ID,
 		MessageID:          m.ID,
@@ -41,5 +59,31 @@ func ToDomainMessage(m *models.Message) domain.Message {
 		Text:               text,
 		Date:               int64(m.Date),
 		IsAutomaticForward: m.IsAutomaticForward,
+		Entities:           entities,
+		SenderTag:          m.SenderTag,
+		ExternalReplyText:  externalReplyText,
+		PollOptionTexts:    pollOptionTexts,
+		EditDate:           int64(m.EditDate),
+		HasMedia:           hasMedia,
 	}
+}
+
+// toDomainEntities maps library message entities to domain entities. Type is
+// carried as its raw snake_case string (models.MessageEntityType values are
+// already the Bot API's snake_case names, e.g. "text_link", "url",
+// "mention", "custom_emoji").
+func toDomainEntities(src []models.MessageEntity) []domain.Entity {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]domain.Entity, 0, len(src))
+	for _, e := range src {
+		out = append(out, domain.Entity{
+			Type:   string(e.Type),
+			URL:    e.URL,
+			Offset: e.Offset,
+			Length: e.Length,
+		})
+	}
+	return out
 }
