@@ -229,3 +229,64 @@ func TestCascadeDecide_CurrentAdminImmune(t *testing.T) {
 		t.Fatal("non-admin impersonator must still be flagged")
 	}
 }
+
+type fakeBlocklist struct{ ids map[int64]bool }
+
+func (f fakeBlocklist) Listed(id int64) bool { return f.ids[id] }
+
+// TestCascadeDecide_BlocklistUntrustedOnly guards the blocklist cascade
+// stage: a global-banlist hit is authoritative but only applies to
+// non-trusted, non-admin senders, consistent with the trust gate and the
+// §4 admin-immunity gate that runs ahead of it.
+func TestCascadeDecide_BlocklistUntrustedOnly(t *testing.T) {
+	const chatID = int64(1)
+
+	baseCascade := func() Cascade {
+		return Cascade{
+			Hist:             &fakeHistory{},
+			Rules:            Rules{},
+			Behavior:         BehaviorCfg{},
+			TrustThreshold:   5,
+			DefaultAction:    domain.ActionDeleteMute,
+			DefaultScope:     domain.ScopeGlobal,
+			Blocklist:        fakeBlocklist{ids: map[int64]bool{2: true}},
+			BlocklistEnabled: true,
+		}
+	}
+
+	// Untrusted listed sender: actionable with reason "blocklist".
+	c := baseCascade()
+	c.Trust = &fakeTrustSource{counts: map[[2]int64]int{}}
+	m := domain.Message{ChatID: chatID, Sender: domain.Sender{UserID: 2}, Text: "hello"}
+
+	v, actionable := c.Decide(m, false)
+	if !actionable {
+		t.Fatalf("expected actionable verdict for listed untrusted sender, got %+v", v)
+	}
+	if v.Reason != "blocklist" {
+		t.Errorf("expected reason blocklist, got %q", v.Reason)
+	}
+
+	// Same listed sender but trusted: blocklist stage skipped.
+	c2 := baseCascade()
+	c2.Trust = &fakeTrustSource{counts: map[[2]int64]int{{chatID, 2}: 10}}
+	if v2, actionable2 := c2.Decide(m, false); actionable2 {
+		t.Fatalf("expected trusted listed sender to be skipped, got %+v", v2)
+	}
+
+	// Listed sender who is also an admin: admin-immunity gate wins.
+	c3 := baseCascade()
+	c3.Trust = &fakeTrustSource{counts: map[[2]int64]int{}}
+	c3.Admins = fakeAdminSrc{a: []AdminIdentity{{UserID: 2}}}
+	if v3, actionable3 := c3.Decide(m, false); actionable3 {
+		t.Fatalf("expected admin listed sender to be immune, got %+v", v3)
+	}
+
+	// Non-listed untrusted sender: falls through the blocklist stage.
+	c4 := baseCascade()
+	c4.Trust = &fakeTrustSource{counts: map[[2]int64]int{}}
+	m4 := domain.Message{ChatID: chatID, Sender: domain.Sender{UserID: 3}, Text: "hello"}
+	if v4, actionable4 := c4.Decide(m4, false); actionable4 {
+		t.Fatalf("expected non-listed sender to fall through, got %+v", v4)
+	}
+}
