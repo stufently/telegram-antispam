@@ -40,3 +40,15 @@ func TestSequencerRunsDistinctChats(t *testing.T) {
 		t.Fatalf("both chats should run, got %v", got)
 	}
 }
+
+func TestSubmitAfterWaitIsNoop(t *testing.T) {
+	s := NewSequencer()
+	s.Wait() // shut down with no work
+	ran := false
+	// Must not panic; the job must not run.
+	s.Submit(-1, func() { ran = true })
+	s.Wait() // idempotent second Wait
+	if ran {
+		t.Fatal("job submitted after Wait should not run")
+	}
+}
