@@ -49,3 +49,12 @@ func (s *Set) Len() int {
 	}
 	return len(s.ids)
 }
+
+// IDs returns the sorted, deduplicated ids backing the set. The returned
+// slice is READ-ONLY; callers must not mutate it. A nil receiver returns nil.
+func (s *Set) IDs() []int64 {
+	if s == nil {
+		return nil
+	}
+	return s.ids
+}
