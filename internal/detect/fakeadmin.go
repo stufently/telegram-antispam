@@ -8,6 +8,7 @@ import (
 
 // AdminIdentity holds one current admin's public identifiers for a chat.
 type AdminIdentity struct {
+	UserID      int64
 	Username    string
 	DisplayName string
 	CustomTitle string

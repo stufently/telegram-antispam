@@ -127,6 +127,70 @@ func TestObserveNewRowSendsNoNotice(t *testing.T) {
 	}
 }
 
+func TestObserveSelfRenameByAdminSendsNoNotice(t *testing.T) {
+	store := &fakeStore{prevUsername: "boss", prevDisplay: "Boss", changed: true}
+	admins := fakeAdmins{a: []detect.AdminIdentity{{UserID: 7, Username: "owner"}}}
+	port := fake.New()
+
+	w := &MemberWatcher{
+		Store:       store,
+		Admins:      admins,
+		AdminChatID: 999,
+		Port:        port,
+		MaxDistance: 1,
+		Enabled:     true,
+	}
+
+	// Admin 7 renames themselves to a name that matches their own
+	// admin-list entry — not impersonation.
+	e := MemberEvent{ChatID: 1, UserID: 7, Username: "0wner", DisplayName: "0wner"}
+	if err := w.Observe(context.Background(), e); err != nil {
+		t.Fatalf("Observe returned error: %v", err)
+	}
+
+	count := 0
+	for _, c := range port.Calls() {
+		if c == "SendAdmin" {
+			count++
+		}
+	}
+	if count != 0 {
+		t.Fatalf("expected 0 SendAdmin calls for admin self-rename, got %d", count)
+	}
+}
+
+func TestObserveOtherUserRenameToMatchAdminSendsOneNotice(t *testing.T) {
+	store := &fakeStore{prevUsername: "bob", prevDisplay: "Bob", changed: true}
+	admins := fakeAdmins{a: []detect.AdminIdentity{{UserID: 7, Username: "owner"}}}
+	port := fake.New()
+
+	w := &MemberWatcher{
+		Store:       store,
+		Admins:      admins,
+		AdminChatID: 999,
+		Port:        port,
+		MaxDistance: 1,
+		Enabled:     true,
+	}
+
+	// A different user (8) renames to match admin 7's identity —
+	// impersonation, should still notice.
+	e := MemberEvent{ChatID: 1, UserID: 8, Username: "0wner", DisplayName: "0wner"}
+	if err := w.Observe(context.Background(), e); err != nil {
+		t.Fatalf("Observe returned error: %v", err)
+	}
+
+	count := 0
+	for _, c := range port.Calls() {
+		if c == "SendAdmin" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 SendAdmin call for other-user rename, got %d", count)
+	}
+}
+
 func TestObserveDisabledStillRecordsButSendsNoNotice(t *testing.T) {
 	store := &fakeStore{prevUsername: "bob", prevDisplay: "Bob", changed: true}
 	admins := fakeAdmins{a: []detect.AdminIdentity{{Username: "owner"}}}

@@ -224,11 +224,15 @@ func memberFromChatMember(cm models.ChatMember) Member {
 	switch cm.Type {
 	case models.ChatMemberTypeOwner:
 		if cm.Owner != nil && cm.Owner.User != nil {
-			return memberFromUser(*cm.Owner.User, string(cm.Owner.Status))
+			m := memberFromUser(*cm.Owner.User, string(cm.Owner.Status))
+			m.CustomTitle = cm.Owner.CustomTitle
+			return m
 		}
 	case models.ChatMemberTypeAdministrator:
 		if cm.Administrator != nil {
-			return memberFromUser(cm.Administrator.User, string(cm.Administrator.Status))
+			m := memberFromUser(cm.Administrator.User, string(cm.Administrator.Status))
+			m.CustomTitle = cm.Administrator.CustomTitle
+			return m
 		}
 	case models.ChatMemberTypeMember:
 		if cm.Member != nil && cm.Member.User != nil {

@@ -17,6 +17,7 @@ type Fake struct {
 	CopyErr      error
 	SendAdminID  int
 	Admins       []telegram.Member
+	AdminsErr    error
 	BanSenderErr error
 	EphemeralID  int
 	EphemeralErr error
@@ -101,6 +102,9 @@ func (f *Fake) BanSenderChat(_ context.Context, _, _ int64) error {
 
 func (f *Fake) GetChatAdministrators(_ context.Context, _ int64) ([]telegram.Member, error) {
 	f.log("GetChatAdministrators")
+	if f.AdminsErr != nil {
+		return nil, f.AdminsErr
+	}
 	return f.Admins, nil
 }
 

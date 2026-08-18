@@ -15,6 +15,7 @@ type Member struct {
 	Status      string
 	Username    string
 	DisplayName string
+	CustomTitle string
 }
 
 // AdminMessage is a summary sent to the admin chat alongside copied evidence.

@@ -57,6 +57,11 @@ func (w *MemberWatcher) Observe(ctx context.Context, e MemberEvent) error {
 	newDisplay := strings.ToLower(e.DisplayName)
 
 	for _, admin := range w.Admins.AdminIdentities(e.ChatID) {
+		if admin.UserID != 0 && admin.UserID == e.UserID {
+			// An admin renaming themselves matches their own admin-list
+			// entry by construction; that's not impersonation.
+			continue
+		}
 		label, matched := matchAdmin(newUsername, newDisplay, admin, w.MaxDistance)
 		if !matched {
 			continue
