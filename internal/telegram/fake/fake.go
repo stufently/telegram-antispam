@@ -22,6 +22,15 @@ type Fake struct {
 	// LastAdmin captures the most recent AdminMessage passed to SendAdmin, so
 	// tests can assert on fields SendAdmin doesn't otherwise record.
 	LastAdmin telegram.AdminMessage
+
+	// LastReactionDelete captures the most recent args passed to
+	// DeleteMessageReaction, so tests can assert on fields the call log
+	// doesn't otherwise record.
+	LastReactionDelete struct {
+		Chat      int64
+		MessageID int
+		UserID    int64
+	}
 }
 
 func New() *Fake { return &Fake{} }
@@ -93,5 +102,15 @@ func (f *Fake) AnswerCallback(_ context.Context, _, _ string) error {
 
 func (f *Fake) EditAdminMarkup(_ context.Context, _ int64, _ int, _ [][]telegram.Button) error {
 	f.log("EditAdminMarkup")
+	return nil
+}
+
+func (f *Fake) DeleteMessageReaction(_ context.Context, chat int64, messageID int, userID int64) error {
+	f.mu.Lock()
+	f.LastReactionDelete.Chat = chat
+	f.LastReactionDelete.MessageID = messageID
+	f.LastReactionDelete.UserID = userID
+	f.mu.Unlock()
+	f.log("DeleteMessageReaction")
 	return nil
 }

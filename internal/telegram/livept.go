@@ -274,6 +274,13 @@ func (p *LivePort) EditAdminMarkup(ctx context.Context, adminChat int64, message
 	})
 }
 
+func (p *LivePort) DeleteMessageReaction(ctx context.Context, chat int64, messageID int, userID int64) error {
+	return submitSyncErr(ctx, p.disp, chat, p.prio("DeleteMessageReaction"), func(ctx context.Context) error {
+		_, err := p.b.DeleteMessageReaction(ctx, &bot.DeleteMessageReactionParams{ChatID: chat, MessageID: messageID, UserID: userID})
+		return mapRetry(err)
+	})
+}
+
 func toInlineKeyboard(buttons [][]Button) [][]models.InlineKeyboardButton {
 	out := make([][]models.InlineKeyboardButton, len(buttons))
 	for i, row := range buttons {

@@ -63,3 +63,19 @@ func TestFakeM2Methods(t *testing.T) {
 		}
 	}
 }
+
+func TestFakeDeleteMessageReaction(t *testing.T) {
+	f := New()
+	ctx := context.Background()
+	if err := f.DeleteMessageReaction(ctx, 7, 9, 2); err != nil {
+		t.Fatal(err)
+	}
+	got := f.Calls()
+	want := []string{"DeleteMessageReaction"}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("calls=%v want=%v", got, want)
+	}
+	if f.LastReactionDelete.Chat != 7 || f.LastReactionDelete.MessageID != 9 || f.LastReactionDelete.UserID != 2 {
+		t.Fatalf("LastReactionDelete=%+v want {Chat:7 MessageID:9 UserID:2}", f.LastReactionDelete)
+	}
+}
