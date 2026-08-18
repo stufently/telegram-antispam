@@ -1,0 +1,7 @@
+bot_token: "REPLACE_WITH_BOTFATHER_TOKEN"
+admin_chat_id: -1000000000000
+action: delete_mute
+chats:
+  mode: auto
+  start_in_dry_run: true
+  allowlist: []
