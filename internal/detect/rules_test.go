@@ -8,12 +8,12 @@ import (
 
 func TestRulesCheck(t *testing.T) {
 	tests := []struct {
-		name          string
-		rules         Rules
-		msg           NormalizedMessage
-		trusted       bool
-		wantSignal    domain.Signal
-		wantHit       bool
+		name       string
+		rules      Rules
+		msg        NormalizedMessage
+		trusted    bool
+		wantSignal domain.Signal
+		wantHit    bool
 	}{
 		// Deny stopword tests
 		{
@@ -166,7 +166,7 @@ func TestRulesCheck(t *testing.T) {
 		{
 			name: "deny takes precedence over link policy",
 			rules: Rules{
-				DenyStopwords:         []string{"crypto"},
+				DenyStopwords:          []string{"crypto"},
 				BlockLinksForUntrusted: true,
 			},
 			msg: NormalizedMessage{
@@ -181,7 +181,7 @@ func TestRulesCheck(t *testing.T) {
 			name: "link policy takes precedence over banned domain",
 			rules: Rules{
 				BlockLinksForUntrusted: true,
-				BannedDomains:         []string{"badsite.com"},
+				BannedDomains:          []string{"badsite.com"},
 			},
 			msg: NormalizedMessage{
 				Text:  "check this",

@@ -38,7 +38,7 @@ func TestToDomainMessageExternalChannel(t *testing.T) {
 
 func TestToDomainMessageExtractsEntities(t *testing.T) {
 	m := &models.Message{
-		ID:   5, Chat: models.Chat{ID: -100123, Type: models.ChatTypeSupergroup},
+		ID: 5, Chat: models.Chat{ID: -100123, Type: models.ChatTypeSupergroup},
 		From: &models.User{ID: 7},
 		Text: "click here",
 		Entities: []models.MessageEntity{

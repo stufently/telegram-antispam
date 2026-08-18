@@ -9,10 +9,10 @@ import (
 
 // Rules defines the hard-rule configuration for detecting spam.
 type Rules struct {
-	DenyStopwords         []string
-	AllowStopwords        []string
+	DenyStopwords          []string
+	AllowStopwords         []string
 	BlockLinksForUntrusted bool
-	BannedDomains         []string
+	BannedDomains          []string
 }
 
 // Check applies hard rules to a normalized message and returns the first

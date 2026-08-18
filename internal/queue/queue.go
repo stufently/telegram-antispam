@@ -33,8 +33,8 @@ func (p pqueue) Less(i, j int) bool {
 	}
 	return p[i].seq < p[j].seq
 }
-func (p pqueue) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
-func (p *pqueue) Push(x any)        { *p = append(*p, x.(Job)) }
+func (p pqueue) Swap(i, j int) { p[i], p[j] = p[j], p[i] }
+func (p *pqueue) Push(x any)   { *p = append(*p, x.(Job)) }
 func (p *pqueue) Pop() any {
 	old := *p
 	n := len(old)

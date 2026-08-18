@@ -45,8 +45,8 @@ func TestNormalizeCollectsLinksAndText(t *testing.T) {
 
 func TestNormalizeCollectsHiddenAndPlainLinks(t *testing.T) {
 	m := domain.Message{
-		Text:     "click here",
-		Entities: []domain.Entity{{Type: "text_link", URL: "https://hidden.example/x", Offset: 0, Length: 5}},
+		Text:              "click here",
+		Entities:          []domain.Entity{{Type: "text_link", URL: "https://hidden.example/x", Offset: 0, Length: 5}},
 		ExternalReplyText: "see t.me/plainchannel",
 	}
 	n := Normalize(m)
