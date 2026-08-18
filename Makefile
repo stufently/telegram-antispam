@@ -1,0 +1,9 @@
+.PHONY: test vet build tidy
+test:
+	./scripts/dev.sh test ./...
+vet:
+	./scripts/dev.sh vet ./...
+build:
+	./scripts/dev.sh build ./...
+tidy:
+	./scripts/dev.sh mod tidy
