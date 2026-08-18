@@ -75,6 +75,18 @@ func (c *chatLimiters) get(chat int64) *rate.Limiter {
 }
 
 func main() {
+	// Handle import subcommand if present
+	if len(os.Args) > 1 && os.Args[1] == "import" {
+		added, skipped, err := runImport(os.Args[2:], func(p string) (*store.DB, error) {
+			return store.Open(p)
+		})
+		if err != nil {
+			log.Fatalf("import: %v", err)
+		}
+		log.Printf("imported: added=%d skipped=%d", added, skipped)
+		os.Exit(0)
+	}
+
 	log.Printf("tg-antispam %s starting", version.String())
 
 	cfgPath := os.Getenv("CONFIG_PATH")
