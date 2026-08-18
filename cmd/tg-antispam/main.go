@@ -15,6 +15,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/stufently/telegram-antispam/internal/admin"
+	"github.com/stufently/telegram-antispam/internal/blocklist"
 	"github.com/stufently/telegram-antispam/internal/config"
 	"github.com/stufently/telegram-antispam/internal/detect"
 	"github.com/stufently/telegram-antispam/internal/domain"
@@ -302,6 +303,25 @@ func main() {
 		ShortWindow:         cfg.Detection.Behavior.ShortWindow.Duration(),
 		FlagEdits:           cfg.Detection.Behavior.FlagEdits,
 	}
+	// Blocklist mirror (LOLS + CAS). Declared as the interface so a disabled
+	// blocklist leaves cascade.Blocklist a true nil interface — assigning a
+	// typed-nil *blocklist.Blocklist would make `c.Blocklist != nil` true and
+	// risk a nil-receiver call. The syncer runs under shutdownCtx like the
+	// history sweeper.
+	var blocklistSource detect.BlocklistSource
+	if *cfg.Blocklist.Enabled {
+		bl := blocklist.NewWithConfig(blocklist.Config{
+			LolsFullURL:   cfg.Blocklist.LolsFullURL,
+			LolsDeltaURL:  cfg.Blocklist.LolsDeltaURL,
+			CasFullURL:    cfg.Blocklist.CasFullURL,
+			FullInterval:  cfg.Blocklist.FullRefresh.Duration(),
+			DeltaInterval: cfg.Blocklist.DeltaRefresh.Duration(),
+			HTTPTimeout:   cfg.Blocklist.HTTPTimeout.Duration(),
+		})
+		go bl.Run(shutdownCtx)
+		blocklistSource = bl
+	}
+
 	cascade := detect.Cascade{
 		Trust: db,
 		Hist:  hist,
@@ -326,6 +346,8 @@ func main() {
 			SuspiciousTags: cfg.Detection.FakeAdminSuspiciousTags,
 			MaxDistance:    cfg.Detection.FakeAdminMaxDistance,
 		},
+		Blocklist:        blocklistSource,
+		BlocklistEnabled: *cfg.Blocklist.Enabled,
 	}
 	handler.SetDecide(func(m domain.Message) (domain.Verdict, bool) {
 		return cascade.Decide(m, false)
