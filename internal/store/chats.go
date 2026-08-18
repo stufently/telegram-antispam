@@ -30,6 +30,20 @@ ON CONFLICT(chat_id) DO UPDATE SET
 	})
 }
 
+// RegisterChat inserts a chat with initial lifecycle state only if it is absent.
+// Unlike UpsertChat it never overwrites enabled/dry_run/linked_chat_id for an
+// existing chat, so calling it on every inbound message cannot clobber admin
+// lifecycle changes (disable, dry-run promotion, discovered linked_chat_id).
+func (db *DB) RegisterChat(chatID int64, dryRun bool) error {
+	return db.Write(func(tx *sql.Tx) error {
+		_, err := tx.Exec(
+			`INSERT INTO chats(chat_id, enabled, dry_run) VALUES(?, 1, ?)
+			 ON CONFLICT(chat_id) DO NOTHING`,
+			chatID, b2i(dryRun))
+		return err
+	})
+}
+
 func (db *DB) GetChat(chatID int64) (ChatRow, bool, error) {
 	var r ChatRow
 	var en, dry int

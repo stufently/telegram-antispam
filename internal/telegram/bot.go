@@ -72,11 +72,9 @@ func (h *Handler) OnMessage(ctx context.Context, updateID int64, m domain.Messag
 		return
 	}
 	h.seq.Submit(m.ChatID, func() {
-		_ = h.db.UpsertChat(store.ChatRow{
-			ChatID:  m.ChatID,
-			Enabled: true,
-			DryRun:  cfg.Chats.StartInDryRun,
-		})
+		if err := h.db.RegisterChat(m.ChatID, cfg.Chats.StartInDryRun); err != nil {
+			log.Printf("register chat %d: %v", m.ChatID, err)
+		}
 		log.Printf("chat=%d msg=%d sender=%s: observed (dry-run spine)", m.ChatID, m.MessageID, m.Sender.Kind)
 	})
 }

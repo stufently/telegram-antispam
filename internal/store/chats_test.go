@@ -36,6 +36,29 @@ func TestChatUpsertGetDisable(t *testing.T) {
 	}
 }
 
+func TestRegisterChatDoesNotClobberLifecycle(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+
+	if err := db.RegisterChat(-100123, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DisableChat(-100123); err != nil {
+		t.Fatal(err)
+	}
+	// a later message re-registers the same chat; it must NOT re-enable it
+	if err := db.RegisterChat(-100123, true); err != nil {
+		t.Fatal(err)
+	}
+	row, ok, err := db.GetChat(-100123)
+	if err != nil || !ok {
+		t.Fatalf("get: ok=%v err=%v", ok, err)
+	}
+	if row.Enabled {
+		t.Fatal("RegisterChat re-enabled a disabled chat (lifecycle clobbered)")
+	}
+}
+
 func TestResolveAlias(t *testing.T) {
 	db := newMigrated(t)
 	defer db.Close()

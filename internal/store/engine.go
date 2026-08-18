@@ -74,8 +74,11 @@ func (db *DB) runTx(fn func(*sql.Tx) error) (err error) {
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			_ = tx.Rollback()
-			err = fmt.Errorf("store: write callback panicked: %v", r)
+			if rbErr := tx.Rollback(); rbErr != nil {
+				err = fmt.Errorf("store: write callback panicked: %v (rollback failed: %v)", r, rbErr)
+			} else {
+				err = fmt.Errorf("store: write callback panicked: %v", r)
+			}
 		}
 	}()
 	if e := fn(tx); e != nil {
