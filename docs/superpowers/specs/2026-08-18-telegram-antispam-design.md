@@ -435,14 +435,25 @@ Verified against the official Bot API changelog and against the library source
   queue as the safe default on timeout.
 - **Communities (Bot API 10.2)** — potential native chat grouping; evaluate later.
 
-**Deferred experiment — optional MTProto module (§ not in v1):** decide whether to add
-an optional MTProto module (own `api_id`/`api_hash` in config) for `channels.getParticipants`
-(member enumeration — impossible via Bot API, enables retro-cleanup of already-seated
-bots) and account-age signals. The open question is whether Telegram populates
-`PeerSettings.registration_month` / `name_change_date` for a bot session. A throwaway
-probe is built (`scratchpad/mtproto-probe`); the result decides inclusion. If negative,
-MTProto is dropped and the project keeps a single network stack (the primary
-simplicity goal). This module, if adopted, never becomes a core dependency.
+**MTProto experiment — resolved 2026-08-18 (measured, not assumed):** a throwaway
+probe authenticated a bot session over MTProto (`gotd/td`, official `api_id`) and
+measured two things against a real supergroup where the bot is admin:
+
+- `channels.getParticipants` — **works under a bot token** (returned the full member
+  list with access hashes). This capability is impossible via Bot API and would enable
+  retro-cleanup of already-seated bots.
+- `users.getFullUser` on real members — **succeeds, but every account-age field is
+  absent**: `PeerSettings.registration_month`, `phone_country`, `name_change_date`,
+  and `photo_change_date` all came back unset for two real members and for the bot
+  itself. **Telegram does not populate these fields for a bot session.**
+
+Conclusion: the account-age signal — MTProto's strongest justification — is not
+available to bots, so it is dropped. Member enumeration alone does not justify a second
+network stack, a mandatory per-install `api_id` registration, and userbot-ban exposure
+against the project's primary "much simpler" goal. **MTProto is not part of the project**
+unless a future, specific need reopens it as a strictly optional module. The v1
+fake-admin detector (§5.5) is unaffected: it tracks name changes via `chat_member`
+updates and Levenshtein-matches admin names, needing none of these MTProto fields.
 
 ---
 
