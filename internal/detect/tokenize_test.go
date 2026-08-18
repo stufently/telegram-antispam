@@ -6,12 +6,19 @@ import (
 
 func TestTokenize(t *testing.T) {
 	n := NormalizedMessage{
-		Text:  "buy cheap crypto now",
-		Links: []string{"http://spam.test/x"},
+		Text:   "buy cheap crypto now",
+		Links:  []string{"http://spam.test/x"},
 		RawLen: 20,
 	}
 	toks := Tokenize(n)
-	has := func(s string) bool { for _, t := range toks { if t == s { return true } }; return false }
+	has := func(s string) bool {
+		for _, t := range toks {
+			if t == s {
+				return true
+			}
+		}
+		return false
+	}
 	if !has("buy") || !has("crypto") {
 		t.Fatalf("unigrams missing: %v", toks)
 	}
@@ -31,16 +38,23 @@ func TestTokenizeMetaFeatures(t *testing.T) {
 		RawLen:         11,
 	}
 	toks := Tokenize(n)
-	has := func(s string) bool { for _, t := range toks { if t == s { return true } }; return false }
+	has := func(s string) bool {
+		for _, t := range toks {
+			if t == s {
+				return true
+			}
+		}
+		return false
+	}
 	if !has("has:custom_emoji") {
 		t.Fatalf("has:custom_emoji missing: %v", toks)
 	}
 
 	// Test mentions feature
 	n = NormalizedMessage{
-		Text:      "hello @user",
-		Mentions:  []string{"@user"},
-		RawLen:    11,
+		Text:     "hello @user",
+		Mentions: []string{"@user"},
+		RawLen:   11,
 	}
 	toks = Tokenize(n)
 	if !has("has:mention") {
@@ -74,7 +88,14 @@ func TestTokenizeBigrams(t *testing.T) {
 		RawLen: 20,
 	}
 	toks := Tokenize(n)
-	has := func(s string) bool { for _, t := range toks { if t == s { return true } }; return false }
+	has := func(s string) bool {
+		for _, t := range toks {
+			if t == s {
+				return true
+			}
+		}
+		return false
+	}
 
 	// Check all expected bigrams
 	expectedBigrams := []string{
@@ -97,7 +118,14 @@ func TestTokenizeMultipleLinks(t *testing.T) {
 		RawLen: 31,
 	}
 	toks := Tokenize(n)
-	has := func(s string) bool { for _, t := range toks { if t == s { return true } }; return false }
+	has := func(s string) bool {
+		for _, t := range toks {
+			if t == s {
+				return true
+			}
+		}
+		return false
+	}
 
 	if !has("host:example.com") || !has("host:spam.test") {
 		t.Fatalf("host features missing: %v", toks)

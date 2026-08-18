@@ -73,4 +73,3 @@ func extractUnigrams(text string) []string {
 
 	return unigrams
 }
-
