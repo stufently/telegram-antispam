@@ -45,4 +45,5 @@ type Port interface {
 	AnswerCallback(ctx context.Context, callbackID, text string) error
 	EditAdminMarkup(ctx context.Context, adminChat int64, messageID int, buttons [][]Button) error
 	DeleteMessageReaction(ctx context.Context, chat int64, messageID int, userID int64) error
+	SendEphemeral(ctx context.Context, chat, userID int64, text string) (int, error)
 }

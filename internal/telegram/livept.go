@@ -281,6 +281,16 @@ func (p *LivePort) DeleteMessageReaction(ctx context.Context, chat int64, messag
 	})
 }
 
+func (p *LivePort) SendEphemeral(ctx context.Context, chat, userID int64, text string) (int, error) {
+	return submitSync(ctx, p.disp, chat, p.prio("SendEphemeral"), func(ctx context.Context) (int, error) {
+		msg, err := p.b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chat, ReceiverUserID: userID, Text: text})
+		if err != nil {
+			return 0, mapRetry(err)
+		}
+		return msg.EphemeralMessageID, nil
+	})
+}
+
 func toInlineKeyboard(buttons [][]Button) [][]models.InlineKeyboardButton {
 	out := make([][]models.InlineKeyboardButton, len(buttons))
 	for i, row := range buttons {
