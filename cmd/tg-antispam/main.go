@@ -135,6 +135,10 @@ func main() {
 		// loop instead, so b.Start's internal WaitGroup only completes once
 		// the last handler call has returned.
 		tgbot.WithNotAsyncHandlers(),
+		// Pin single worker: per-chat FIFO ordering (via sequencer), album
+		// deduplication, and message-reaction dedup depend on a single inline
+		// update consumer; do not raise without a concurrent-ordering strategy.
+		tgbot.WithWorkers(1),
 		tgbot.WithAllowedUpdates([]string{
 			"message", "edited_message", "callback_query",
 			"chat_member", "my_chat_member", "message_reaction",
