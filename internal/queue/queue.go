@@ -60,6 +60,25 @@ func (q *Queue) Push(j Job) {
 	q.mu.Unlock()
 }
 
+// reserveSeq allocates the next FIFO sequence number under the queue lock.
+// It is used by Dispatcher.Submit to stamp a Job's seq before recording the
+// seq->chat mapping, so the mapping is guaranteed to exist before the job
+// becomes visible to pop (see pushSeq).
+func (q *Queue) reserveSeq() uint64 {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	seq := q.next
+	q.next++
+	return seq
+}
+
+// pushSeq pushes a job that already carries its seq (from reserveSeq).
+func (q *Queue) pushSeq(j Job) {
+	q.mu.Lock()
+	heap.Push(&q.pq, j)
+	q.mu.Unlock()
+}
+
 func (q *Queue) pop() (Job, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
