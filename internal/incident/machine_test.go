@@ -76,3 +76,51 @@ func TestEvidenceFailureStopsBeforeAction(t *testing.T) {
 		t.Fatalf("state = %v, want evidence_failed", repo.state)
 	}
 }
+
+func TestEvidenceFailureHighConfidenceStillActs(t *testing.T) {
+	f := fake.New()
+	f.CopyErr = errors.New("copy failed")
+	repo := &stubRepo{}
+	m := New(f, repo, 999)
+	inc := liveIncident(false) // Action ban, not dry-run
+	inc.Verdict.Confidence = 0.99 // hard deny, >= hardConfidence (0.9)
+
+	if err := m.Handle(context.Background(), inc); err != nil {
+		t.Fatalf("hard deny should proceed despite evidence failure, got err %v", err)
+	}
+	var banned, deleted bool
+	for _, c := range f.Calls() {
+		if c == "BanMember" {
+			banned = true
+		}
+		if c == "DeleteMessages" {
+			deleted = true
+		}
+	}
+	if !banned || !deleted {
+		t.Fatalf("hard deny must ban and delete despite evidence failure; calls=%v", f.Calls())
+	}
+	if repo.state != domain.StateDone {
+		t.Fatalf("final state = %v, want done", repo.state)
+	}
+}
+
+func TestDryRunStillCopiesEvidence(t *testing.T) {
+	f := fake.New()
+	m := New(f, &stubRepo{}, 999)
+	if err := m.Handle(context.Background(), liveIncident(true)); err != nil {
+		t.Fatal(err)
+	}
+	var copied, notified bool
+	for _, c := range f.Calls() {
+		if c == "CopyMessages" {
+			copied = true
+		}
+		if c == "SendAdmin" {
+			notified = true
+		}
+	}
+	if !copied || !notified {
+		t.Fatalf("dry-run must still copy evidence and notify admin; calls=%v", f.Calls())
+	}
+}
