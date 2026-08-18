@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stufently/telegram-antispam/internal/config"
+	"github.com/stufently/telegram-antispam/internal/detect"
 	"github.com/stufently/telegram-antispam/internal/domain"
 	"github.com/stufently/telegram-antispam/internal/store"
 )
@@ -60,11 +61,21 @@ type Handler struct {
 	machine IncidentMachine
 	album   *AlbumBuffer
 
-	// decide is the verdict source. M2 has no detector; the default always
-	// returns (Verdict{}, false), so OnMessage/OnEditedMessage keep M1
-	// behavior. M3 replaces it with the real detection cascade via
+	// decide is the verdict source for OnMessage (and for OnEditedMessage
+	// when editedDecide is nil, see below). M2 has no detector; the default
+	// always returns (Verdict{}, false), so OnMessage/OnEditedMessage keep
+	// M1 behavior. M3 replaces it with the real detection cascade via
 	// SetDecide.
 	decide func(domain.Message) (domain.Verdict, bool)
+
+	// editedDecide, when set via SetEditedDecide, is the verdict source for
+	// OnEditedMessage instead of decide. It exists so the wiring in main
+	// can pass edited=true into the cascade (detect.Cascade.Decide takes an
+	// edited bool) for the edited path while decide passes edited=false for
+	// the OnMessage path. Left nil, OnEditedMessage falls back to decide,
+	// which keeps pre-M3 behavior (and existing tests that only call
+	// SetDecide) working unchanged.
+	editedDecide func(domain.Message) (domain.Verdict, bool)
 
 	// rootCtx is used for work that runs off the AlbumBuffer's own timer
 	// goroutine (flushAlbum), which has no request context of its own. It
@@ -97,6 +108,16 @@ func (h *Handler) SetDecide(decide func(domain.Message) (domain.Verdict, bool)) 
 	h.decide = decide
 }
 
+// SetEditedDecide overrides the verdict hook used for OnEditedMessage,
+// distinct from SetDecide's hook (used for OnMessage). It exists so main
+// can wire cascade.Decide(m, true) for edits — the FlagEdits behavioral
+// check depends on knowing a message is an edit — while SetDecide wires
+// cascade.Decide(m, false) for new messages. If never called,
+// OnEditedMessage falls back to the SetDecide hook.
+func (h *Handler) SetEditedDecide(decide func(domain.Message) (domain.Verdict, bool)) {
+	h.editedDecide = decide
+}
+
 // SetContext sets the context used for work triggered off the AlbumBuffer's
 // own timer goroutine (see rootCtx). Call it once during setup, before any
 // updates can arrive.
@@ -112,16 +133,18 @@ func (h *Handler) Stop() {
 
 // OnMessage is called by the poller for each message update.
 func (h *Handler) OnMessage(ctx context.Context, updateID int64, m domain.Message) {
-	h.onUpdate(ctx, updateID, m)
+	h.onUpdate(ctx, updateID, m, false)
 }
 
 // OnEditedMessage is called by the poller for each edited_message update; it
-// runs the same pipeline as OnMessage.
+// runs the same pipeline as OnMessage, but marks the message as edited so
+// the edited-specific decide hook (see editedDecide) and behavioral checks
+// (e.g. FlagEdits) see it as such.
 func (h *Handler) OnEditedMessage(ctx context.Context, updateID int64, m domain.Message) {
-	h.onUpdate(ctx, updateID, m)
+	h.onUpdate(ctx, updateID, m, true)
 }
 
-func (h *Handler) onUpdate(ctx context.Context, updateID int64, m domain.Message) {
+func (h *Handler) onUpdate(ctx context.Context, updateID int64, m domain.Message, edited bool) {
 	fresh, err := h.db.MarkUpdateSeen(updateID)
 	if err != nil {
 		log.Printf("dedup update %d: %v", updateID, err)
@@ -138,29 +161,34 @@ func (h *Handler) onUpdate(ctx context.Context, updateID int64, m domain.Message
 	// parts are buffered and flushed together as one incident.
 	if h.album.Add(m) {
 		h.seq.Submit(m.ChatID, func() {
-			h.process(ctx, []domain.Message{m})
+			h.process(ctx, []domain.Message{m}, edited)
 		})
 	}
 }
 
 // flushAlbum is the AlbumBuffer's flush callback: it runs on the buffer's
 // own timer goroutine, outside any request context, so it submits its own
-// sequencer job using rootCtx (see the Handler field doc).
+// sequencer job using rootCtx (see the Handler field doc). Album grouping
+// only applies to freshly-sent media groups, never to edits, so parts here
+// are always treated as not edited.
 func (h *Handler) flushAlbum(parts []domain.Message) {
 	if len(parts) == 0 {
 		return
 	}
 	chatID := parts[0].ChatID
 	h.seq.Submit(chatID, func() {
-		h.process(h.rootCtx, parts)
+		h.process(h.rootCtx, parts, false)
 	})
 }
 
 // process runs on the per-chat sequencer worker for parts (one standalone
 // message, or all parts of one flushed album): register the chat, then
 // either build and hand off one incident (decide reports an actionable
-// verdict) or fall back to the M1 observe-and-log behavior.
-func (h *Handler) process(ctx context.Context, parts []domain.Message) {
+// verdict) or fall back to the M1 observe-and-log behavior. It also runs
+// the trust bump for non-actionable meaningful messages (see below) — this
+// method always runs inside a sequencer job, i.e. off the single poll
+// goroutine, which is why the bump lives here rather than in onUpdate.
+func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bool) {
 	if len(parts) == 0 {
 		return
 	}
@@ -170,8 +198,22 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message) {
 		log.Printf("register chat %d: %v", first.ChatID, err)
 	}
 
-	verdict, ok := h.decide(first)
+	decide := h.decide
+	if edited && h.editedDecide != nil {
+		decide = h.editedDecide
+	}
+	verdict, ok := decide(first)
 	if !ok || !verdict.IsActionable() {
+		// A non-actionable, meaningful message from a real user counts
+		// toward that user's trust score (the M3 cascade's trust gate
+		// reads this back via detect.TrustSource). This is a wiring-level
+		// side effect, not part of the pure cascade: detect.Cascade.Decide
+		// never bumps trust itself.
+		if first.Sender.Kind == domain.SenderUser && detect.IsMeaningful(detect.Normalize(first)) {
+			if _, err := h.db.BumpTrust(first.ChatID, first.Sender.UserID); err != nil {
+				log.Printf("bump trust chat=%d user=%d: %v", first.ChatID, first.Sender.UserID, err)
+			}
+		}
 		for _, m := range parts {
 			log.Printf("chat=%d msg=%d sender=%s: observed (dry-run spine)", m.ChatID, m.MessageID, m.Sender.Kind)
 		}

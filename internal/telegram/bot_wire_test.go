@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/stufently/telegram-antispam/internal/config"
+	"github.com/stufently/telegram-antispam/internal/detect"
 	"github.com/stufently/telegram-antispam/internal/domain"
 	"github.com/stufently/telegram-antispam/internal/incident"
 	"github.com/stufently/telegram-antispam/internal/store"
@@ -127,5 +128,239 @@ func TestOnMessageAlbumFlushBuildsOneIncident(t *testing.T) {
 	}
 	if nCopy != 1 {
 		t.Fatalf("expected a single evidence copy for the whole album, got %d (calls=%v)", nCopy, calls)
+	}
+}
+
+// TestOnMessageWithCascadeDecideDrivesMachineOnStopword wires a real
+// detect.Cascade (not a stub) as the decide hook, the way main will, and
+// checks a deny-stopword message reaches the machine end to end.
+func TestOnMessageWithCascadeDecideDrivesMachineOnStopword(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	f := fake.New()
+	f.SendAdminID = 5
+	m := incident.New(f, db, 999)
+	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto"}})
+	seq := telegram.NewSequencer()
+	h := telegram.NewHandler(db, seq, cfg, m)
+
+	cascade := detect.Cascade{
+		Trust:          db, // real store: this user has no trust history, so untrusted
+		Hist:           detect.NewMemHistory(),
+		Rules:          detect.Rules{DenyStopwords: []string{"spamword"}},
+		Behavior:       detect.BehaviorCfg{},
+		TrustThreshold: 5,
+		DefaultAction:  domain.ActionBan,
+		DefaultScope:   domain.ScopeGlobal,
+	}
+	h.SetDecide(func(msg domain.Message) (domain.Verdict, bool) {
+		return cascade.Decide(msg, false)
+	})
+
+	h.OnMessage(context.Background(), 1, domain.Message{
+		ChatID:    -100200,
+		MessageID: 70,
+		Text:      "buy spamword now",
+		Sender:    domain.Sender{UserID: 11, Kind: domain.SenderUser},
+	})
+	seq.Wait()
+
+	calls := f.Calls()
+	var iCopy, iBan = -1, -1
+	for i, c := range calls {
+		if c == "CopyMessages" && iCopy < 0 {
+			iCopy = i
+		}
+		if c == "BanMember" && iBan < 0 {
+			iBan = i
+		}
+	}
+	if iCopy < 0 || iBan < 0 || iCopy > iBan {
+		t.Fatalf("expected the cascade's deny-stopword hit to drive evidence copy before ban; calls=%v", calls)
+	}
+}
+
+// TestOnEditedMessageCascadeSeesEditedTrue checks that edited=true actually
+// reaches detect.Cascade.Decide for the OnEditedMessage path, via
+// SetEditedDecide. The message text itself ("hi") triggers no hard rule and
+// no behavioral flood check — only the cascade's FlagEdits check, which
+// fires only when it observes edited=true — so the machine being driven
+// proves the edited flag made it all the way through.
+func TestOnEditedMessageCascadeSeesEditedTrue(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	f := fake.New()
+	f.SendAdminID = 5
+	m := incident.New(f, db, 999)
+	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto"}})
+	seq := telegram.NewSequencer()
+	h := telegram.NewHandler(db, seq, cfg, m)
+
+	cascade := detect.Cascade{
+		Trust:          db,
+		Hist:           detect.NewMemHistory(),
+		Rules:          detect.Rules{},
+		Behavior:       detect.BehaviorCfg{FlagEdits: true},
+		TrustThreshold: 5,
+		DefaultAction:  domain.ActionBan,
+		DefaultScope:   domain.ScopeGlobal,
+	}
+	h.SetDecide(func(msg domain.Message) (domain.Verdict, bool) {
+		return cascade.Decide(msg, false)
+	})
+	h.SetEditedDecide(func(msg domain.Message) (domain.Verdict, bool) {
+		return cascade.Decide(msg, true)
+	})
+
+	h.OnEditedMessage(context.Background(), 1, domain.Message{
+		ChatID:    -100201,
+		MessageID: 71,
+		Text:      "hi",
+		Sender:    domain.Sender{UserID: 12, Kind: domain.SenderUser},
+	})
+	seq.Wait()
+
+	calls := f.Calls()
+	var iCopy, iBan = -1, -1
+	for i, c := range calls {
+		if c == "CopyMessages" && iCopy < 0 {
+			iCopy = i
+		}
+		if c == "BanMember" && iBan < 0 {
+			iBan = i
+		}
+	}
+	if iCopy < 0 || iBan < 0 || iCopy > iBan {
+		t.Fatalf("expected FlagEdits to fire (proving edited=true reached Decide) and drive the machine; calls=%v", calls)
+	}
+}
+
+// TestOnEditedMessageFallsBackToDecideWithoutEditedHook checks that when
+// SetEditedDecide is never called, OnEditedMessage still uses the SetDecide
+// hook (pre-M3 behavior, and what existing tests that only call SetDecide
+// rely on).
+func TestOnEditedMessageFallsBackToDecideWithoutEditedHook(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	f := fake.New()
+	f.SendAdminID = 5
+	m := incident.New(f, db, 999)
+	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto"}})
+	seq := telegram.NewSequencer()
+	h := telegram.NewHandler(db, seq, cfg, m)
+	h.SetDecide(func(domain.Message) (domain.Verdict, bool) {
+		return domain.Verdict{Action: domain.ActionBan, Confidence: 0.99}, true
+	})
+
+	h.OnEditedMessage(context.Background(), 1, domain.Message{ChatID: -100202, MessageID: 72, Sender: domain.Sender{UserID: 13, Kind: domain.SenderUser}})
+	seq.Wait()
+
+	calls := f.Calls()
+	found := false
+	for _, c := range calls {
+		if c == "BanMember" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected SetDecide hook to drive the machine when SetEditedDecide was never called; calls=%v", calls)
+	}
+}
+
+// TestOnMessageBumpsTrustForNonActionableMeaningfulMessage checks the
+// wiring-level trust bump: a non-actionable, meaningful message from a real
+// user increments the store's trust counter. This bump happens inside
+// process (a sequencer job), off the poll path — Decide itself never bumps
+// trust (it is pure).
+func TestOnMessageBumpsTrustForNonActionableMeaningfulMessage(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	f := fake.New()
+	f.SendAdminID = 5
+	m := incident.New(f, db, 999)
+	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto"}})
+	seq := telegram.NewSequencer()
+	h := telegram.NewHandler(db, seq, cfg, m)
+	h.SetDecide(func(domain.Message) (domain.Verdict, bool) {
+		return domain.Verdict{}, false
+	})
+
+	h.OnMessage(context.Background(), 1, domain.Message{
+		ChatID:    -100300,
+		MessageID: 80,
+		Text:      "hello there, friend",
+		Sender:    domain.Sender{UserID: 21, Kind: domain.SenderUser},
+	})
+	seq.Wait()
+
+	count, err := db.TrustCount(-100300, 21)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("expected trust bumped to 1, got %d", count)
+	}
+}
+
+// TestOnMessageDoesNotBumpTrustWhenActionable checks the trust bump is
+// skipped when the verdict is actionable (the whole point of the trust gate
+// is to withhold trust from a message that already got flagged).
+func TestOnMessageDoesNotBumpTrustWhenActionable(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	f := fake.New()
+	f.SendAdminID = 5
+	m := incident.New(f, db, 999)
+	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto"}})
+	seq := telegram.NewSequencer()
+	h := telegram.NewHandler(db, seq, cfg, m)
+	h.SetDecide(func(domain.Message) (domain.Verdict, bool) {
+		return domain.Verdict{Action: domain.ActionBan, Confidence: 0.99}, true
+	})
+
+	h.OnMessage(context.Background(), 1, domain.Message{
+		ChatID:    -100301,
+		MessageID: 81,
+		Text:      "hello there, friend",
+		Sender:    domain.Sender{UserID: 22, Kind: domain.SenderUser},
+	})
+	seq.Wait()
+
+	count, err := db.TrustCount(-100301, 22)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("expected trust not bumped for an actionable message, got %d", count)
 	}
 }
