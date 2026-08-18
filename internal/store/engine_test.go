@@ -2,7 +2,9 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -52,5 +54,52 @@ func TestWriteSerializesConcurrentWriters(t *testing.T) {
 	db.Read().QueryRow("SELECT n FROM c").Scan(&n)
 	if n != 50 {
 		t.Fatalf("n = %d, want 50 (writes lost to a race)", n)
+	}
+}
+
+func TestWritePanicBecomesErrorNotCrash(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	err = db.Write(func(tx *sql.Tx) error {
+		panic("boom")
+	})
+	if err == nil || !strings.Contains(err.Error(), "panicked") {
+		t.Fatalf("panic should become an error, got %v", err)
+	}
+	// the writer must still be alive and serving after a recovered panic
+	if err := db.Write(func(tx *sql.Tx) error {
+		_, e := tx.Exec("CREATE TABLE ok(n INTEGER)")
+		return e
+	}); err != nil {
+		t.Fatalf("writer dead after panic: %v", err)
+	}
+}
+
+func TestWriteAfterCloseReturnsErrClosed(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Write(func(tx *sql.Tx) error { return nil }); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Write after Close = %v, want ErrClosed", err)
+	}
+}
+
+func TestCloseIsIdempotent(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("second Close panicked or errored: %v", err)
 	}
 }
