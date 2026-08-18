@@ -159,12 +159,46 @@ type Detection struct {
 	EphemeralNoticeText string `yaml:"ephemeral_notice_text"`
 }
 
+// Blocklist configures the M6 external blocklist syncer, which pulls spam
+// user-ID lists from lols.bot and cas.chat on a schedule and checks new
+// members/messages against the merged set (internal/blocklist).
+//
+// Enabled is a *bool for the usual nil-vs-false reason: an explicit "false"
+// must not be re-promoted to the default "true". Default: true.
+type Blocklist struct {
+	// Enabled turns the whole M6 blocklist syncer on or off. Default: true.
+	Enabled *bool `yaml:"enabled"`
+
+	// LolsFullURL is the source of the full lols.bot ban list, fetched
+	// every FullRefresh interval. Default: "https://lols.bot/spam/banlist.txt".
+	LolsFullURL string `yaml:"lols_full_url"`
+	// LolsDeltaURL is the source of the incremental (last-hour) lols.bot
+	// ban list, fetched every DeltaRefresh interval.
+	// Default: "https://lols.bot/spam/banlist-1h.txt".
+	LolsDeltaURL string `yaml:"lols_delta_url"`
+	// CasFullURL is the source of the full Combot Anti-Spam (CAS) ban
+	// list, fetched every FullRefresh interval.
+	// Default: "https://api.cas.chat/export.csv".
+	CasFullURL string `yaml:"cas_full_url"`
+
+	// FullRefresh is how often the full ban lists (LolsFullURL,
+	// CasFullURL) are re-fetched. Default: 6h.
+	FullRefresh Duration `yaml:"full_refresh"`
+	// DeltaRefresh is how often the incremental ban list (LolsDeltaURL)
+	// is re-fetched. Default: 1h.
+	DeltaRefresh Duration `yaml:"delta_refresh"`
+	// HTTPTimeout is the per-request timeout used when fetching any of
+	// the blocklist sources above. Default: 30s.
+	HTTPTimeout Duration `yaml:"http_timeout"`
+}
+
 type Config struct {
 	BotToken    string        `yaml:"bot_token"`
 	AdminChatID int64         `yaml:"admin_chat_id"`
 	Action      domain.Action `yaml:"action"`
 	Chats       ChatsPolicy   `yaml:"chats"`
 	Detection   Detection     `yaml:"detection"`
+	Blocklist   Blocklist     `yaml:"blocklist"`
 }
 
 func Load(path string) (*Config, error) {
@@ -181,6 +215,7 @@ func Parse(b []byte) (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	c.applyDetectionDefaults()
+	c.applyBlocklistDefaults()
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -267,6 +302,41 @@ func (c *Config) applyDetectionDefaults() {
 	}
 	// EphemeralNoticeText defaults to "", which is already the zero
 	// value, so there is nothing to fill in.
+}
+
+// applyBlocklistDefaults fills in sane defaults for any Blocklist field
+// left unset in the YAML. Enabled is treated as unset only when nil, so an
+// explicit "false" in the config file is always honored rather than
+// clobbered (see Blocklist doc). The URL strings and Duration fields are
+// treated as unset at their zero value, since an empty URL or a 0 interval
+// is not a documented, meaningful configuration for any of them.
+func (c *Config) applyBlocklistDefaults() {
+	if c.Blocklist.Enabled == nil {
+		def := true
+		c.Blocklist.Enabled = &def
+	}
+	if c.Blocklist.LolsFullURL == "" {
+		c.Blocklist.LolsFullURL = "https://lols.bot/spam/banlist.txt"
+	}
+	if c.Blocklist.LolsDeltaURL == "" {
+		c.Blocklist.LolsDeltaURL = "https://lols.bot/spam/banlist-1h.txt"
+	}
+	if c.Blocklist.CasFullURL == "" {
+		c.Blocklist.CasFullURL = "https://api.cas.chat/export.csv"
+	}
+	// Intervals are clamped at <= 0 (not just == 0): a negative full/delta
+	// interval would panic time.NewTicker inside the syncer goroutine and
+	// crash the process, and a non-positive HTTP timeout would disable the
+	// fetch deadline. A non-positive value is treated as unset → default.
+	if c.Blocklist.FullRefresh <= 0 {
+		c.Blocklist.FullRefresh = Duration(6 * time.Hour)
+	}
+	if c.Blocklist.DeltaRefresh <= 0 {
+		c.Blocklist.DeltaRefresh = Duration(1 * time.Hour)
+	}
+	if c.Blocklist.HTTPTimeout <= 0 {
+		c.Blocklist.HTTPTimeout = Duration(30 * time.Second)
+	}
 }
 
 func (c *Config) Validate() error {

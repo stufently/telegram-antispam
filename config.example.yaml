@@ -91,3 +91,30 @@ detection:
   # Text of the ephemeral moderation notice, shown only when
   # ephemeral_notice_enabled is true. Default: "" (no default text).
   ephemeral_notice_text: ""
+
+# blocklist configures the M6 external blocklist syncer (internal/blocklist),
+# which pulls spam user-ID lists from lols.bot and cas.chat on a schedule
+# and checks new members/messages against the merged set. Every field
+# below is optional; unset fields fall back to the defaults shown here as
+# comments. Durations are Go duration strings (e.g. "6h", "30s").
+blocklist:
+  # Turn the whole M6 blocklist syncer on or off. Default: true.
+  enabled: true
+  # Full lols.bot ban list, re-fetched every full_refresh interval.
+  # Default: "https://lols.bot/spam/banlist.txt".
+  lols_full_url: "https://lols.bot/spam/banlist.txt"
+  # Incremental (last-hour) lols.bot ban list, re-fetched every
+  # delta_refresh interval. Default: "https://lols.bot/spam/banlist-1h.txt".
+  lols_delta_url: "https://lols.bot/spam/banlist-1h.txt"
+  # Full Combot Anti-Spam (CAS) ban list, re-fetched every full_refresh
+  # interval. Default: "https://api.cas.chat/export.csv".
+  cas_full_url: "https://api.cas.chat/export.csv"
+  # How often the full ban lists (lols_full_url, cas_full_url) are
+  # re-fetched. Default: 6h.
+  full_refresh: 6h
+  # How often the incremental ban list (lols_delta_url) is re-fetched.
+  # Default: 1h.
+  delta_refresh: 1h
+  # Per-request timeout used when fetching any of the blocklist sources
+  # above. Default: 30s.
+  http_timeout: 30s
