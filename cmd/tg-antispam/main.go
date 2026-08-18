@@ -201,6 +201,15 @@ func main() {
 				// hands this closure, since the job runs after this handler
 				// call returns.
 				seq.Submit(cfgStore.Current().AdminChatID, func() {
+					// EvidenceText is intentionally left empty here: M2 does
+					// not persist the offending message's text/tokens (the
+					// admin notification carries only the verdict reason, and
+					// the evidence is copied as separate messages), so there
+					// is nothing to hand the best-effort Bayes trainer at
+					// callback time. Admin-feedback training therefore no-ops
+					// in production until a later milestone persists incident
+					// tokens (privacy-safe — Bayes stores only counts). The
+					// offline `tg-antispam import` path trains fully today.
 					err := adminHandler.Handle(shutdownCtx, admin.Callback{
 						ID:        cb.ID,
 						Data:      cb.Data,

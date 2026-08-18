@@ -34,22 +34,36 @@ type BayesSource interface {
 // defined as 0 (neutral) rather than relying on the smoothed prior alone,
 // since there is no data at all to score against.
 func BayesLogRatio(src BayesSource, scope string, tokens []string, vocabGuess int) (float64, error) {
+	ratio, _, err := bayesScore(src, scope, tokens, vocabGuess)
+	return ratio, err
+}
+
+// bayesScore computes the log-ratio and also reports whether there was any
+// basis to score at all. scoreable is false when the corpus is empty (no
+// training data) or there are no tokens to score. The returned ratio keeps
+// BayesLogRatio's historical contract (0 for an empty corpus; the smoothed
+// prior difference when there is a corpus but no tokens), so BayesLogRatio
+// callers are unaffected — but a caller deciding spam/ham MUST treat
+// scoreable==false as "no classification", never as a spam-leaning tie.
+// Otherwise the neutral score 0 trips `0 >= threshold(0)` and an untrained
+// deploy flags every untrusted newcomer (see BayesIsSpam).
+func bayesScore(src BayesSource, scope string, tokens []string, vocabGuess int) (ratio float64, scoreable bool, err error) {
 	if vocabGuess < 1 {
 		vocabGuess = 1
 	}
 
 	totals, err := src.Totals(scope)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 
 	if totals.SpamDocs+totals.HamDocs == 0 {
-		return 0, nil
+		return 0, false, nil
 	}
 
 	spamCounts, hamCounts, err := src.TokenCounts(scope, tokens)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 
 	// Laplace-smoothed priors avoid log(0) when one class has no documents.
@@ -66,15 +80,23 @@ func BayesLogRatio(src BayesSource, scope string, tokens []string, vocabGuess in
 		logLikelihoodHam += math.Log(float64(hamCounts[tok]+1) / hamDenom)
 	}
 
-	return (logLikelihoodSpam + logPriorSpam) - (logLikelihoodHam + logPriorHam), nil
+	ratio = (logLikelihoodSpam + logPriorSpam) - (logLikelihoodHam + logPriorHam)
+	return ratio, len(tokens) > 0, nil
 }
 
-// BayesIsSpam scores tokens with BayesLogRatio and reports whether the
-// result meets or exceeds threshold, along with the raw ratio.
+// BayesIsSpam scores tokens and reports whether the result meets or exceeds
+// threshold, along with the raw ratio. When there is no basis to classify —
+// an empty corpus (no training data yet) or no tokens to score — it returns
+// false regardless of threshold, so an untrained deploy never flags a
+// message on the neutral score alone. Hard rules and behavioral checks run
+// before this stage, so returning false here is fail-safe, not fail-open.
 func BayesIsSpam(src BayesSource, scope string, tokens []string, vocabGuess int, threshold float64) (bool, float64, error) {
-	ratio, err := BayesLogRatio(src, scope, tokens, vocabGuess)
+	ratio, scoreable, err := bayesScore(src, scope, tokens, vocabGuess)
 	if err != nil {
 		return false, ratio, err
+	}
+	if !scoreable {
+		return false, ratio, nil
 	}
 	return ratio >= threshold, ratio, nil
 }

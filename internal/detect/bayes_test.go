@@ -89,3 +89,51 @@ func TestBayesIsSpamThresholdBoundary(t *testing.T) {
 		t.Fatalf("expected threshold slightly above ratio to not be spam")
 	}
 }
+
+// TestBayesIsSpamEmptyCorpusNotSpam guards the fresh-deploy footgun: with an
+// empty (untrained) corpus the neutral score is 0, and at the default
+// threshold 0.0 a naive `0 >= 0` would flag every untrusted message. An
+// empty corpus must never be classified as spam.
+func TestBayesIsSpamEmptyCorpusNotSpam(t *testing.T) {
+	f := fakeBayes{spam: map[string]int{}, ham: map[string]int{}, c: BayesCounts{}}
+	isSpam, _, err := BayesIsSpam(f, "global", []string{"anything"}, 1000, 0.0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if isSpam {
+		t.Fatal("empty corpus must not be classified as spam at threshold 0")
+	}
+}
+
+// TestBayesIsSpamNoTokensNotSpam: a message with no tokens (e.g. media-only)
+// has no basis to score and must not be flagged even on a trained corpus at
+// threshold 0.0, where the prior-difference tie could otherwise trip `>=`.
+func TestBayesIsSpamNoTokensNotSpam(t *testing.T) {
+	f := fakeBayes{
+		spam: map[string]int{}, ham: map[string]int{},
+		c: BayesCounts{SpamDocs: 100, HamDocs: 100, SpamTokenTotal: 500, HamTokenTotal: 500},
+	}
+	isSpam, _, err := BayesIsSpam(f, "global", nil, 1000, 0.0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if isSpam {
+		t.Fatal("no tokens must not be classified as spam")
+	}
+}
+
+// TestBayesIsSpamTrainedStillWorks confirms the empty-corpus/no-token guards
+// don't suppress a genuine spam hit on a trained corpus.
+func TestBayesIsSpamTrainedStillWorks(t *testing.T) {
+	f := fakeBayes{
+		spam: map[string]int{"casino": 50}, ham: map[string]int{"casino": 0},
+		c: BayesCounts{SpamDocs: 100, HamDocs: 100, SpamTokenTotal: 500, HamTokenTotal: 500},
+	}
+	isSpam, r, err := BayesIsSpam(f, "global", []string{"casino"}, 1000, 0.0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isSpam || r <= 0 {
+		t.Fatalf("trained spam token should flag: isSpam=%v ratio=%f", isSpam, r)
+	}
+}
