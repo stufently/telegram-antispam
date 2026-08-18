@@ -254,6 +254,14 @@ func memberFromChatMember(cm models.ChatMember) Member {
 	return Member{Status: string(cm.Type)}
 }
 
+// MemberFromChatMember flattens a library ChatMember (e.g. a chat_member
+// update's NewChatMember) into the narrow Member type. Exported so the
+// command wiring can build a watch.MemberEvent without importing library
+// internals or duplicating the tagged-union switch.
+func MemberFromChatMember(cm models.ChatMember) Member {
+	return memberFromChatMember(cm)
+}
+
 func memberFromUser(u models.User, status string) Member {
 	return Member{UserID: u.ID, Status: status, Username: u.Username, DisplayName: u.FirstName}
 }

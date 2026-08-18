@@ -24,6 +24,7 @@ import (
 	"github.com/stufently/telegram-antispam/internal/telegram"
 	"github.com/stufently/telegram-antispam/internal/train"
 	"github.com/stufently/telegram-antispam/internal/version"
+	"github.com/stufently/telegram-antispam/internal/watch"
 )
 
 // historySweepInterval is how often the in-memory detection history
@@ -160,8 +161,10 @@ func main() {
 	// which is the only point long polling (and therefore any inbound
 	// update) can occur.
 	var (
-		handler      *telegram.Handler
-		adminHandler *admin.Handler
+		handler         *telegram.Handler
+		adminHandler    *admin.Handler
+		memberWatcher   *watch.MemberWatcher
+		reactionCleaner *watch.ReactionCleaner
 	)
 
 	opts := []tgbot.Option{
@@ -219,6 +222,29 @@ func main() {
 						log.Printf("admin callback: %v", err)
 					}
 				})
+			case update.ChatMember != nil:
+				cm := update.ChatMember
+				mem := telegram.MemberFromChatMember(cm.NewChatMember)
+				ev := watch.MemberEvent{ChatID: cm.Chat.ID, UserID: mem.UserID, Username: mem.Username, DisplayName: mem.DisplayName}
+				seq.Submit(cm.Chat.ID, func() {
+					if memberWatcher != nil {
+						if err := memberWatcher.Observe(shutdownCtx, ev); err != nil {
+							log.Printf("member watch: %v", err)
+						}
+					}
+				})
+			case update.MessageReaction != nil:
+				mr := update.MessageReaction
+				if mr.User != nil { // only user-attributed reactions (skip anonymous/actor-chat)
+					ev := watch.ReactionEvent{ChatID: mr.Chat.ID, MessageID: mr.MessageID, UserID: mr.User.ID, Added: len(mr.NewReaction) > len(mr.OldReaction)}
+					seq.Submit(mr.Chat.ID, func() {
+						if reactionCleaner != nil {
+							if err := reactionCleaner.Observe(shutdownCtx, ev); err != nil {
+								log.Printf("reaction cleanup: %v", err)
+							}
+						}
+					})
+				}
 			}
 		}),
 	}
@@ -231,6 +257,8 @@ func main() {
 	livePort := telegram.NewLivePort(b, disp, priorityFor)
 	machine := incident.New(livePort, db, cfg.AdminChatID)
 	machine.SetButtons(admin.Buttons)
+	machine.EphemeralNotice = *cfg.Detection.EphemeralNoticeEnabled
+	machine.EphemeralText = cfg.Detection.EphemeralNoticeText
 	handler = telegram.NewHandler(db, seq, cfgStore, machine)
 	handler.SetContext(ctx) // so an album flush triggered off-request during shutdown observes cancellation instead of blocking forever
 	adminHandler = admin.NewHandler(livePort, db, operatorSet(cfg))
@@ -238,6 +266,25 @@ func main() {
 		_, err := train.ImportSample(db, scope, label, "user", text)
 		return err
 	})
+
+	// adminCache is the M5 fake-admin detector's detect.AdminSource: a
+	// TTL-cached wrapper over GetChatAdministrators so both the cascade
+	// (message-time check) and the member watcher (join/rename-time check)
+	// share one cache per chat instead of hitting Telegram on every event.
+	adminCache := telegram.NewAdminCache(livePort, time.Duration(cfg.Detection.AdminCacheTTLSeconds)*time.Second)
+	memberWatcher = &watch.MemberWatcher{
+		Store:       db,
+		Admins:      adminCache,
+		AdminChatID: cfg.AdminChatID,
+		Port:        livePort,
+		MaxDistance: cfg.Detection.FakeAdminMaxDistance,
+		Enabled:     *cfg.Detection.FakeAdminEnabled,
+	}
+	reactionCleaner = &watch.ReactionCleaner{
+		Spammers: db,
+		Port:     livePort,
+		Enabled:  *cfg.Detection.ReactionCleanupEnabled,
+	}
 
 	// The M3 detection cascade: db satisfies detect.TrustSource (trust is
 	// store-backed and durable), while the sliding-window duplicate/short
@@ -273,6 +320,12 @@ func main() {
 		BayesThreshold:  *cfg.Detection.BayesThreshold,
 		BayesVocabGuess: cfg.Detection.BayesVocabGuess,
 		BayesEnabled:    *cfg.Detection.BayesEnabled,
+		Admins:          adminCache,
+		FakeAdmin: detect.FakeAdminCfg{
+			Enabled:        *cfg.Detection.FakeAdminEnabled,
+			SuspiciousTags: cfg.Detection.FakeAdminSuspiciousTags,
+			MaxDistance:    cfg.Detection.FakeAdminMaxDistance,
+		},
 	}
 	handler.SetDecide(func(m domain.Message) (domain.Verdict, bool) {
 		return cascade.Decide(m, false)
