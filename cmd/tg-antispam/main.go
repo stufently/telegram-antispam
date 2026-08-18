@@ -22,6 +22,7 @@ import (
 	"github.com/stufently/telegram-antispam/internal/queue"
 	"github.com/stufently/telegram-antispam/internal/store"
 	"github.com/stufently/telegram-antispam/internal/telegram"
+	"github.com/stufently/telegram-antispam/internal/train"
 	"github.com/stufently/telegram-antispam/internal/version"
 )
 
@@ -224,6 +225,10 @@ func main() {
 	handler = telegram.NewHandler(db, seq, cfgStore, machine)
 	handler.SetContext(ctx) // so an album flush triggered off-request during shutdown observes cancellation instead of blocking forever
 	adminHandler = admin.NewHandler(livePort, db, operatorSet(cfg))
+	adminHandler.SetTrainer(func(scope, label, text string) error {
+		_, err := train.ImportSample(db, scope, label, "user", text)
+		return err
+	})
 
 	// The M3 detection cascade: db satisfies detect.TrustSource (trust is
 	// store-backed and durable), while the sliding-window duplicate/short

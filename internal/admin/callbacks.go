@@ -26,9 +26,10 @@ const (
 
 // Callback is a normalized incoming callback query.
 type Callback struct {
-	ID        string // Telegram callback query id, for AnswerCallback.
-	Data      string // "<act>:<incidentKey>".
-	PresserID int64  // Telegram user id of whoever pressed the button.
+	ID           string // Telegram callback query id, for AnswerCallback.
+	Data         string // "<act>:<incidentKey>".
+	PresserID    int64  // Telegram user id of whoever pressed the button.
+	EvidenceText string // optional; the incident's message text, for best-effort Bayes training. Empty ⇒ training skipped.
 }
 
 // Buttons lays out the 4 admin actions for one incident. Each button's Data
@@ -75,6 +76,7 @@ type Handler struct {
 	port      telegram.Port
 	db        *store.DB
 	operators map[int64]bool
+	trainer   func(scope, label, text string) error
 }
 
 // NewHandler builds a Handler. operators is the set of Telegram user ids
@@ -86,6 +88,10 @@ func NewHandler(port telegram.Port, db *store.DB, operators map[int64]bool) *Han
 	}
 	return &Handler{port: port, db: db, operators: operators}
 }
+
+// SetTrainer installs a best-effort Bayes trainer invoked on confirm-spam
+// / false-positive. A nil trainer (the default) disables training.
+func (h *Handler) SetTrainer(t func(scope, label, text string) error) { h.trainer = t }
 
 // Authorized reports whether presserID may act on incidents whose source
 // chat is sourceChatID. It checks the cheap, network-free global-operator
@@ -141,7 +147,7 @@ func (h *Handler) Handle(ctx context.Context, cb Callback) error {
 		return h.port.AnswerCallback(ctx, cb.ID, "not authorized")
 	}
 
-	text, err := h.dispatch(act, key)
+	text, err := h.dispatch(act, key, cb.EvidenceText)
 	if err != nil {
 		return fmt.Errorf("dispatch %s: %w", act, err)
 	}
@@ -152,16 +158,24 @@ func (h *Handler) Handle(ctx context.Context, cb Callback) error {
 // store-side sample writes are stubs (origin "user"), and full moderation
 // actions (unban/unrestrict) land in a later milestone. Every call here is
 // only reached once Handle has confirmed Authorized == true.
-func (h *Handler) dispatch(act Action, incidentKey string) (string, error) {
+func (h *Handler) dispatch(act Action, incidentKey, evidenceText string) (string, error) {
 	switch act {
 	case ActFalsePositive:
 		if _, err := h.db.InsertSample("incident", string(act), "user", incidentKey); err != nil {
 			return "", err
 		}
+		if h.trainer != nil && strings.TrimSpace(evidenceText) != "" {
+			// best-effort: training failure must not break the admin action
+			_ = h.trainer("global", "ham", evidenceText)
+		}
 		return "marked false positive", nil
 	case ActConfirmSpam:
 		if _, err := h.db.InsertSample("incident", string(act), "user", incidentKey); err != nil {
 			return "", err
+		}
+		if h.trainer != nil && strings.TrimSpace(evidenceText) != "" {
+			// best-effort: training failure must not break the admin action
+			_ = h.trainer("global", "spam", evidenceText)
 		}
 		return "confirmed spam", nil
 	case ActLiftNoLearn:
