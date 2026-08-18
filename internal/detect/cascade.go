@@ -22,11 +22,14 @@ type Cascade struct {
 	BayesThreshold  float64
 	BayesVocabGuess int
 	BayesEnabled    bool
+	Admins          AdminSource
+	FakeAdmin       FakeAdminCfg
 }
 
 // Decide runs the cascade over one message: normalize, resolve trust, then
-// try hard rules and behavioral checks in order (first hit wins). It
-// returns the resulting Verdict and whether it is actionable.
+// try hard rules, fake-admin impersonation, behavioral checks, and Bayes in
+// order (first hit wins). It returns the resulting Verdict and whether it
+// is actionable.
 //
 // Decide is pure: it does not bump trust and performs no action of its own.
 // The injected History may record state as part of CheckBehavior (e.g.
@@ -39,6 +42,16 @@ func (c Cascade) Decide(m domain.Message, edited bool) (domain.Verdict, bool) {
 
 	if sig, hit := c.Rules.Check(n, trusted); hit {
 		return c.actionable(sig), true
+	}
+
+	if c.FakeAdmin.Enabled && !trusted {
+		var admins []AdminIdentity
+		if c.Admins != nil {
+			admins = c.Admins.AdminIdentities(m.ChatID)
+		}
+		if sig, hit := CheckFakeAdmin(m, admins, c.FakeAdmin); hit {
+			return c.actionable(sig), true
+		}
 	}
 
 	if sig, hit := CheckBehavior(c.Hist, m.ChatID, m.Sender.UserID, n, edited, c.Behavior); hit {

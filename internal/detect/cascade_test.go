@@ -165,3 +165,32 @@ func TestCascadeDecide_BayesSpamActionableForUntrustedOnly(t *testing.T) {
 		t.Errorf("expected ActionNone for trusted sender, got %v", v2.Action)
 	}
 }
+
+type fakeAdminSrc struct{ a []AdminIdentity }
+
+func (f fakeAdminSrc) AdminIdentities(int64) []AdminIdentity { return f.a }
+
+func TestCascadeDecide_FakeAdminUntrustedOnly(t *testing.T) {
+	c := Cascade{
+		Trust:          &fakeTrustSource{counts: map[[2]int64]int{}},
+		Hist:           &fakeHistory{},
+		Rules:          Rules{},
+		Behavior:       BehaviorCfg{},
+		TrustThreshold: 5,
+		Admins:         fakeAdminSrc{a: []AdminIdentity{{Username: "owner"}}},
+		FakeAdmin:      FakeAdminCfg{Enabled: true, MaxDistance: 1},
+		DefaultAction:  domain.ActionDeleteMute,
+		DefaultScope:   domain.ScopeGlobal,
+	}
+	m := domain.Message{ChatID: 1, Sender: domain.Sender{UserID: 2, Username: "0wner"}}
+
+	v, actionable := c.Decide(m, false)
+	if !actionable || v.Reason != "fake_admin" {
+		t.Fatalf("untrusted fake-admin should flag: ok=%v v=%+v", actionable, v)
+	}
+
+	c.Trust = &fakeTrustSource{counts: map[[2]int64]int{{1, 2}: 10}}
+	if _, actionable := c.Decide(m, false); actionable {
+		t.Fatal("trusted sender must skip fake-admin")
+	}
+}
