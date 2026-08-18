@@ -7,9 +7,9 @@ import (
 
 // fakeHistory is a test double that returns scripted counts for RecordAndCountDup and RecentShortCount.
 type fakeHistory struct {
-	dupCounts      map[string]int
-	shortCounts    int
-	recordedDups   []string // for verification if needed
+	dupCounts    map[string]int
+	shortCounts  int
+	recordedDups []string // for verification if needed
 	// defaultDupCount is used when a hash is not in dupCounts
 	defaultDupCount int
 }

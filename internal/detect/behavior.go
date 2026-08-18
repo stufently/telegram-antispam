@@ -24,12 +24,12 @@ type History interface {
 
 // BehaviorCfg holds threshold and flag parameters for behavioral detection.
 type BehaviorCfg struct {
-	DupThreshold         int           // hit when duplicate count >= this (0 = disabled)
-	DupWindow            time.Duration // sliding window for duplicate detection
-	ShortLen             int           // messages with RawLen <= this are considered short
-	ShortFloodThreshold  int           // hit when short message count >= this (0 = disabled)
-	ShortWindow          time.Duration // sliding window for short message detection
-	FlagEdits            bool          // if true, flag edited messages as Signal
+	DupThreshold        int           // hit when duplicate count >= this (0 = disabled)
+	DupWindow           time.Duration // sliding window for duplicate detection
+	ShortLen            int           // messages with RawLen <= this are considered short
+	ShortFloodThreshold int           // hit when short message count >= this (0 = disabled)
+	ShortWindow         time.Duration // sliding window for short message detection
+	FlagEdits           bool          // if true, flag edited messages as Signal
 }
 
 // DupHash returns a stable SHA256 hex hash of the normalized text.
