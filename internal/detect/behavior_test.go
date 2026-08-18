@@ -228,6 +228,58 @@ func TestCheckBehavior_NoHit(t *testing.T) {
 	}
 }
 
+// TestCheckBehavior_CaptionlessMediaNoDupFlood verifies that captionless
+// media (empty NormalizedMessage.Text, e.g. a sticker) never triggers
+// duplicate_flood, even if the injected History would report a count at or
+// above the threshold. Without the text-empty guard, every distinct
+// captionless message hashes to sha256("") and would falsely collapse into
+// one "duplicate" bucket, banning unrelated users sending stickers/photos.
+func TestCheckBehavior_CaptionlessMediaNoDupFlood(t *testing.T) {
+	h := &fakeHistory{defaultDupCount: 3}
+	cfg := BehaviorCfg{
+		FlagEdits:    false,
+		DupThreshold: 3,
+		DupWindow:    1 * time.Minute,
+	}
+
+	for i := 0; i < 3; i++ {
+		n := NormalizedMessage{Text: "", RawLen: 0}
+		signal, hit := CheckBehavior(h, 123, 456, n, false, cfg)
+		if hit {
+			t.Errorf("message %d: expected hit=false for captionless media, got signal %q", i, signal.Name)
+		}
+	}
+
+	if len(h.recordedDups) != 0 {
+		t.Errorf("expected dup check to be skipped entirely for empty text, but RecordAndCountDup was called %d time(s)", len(h.recordedDups))
+	}
+}
+
+// TestCheckBehavior_RealDuplicateTextStillTriggers is a positive-case
+// companion to TestCheckBehavior_CaptionlessMediaNoDupFlood: genuine
+// duplicate text (non-empty) must still trigger duplicate_flood.
+func TestCheckBehavior_RealDuplicateTextStillTriggers(t *testing.T) {
+	h := &fakeHistory{defaultDupCount: 3}
+	n := NormalizedMessage{Text: "buy now buy now", RawLen: 16}
+	cfg := BehaviorCfg{
+		FlagEdits:    false,
+		DupThreshold: 3,
+		DupWindow:    1 * time.Minute,
+	}
+
+	signal, hit := CheckBehavior(h, 123, 456, n, false, cfg)
+
+	if !hit {
+		t.Errorf("expected hit=true for real duplicate text at threshold")
+	}
+	if signal.Name != "duplicate_flood" {
+		t.Errorf("expected signal name 'duplicate_flood', got %q", signal.Name)
+	}
+	if len(h.recordedDups) != 1 {
+		t.Errorf("expected dup check to run once for non-empty text, got %d calls", len(h.recordedDups))
+	}
+}
+
 func TestDupHash(t *testing.T) {
 	n := NormalizedMessage{Text: "hello world"}
 	hash1 := DupHash(n)

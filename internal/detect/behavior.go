@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/stufently/telegram-antispam/internal/domain"
@@ -56,8 +57,14 @@ func CheckBehavior(
 		return domain.Signal{Name: "edited_message"}, true
 	}
 
-	// Check duplicate flood.
-	if cfg.DupThreshold > 0 {
+	// Check duplicate flood. Skipped entirely when the normalized text is
+	// empty/whitespace (captionless media: stickers, photos/voice without a
+	// caption). NormalizedMessage carries no file_id, so we cannot hash the
+	// media content itself; hashing empty text would collapse every distinct
+	// captionless message onto sha256(""), causing RecordAndCountDup to count
+	// unrelated messages as duplicates and falsely trigger duplicate_flood.
+	// Media-duplicate detection is a future enhancement.
+	if cfg.DupThreshold > 0 && strings.TrimSpace(n.Text) != "" {
 		dupHash := DupHash(n)
 		count := h.RecordAndCountDup(chatID, userID, dupHash, cfg.DupWindow)
 		if count >= cfg.DupThreshold {
