@@ -19,6 +19,7 @@ type Fake struct {
 	Admins       []telegram.Member
 	BanSenderErr error
 	EphemeralID  int
+	EphemeralErr error
 
 	// LastAdmin captures the most recent AdminMessage passed to SendAdmin, so
 	// tests can assert on fields SendAdmin doesn't otherwise record.
@@ -130,5 +131,5 @@ func (f *Fake) SendEphemeral(_ context.Context, chat, userID int64, text string)
 	f.LastEphemeral.Text = text
 	f.mu.Unlock()
 	f.log("SendEphemeral")
-	return f.EphemeralID, nil
+	return f.EphemeralID, f.EphemeralErr
 }

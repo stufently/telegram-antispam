@@ -33,6 +33,14 @@ type Machine struct {
 	// here would create an import cycle; main wires the real implementation
 	// via SetButtons.
 	buttonsFor func(incidentKey string) [][]telegram.Button
+
+	// EphemeralNotice enables a best-effort, per-user-visible notice sent
+	// after a live sanction, telling the user their message was removed
+	// (spec §12: ephemeral is never the sole verification path). Off by
+	// default; set directly by the wiring that constructs the Machine.
+	EphemeralNotice bool
+	// EphemeralText is the notice text sent when EphemeralNotice is true.
+	EphemeralText string
 }
 
 func New(port telegram.Port, repo Repo, adminChatID int64) *Machine {
@@ -118,6 +126,13 @@ func (m *Machine) Handle(ctx context.Context, inc domain.Incident) error {
 		return fmt.Errorf("delete originals: %w", err)
 	}
 	_ = m.repo.SetIncidentState(id, domain.StateCleaned)
+
+	if m.EphemeralNotice && m.EphemeralText != "" && inc.Sender.UserID != 0 {
+		// Best-effort, per-user-visible notice. Delivery is not guaranteed
+		// (spec §12) and a failure must never fail the incident, so the
+		// error is intentionally ignored.
+		_, _ = m.port.SendEphemeral(ctx, inc.ChatID, inc.Sender.UserID, m.EphemeralText)
+	}
 
 	return m.repo.SetIncidentState(id, domain.StateDone)
 }
