@@ -192,6 +192,29 @@ type Blocklist struct {
 	HTTPTimeout Duration `yaml:"http_timeout"`
 }
 
+// Ops configures the M7 observability surface: the metrics HTTP server and
+// the daily digest scheduler.
+//
+// MetricsEnabled and DigestEnabled are *bool for the usual nil-vs-false
+// reason: an explicit "false" in the config file must not be re-promoted to
+// the default "true" (see Blocklist.Enabled for the same pattern).
+type Ops struct {
+	// MetricsEnabled turns the /metrics + /healthz HTTP server on or off.
+	// Default: true.
+	MetricsEnabled *bool `yaml:"metrics_enabled"`
+	// MetricsAddr is the listen address for the metrics HTTP server, e.g.
+	// ":9090". Default: ":9090".
+	MetricsAddr string `yaml:"metrics_addr"`
+	// DigestEnabled turns the daily admin-chat digest scheduler on or off.
+	// Default: true.
+	DigestEnabled *bool `yaml:"digest_enabled"`
+	// DigestInterval is how often the digest is sent. Default: 24h. A
+	// non-positive value is clamped to the default (per M6's Blocklist
+	// lesson: a non-positive interval would panic time.NewTicker in the
+	// scheduler goroutine).
+	DigestInterval Duration `yaml:"digest_interval"`
+}
+
 type Config struct {
 	BotToken    string        `yaml:"bot_token"`
 	AdminChatID int64         `yaml:"admin_chat_id"`
@@ -199,6 +222,7 @@ type Config struct {
 	Chats       ChatsPolicy   `yaml:"chats"`
 	Detection   Detection     `yaml:"detection"`
 	Blocklist   Blocklist     `yaml:"blocklist"`
+	Ops         Ops           `yaml:"ops"`
 }
 
 func Load(path string) (*Config, error) {
@@ -216,6 +240,7 @@ func Parse(b []byte) (*Config, error) {
 	}
 	c.applyDetectionDefaults()
 	c.applyBlocklistDefaults()
+	c.applyOpsDefaults()
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -336,6 +361,32 @@ func (c *Config) applyBlocklistDefaults() {
 	}
 	if c.Blocklist.HTTPTimeout <= 0 {
 		c.Blocklist.HTTPTimeout = Duration(30 * time.Second)
+	}
+}
+
+// applyOpsDefaults fills in sane defaults for any Ops field left unset in
+// the YAML. MetricsEnabled and DigestEnabled are treated as unset only when
+// nil, so an explicit "false" in the config file is always honored rather
+// than clobbered (see Ops doc). MetricsAddr is treated as unset at its zero
+// value, since an empty listen address is not a documented, meaningful
+// configuration. DigestInterval is clamped at <= 0 (not just == 0): a
+// negative interval would panic time.NewTicker inside the digest scheduler
+// goroutine and crash the process (see applyBlocklistDefaults for the same
+// M6 lesson).
+func (c *Config) applyOpsDefaults() {
+	if c.Ops.MetricsEnabled == nil {
+		def := true
+		c.Ops.MetricsEnabled = &def
+	}
+	if c.Ops.MetricsAddr == "" {
+		c.Ops.MetricsAddr = ":9090"
+	}
+	if c.Ops.DigestEnabled == nil {
+		def := true
+		c.Ops.DigestEnabled = &def
+	}
+	if c.Ops.DigestInterval <= 0 {
+		c.Ops.DigestInterval = Duration(24 * time.Hour)
 	}
 }
 

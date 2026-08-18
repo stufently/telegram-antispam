@@ -287,3 +287,71 @@ func TestBlocklistExplicitValuesNotOverridden(t *testing.T) {
 		t.Errorf("HTTPTimeout: want 30s default, got %v", bl.HTTPTimeout.Duration())
 	}
 }
+
+// TestOpsDefaultsAppliedWhenUnset checks that omitting the ops: block
+// entirely still yields a fully-populated Ops config, with the documented
+// defaults (see config.example.yaml).
+func TestOpsDefaultsAppliedWhenUnset(t *testing.T) {
+	c, err := Parse([]byte(baseValidYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := c.Ops
+	if o.MetricsEnabled == nil || !*o.MetricsEnabled {
+		t.Errorf("MetricsEnabled: want default true, got %v", o.MetricsEnabled)
+	}
+	if o.MetricsAddr != ":9090" {
+		t.Errorf("MetricsAddr: want default \":9090\", got %q", o.MetricsAddr)
+	}
+	if o.DigestEnabled == nil || !*o.DigestEnabled {
+		t.Errorf("DigestEnabled: want default true, got %v", o.DigestEnabled)
+	}
+	if o.DigestInterval.Duration() != 24*time.Hour {
+		t.Errorf("DigestInterval: want 24h default, got %v", o.DigestInterval.Duration())
+	}
+}
+
+// TestOpsExplicitValuesNotOverridden checks that explicit ops.metrics_enabled:
+// false and ops.metrics_addr are honored rather than clobbered by defaults,
+// while the fields left unset in this YAML still get their documented
+// defaults.
+func TestOpsExplicitValuesNotOverridden(t *testing.T) {
+	yaml := baseValidYAML +
+		"ops:\n" +
+		"  metrics_enabled: false\n" +
+		"  metrics_addr: \":1234\"\n"
+	c, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := c.Ops
+	if o.MetricsEnabled == nil || *o.MetricsEnabled {
+		t.Errorf("MetricsEnabled: want explicit false, got %v", o.MetricsEnabled)
+	}
+	if o.MetricsAddr != ":1234" {
+		t.Errorf("MetricsAddr: want explicit \":1234\", got %q", o.MetricsAddr)
+	}
+	if o.DigestEnabled == nil || !*o.DigestEnabled {
+		t.Errorf("DigestEnabled: want default true, got %v", o.DigestEnabled)
+	}
+	if o.DigestInterval.Duration() != 24*time.Hour {
+		t.Errorf("DigestInterval: want 24h default, got %v", o.DigestInterval.Duration())
+	}
+}
+
+// TestOpsDigestIntervalClampedWhenNonPositive checks that a non-positive
+// digest_interval is clamped to the 24h default rather than left at a value
+// that would panic time.NewTicker (see Blocklist's FullRefresh/DeltaRefresh
+// for the same M6 lesson).
+func TestOpsDigestIntervalClampedWhenNonPositive(t *testing.T) {
+	yaml := baseValidYAML +
+		"ops:\n" +
+		"  digest_interval: -5m\n"
+	c, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Ops.DigestInterval.Duration() != 24*time.Hour {
+		t.Errorf("DigestInterval: want clamped to 24h default, got %v", c.Ops.DigestInterval.Duration())
+	}
+}

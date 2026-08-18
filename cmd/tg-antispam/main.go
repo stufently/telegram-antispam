@@ -20,6 +20,7 @@ import (
 	"github.com/stufently/telegram-antispam/internal/detect"
 	"github.com/stufently/telegram-antispam/internal/domain"
 	"github.com/stufently/telegram-antispam/internal/incident"
+	"github.com/stufently/telegram-antispam/internal/ops"
 	"github.com/stufently/telegram-antispam/internal/queue"
 	"github.com/stufently/telegram-antispam/internal/store"
 	"github.com/stufently/telegram-antispam/internal/telegram"
@@ -146,6 +147,19 @@ func main() {
 		}
 	}()
 
+	// reg is the M7 metrics registry: populated at the wiring seams below
+	// (the default-handler switch, the decide hook, the blocklist gauge)
+	// and served by the ops HTTP server started further down, once cfg.Ops
+	// is known to be fully defaulted.
+	reg := ops.NewRegistry()
+	if *cfg.Ops.MetricsEnabled {
+		go func() {
+			if err := ops.NewServer(cfg.Ops.MetricsAddr, reg).Run(ctx); err != nil {
+				log.Printf("ops server: %v", err)
+			}
+		}()
+	}
+
 	// The dispatcher owns every outbound Telegram call: global + per-chat
 	// rate limiting, priority ordering, 429 retry.
 	limiters := newChatLimiters()
@@ -188,10 +202,13 @@ func main() {
 		tgbot.WithDefaultHandler(func(ctx context.Context, b *tgbot.Bot, update *models.Update) {
 			switch {
 			case update.Message != nil:
+				reg.IncCounter("updates_total", 1, "kind", "message")
 				handler.OnMessage(ctx, update.ID, telegram.ToDomainMessage(update.Message))
 			case update.EditedMessage != nil:
+				reg.IncCounter("updates_total", 1, "kind", "edited")
 				handler.OnEditedMessage(ctx, update.ID, telegram.ToDomainMessage(update.EditedMessage))
 			case update.CallbackQuery != nil:
+				reg.IncCounter("updates_total", 1, "kind", "callback")
 				cb := update.CallbackQuery
 				// Offload onto the sequencer: WithNotAsyncHandlers runs this
 				// inline on the single poll-consumer goroutine, and
@@ -224,6 +241,7 @@ func main() {
 					}
 				})
 			case update.ChatMember != nil:
+				reg.IncCounter("updates_total", 1, "kind", "chat_member")
 				cm := update.ChatMember
 				mem := telegram.MemberFromChatMember(cm.NewChatMember)
 				ev := watch.MemberEvent{ChatID: cm.Chat.ID, UserID: mem.UserID, Username: mem.Username, DisplayName: mem.DisplayName}
@@ -235,6 +253,7 @@ func main() {
 					}
 				})
 			case update.MessageReaction != nil:
+				reg.IncCounter("updates_total", 1, "kind", "reaction")
 				mr := update.MessageReaction
 				if mr.User != nil { // only user-attributed reactions (skip anonymous/actor-chat)
 					ev := watch.ReactionEvent{ChatID: mr.Chat.ID, MessageID: mr.MessageID, UserID: mr.User.ID, Added: len(mr.NewReaction) > len(mr.OldReaction)}
@@ -320,6 +339,23 @@ func main() {
 		})
 		go bl.Run(shutdownCtx)
 		blocklistSource = bl
+
+		// blocklist_size gauge: sampled on a ticker rather than pushed from
+		// the syncer itself, so the ops package stays decoupled from
+		// internal/blocklist (see the M7 brief's "keep instrumentation
+		// minimal, don't thread the registry deep" guidance).
+		go func() {
+			t := time.NewTicker(time.Minute)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					reg.SetGauge("blocklist_size", float64(bl.Len()))
+				}
+			}
+		}()
 	}
 
 	cascade := detect.Cascade{
@@ -350,7 +386,11 @@ func main() {
 		BlocklistEnabled: *cfg.Blocklist.Enabled,
 	}
 	handler.SetDecide(func(m domain.Message) (domain.Verdict, bool) {
-		return cascade.Decide(m, false)
+		v, ok := cascade.Decide(m, false)
+		if ok {
+			reg.IncCounter("incidents_total", 1, "action", string(v.Action))
+		}
+		return v, ok
 	})
 	handler.SetEditedDecide(func(m domain.Message) (domain.Verdict, bool) {
 		return cascade.Decide(m, true)
@@ -379,6 +419,23 @@ func main() {
 			}
 		}
 	}()
+
+	if *cfg.Ops.DigestEnabled {
+		go func() {
+			t := time.NewTicker(cfg.Ops.DigestInterval.Duration())
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					if err := ops.SendDigest(shutdownCtx, livePort, cfg.AdminChatID, db, time.Now().Unix()); err != nil {
+						log.Printf("digest: %v", err)
+					}
+				}
+			}
+		}()
+	}
 
 	log.Print("long polling started")
 	b.Start(ctx) // blocks until ctx is cancelled (SIGINT/SIGTERM)
