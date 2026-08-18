@@ -14,8 +14,10 @@ type Fake struct {
 	calls []string
 
 	// knobs
-	CopyErr     error
-	SendAdminID int
+	CopyErr      error
+	SendAdminID  int
+	Admins       []telegram.Member
+	BanSenderErr error
 }
 
 func New() *Fake { return &Fake{} }
@@ -65,4 +67,24 @@ func (f *Fake) RestrictMember(_ context.Context, _, _ int64, _ telegram.Perms, _
 func (f *Fake) SendAdmin(_ context.Context, _ int64, _ telegram.AdminMessage) (int, error) {
 	f.log("SendAdmin")
 	return f.SendAdminID, nil
+}
+
+func (f *Fake) BanSenderChat(_ context.Context, _, _ int64) error {
+	f.log("BanSenderChat")
+	return f.BanSenderErr
+}
+
+func (f *Fake) GetChatAdministrators(_ context.Context, _ int64) ([]telegram.Member, error) {
+	f.log("GetChatAdministrators")
+	return f.Admins, nil
+}
+
+func (f *Fake) AnswerCallback(_ context.Context, _, _ string) error {
+	f.log("AnswerCallback")
+	return nil
+}
+
+func (f *Fake) EditAdminMarkup(_ context.Context, _ int64, _ int, _ [][]telegram.Button) error {
+	f.log("EditAdminMarkup")
+	return nil
 }
