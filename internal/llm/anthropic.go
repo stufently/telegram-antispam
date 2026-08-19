@@ -25,9 +25,10 @@ func (a Anthropic) Classify(ctx context.Context, text string) (bool, error) {
 		base = "https://api.anthropic.com"
 	}
 	body, _ := json.Marshal(map[string]any{
-		"model":      a.Model,
-		"max_tokens": 5,
-		"system":     classifyPrompt,
+		"model":       a.Model,
+		"max_tokens":  5,
+		"temperature": 0,
+		"system":      classifyPrompt,
 		"messages": []map[string]string{
 			{"role": "user", "content": text},
 		},

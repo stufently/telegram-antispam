@@ -27,7 +27,7 @@ func (o OpenAI) Classify(ctx context.Context, text string) (bool, error) {
 	body, _ := json.Marshal(map[string]any{
 		"model":       o.Model,
 		"temperature": 0,
-		"max_tokens":  1,
+		"max_tokens":  5,
 		"messages": []map[string]string{
 			{"role": "system", "content": classifyPrompt},
 			{"role": "user", "content": text},

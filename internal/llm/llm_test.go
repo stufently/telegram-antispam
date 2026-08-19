@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -87,6 +88,15 @@ func TestOpenAIClassify(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer sk-test" {
 			t.Errorf("auth header = %q", got)
+		}
+		var req struct {
+			MaxTokens int `json:"max_tokens"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		// Guards the review fix: max_tokens must be large enough that the
+		// uppercase word "SPAM" (≥2 BPE tokens) is never truncated to "SP".
+		if req.MaxTokens < 5 {
+			t.Errorf("max_tokens = %d, want >= 5 (else SPAM truncates)", req.MaxTokens)
 		}
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"SPAM"}}]}`))
 	}))

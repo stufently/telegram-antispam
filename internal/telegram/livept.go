@@ -42,16 +42,22 @@ func NewLivePort(b *bot.Bot, disp *queue.Dispatcher, prio func(method string) qu
 // poisoning every later self-check.
 func (p *LivePort) me(ctx context.Context) (int64, error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.selfID != 0 {
-		return p.selfID, nil
+	id := p.selfID
+	p.mu.Unlock()
+	if id != 0 {
+		return id, nil
 	}
+	// Resolve outside the lock so a slow/unreachable GetMe at boot cannot
+	// serialize concurrent self-checks behind the mutex. Two racing callers
+	// may both call GetMe once; that is harmless and idempotent.
 	u, err := p.b.GetMe(ctx)
 	if err != nil {
 		return 0, mapRetry(err)
 	}
+	p.mu.Lock()
 	p.selfID = u.ID
-	return p.selfID, nil
+	p.mu.Unlock()
+	return u.ID, nil
 }
 
 // CheckBotRights reports the bot's own admin rights in chat plus whether the
