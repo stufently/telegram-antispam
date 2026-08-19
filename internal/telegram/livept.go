@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 
 	bot "github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -22,6 +23,9 @@ type LivePort struct {
 	b    *bot.Bot
 	disp *queue.Dispatcher
 	prio func(method string) queue.Priority
+
+	mu     sync.Mutex // guards selfID
+	selfID int64      // bot's own user id, resolved once via GetMe
 }
 
 var _ Port = (*LivePort)(nil)
@@ -31,6 +35,56 @@ var _ Port = (*LivePort)(nil)
 // its jobs should run at.
 func NewLivePort(b *bot.Bot, disp *queue.Dispatcher, prio func(method string) queue.Priority) *LivePort {
 	return &LivePort{b: b, disp: disp, prio: prio}
+}
+
+// me resolves and caches the bot's own user id. It caches only on success,
+// so a transient GetMe failure is retried on the next call rather than
+// poisoning every later self-check.
+func (p *LivePort) me(ctx context.Context) (int64, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.selfID != 0 {
+		return p.selfID, nil
+	}
+	u, err := p.b.GetMe(ctx)
+	if err != nil {
+		return 0, mapRetry(err)
+	}
+	p.selfID = u.ID
+	return p.selfID, nil
+}
+
+// CheckBotRights reports the bot's own admin rights in chat plus whether the
+// chat has native Aggressive Anti-Spam enabled (spec §13). Owners implicitly
+// have every right; a non-admin bot reports IsAdmin=false with no rights.
+func (p *LivePort) CheckBotRights(ctx context.Context, chat int64) (BotRights, error) {
+	selfID, err := p.me(ctx)
+	if err != nil {
+		return BotRights{}, err
+	}
+	return submitSync(ctx, p.disp, chat, p.prio("CheckBotRights"), func(ctx context.Context) (BotRights, error) {
+		cm, err := p.b.GetChatMember(ctx, &bot.GetChatMemberParams{ChatID: chat, UserID: selfID})
+		if err != nil {
+			return BotRights{}, mapRetry(err)
+		}
+		var r BotRights
+		switch cm.Type {
+		case models.ChatMemberTypeOwner:
+			r.IsAdmin, r.CanDelete, r.CanRestrict = true, true, true
+		case models.ChatMemberTypeAdministrator:
+			if cm.Administrator != nil {
+				r.IsAdmin = true
+				r.CanDelete = cm.Administrator.CanDeleteMessages
+				r.CanRestrict = cm.Administrator.CanRestrictMembers
+			}
+		}
+		full, err := p.b.GetChat(ctx, &bot.GetChatParams{ChatID: chat})
+		if err != nil {
+			return BotRights{}, mapRetry(err)
+		}
+		r.AggressiveAntiSpam = full.HasAggressiveAntiSpamEnabled
+		return r, nil
+	})
 }
 
 // batchIDs splits ids into chunks of at most size (Telegram deleteMessages caps at 100).

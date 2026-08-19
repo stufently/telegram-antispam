@@ -60,6 +60,25 @@ func (db *DB) GetChat(chatID int64) (ChatRow, bool, error) {
 	return r, true, nil
 }
 
+// ListEnabledChats returns the chat_ids of every enabled chat, for startup
+// self-checks that need to inspect the bot's rights in each active chat.
+func (db *DB) ListEnabledChats() ([]int64, error) {
+	rows, err := db.Read().Query("SELECT chat_id FROM chats WHERE enabled=1")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (db *DB) DisableChat(chatID int64) error {
 	return db.Write(func(tx *sql.Tx) error {
 		_, err := tx.Exec("UPDATE chats SET enabled=0 WHERE chat_id=?", chatID)

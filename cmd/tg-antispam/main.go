@@ -22,6 +22,7 @@ import (
 	"github.com/stufently/telegram-antispam/internal/incident"
 	"github.com/stufently/telegram-antispam/internal/ops"
 	"github.com/stufently/telegram-antispam/internal/queue"
+	"github.com/stufently/telegram-antispam/internal/selfcheck"
 	"github.com/stufently/telegram-antispam/internal/store"
 	"github.com/stufently/telegram-antispam/internal/telegram"
 	"github.com/stufently/telegram-antispam/internal/train"
@@ -180,6 +181,7 @@ func main() {
 		adminHandler    *admin.Handler
 		memberWatcher   *watch.MemberWatcher
 		reactionCleaner *watch.ReactionCleaner
+		selfCheck       func(chat int64)
 	)
 
 	opts := []tgbot.Option{
@@ -265,6 +267,18 @@ func main() {
 						}
 					})
 				}
+			case update.MyChatMember != nil:
+				// The bot's own membership/rights in a chat changed: re-run the
+				// self-check so a revoked can_delete/can_restrict (or a newly
+				// enabled native Aggressive Anti-Spam) is surfaced immediately
+				// instead of only at the next restart (spec §13).
+				reg.IncCounter("updates_total", 1, "kind", "my_chat_member")
+				chat := update.MyChatMember.Chat.ID
+				seq.Submit(chat, func() {
+					if selfCheck != nil {
+						selfCheck(chat)
+					}
+				})
 			}
 		}),
 	}
@@ -275,6 +289,19 @@ func main() {
 	}
 
 	livePort := telegram.NewLivePort(b, disp, priorityFor)
+	// selfCheck reads the bot's admin rights in one chat and logs any missing
+	// rights or hazards (spec §13). Best-effort: a transient read error is
+	// logged and dropped, never fatal.
+	selfCheck = func(chat int64) {
+		warnings, err := selfcheck.Check(shutdownCtx, livePort, chat)
+		if err != nil {
+			log.Printf("self-check chat %d: %v", chat, err)
+			return
+		}
+		for _, w := range warnings {
+			log.Printf("self-check chat %d: %s", chat, w)
+		}
+	}
 	machine := incident.New(livePort, db, cfg.AdminChatID)
 	machine.SetButtons(admin.Buttons)
 	machine.EphemeralNotice = *cfg.Detection.EphemeralNoticeEnabled
@@ -440,6 +467,25 @@ func main() {
 			}
 		}()
 	}
+
+	// Startup self-check: verify the bot's rights in every enabled chat once,
+	// off the critical path, so misconfiguration is visible in the logs from
+	// boot rather than only when an admin flips a right later.
+	go func() {
+		chats, err := db.ListEnabledChats()
+		if err != nil {
+			log.Printf("self-check: list chats: %v", err)
+			return
+		}
+		for _, chat := range chats {
+			select {
+			case <-shutdownCtx.Done():
+				return
+			default:
+			}
+			selfCheck(chat)
+		}
+	}()
 
 	log.Print("long polling started")
 	b.Start(ctx) // blocks until ctx is cancelled (SIGINT/SIGTERM)

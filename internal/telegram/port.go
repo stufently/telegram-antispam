@@ -34,6 +34,17 @@ type Button struct {
 	Data string
 }
 
+// BotRights is the subset of the bot's own permissions in a chat that the
+// startup/my_chat_member self-check inspects (spec §13). AggressiveAntiSpam
+// mirrors the chat's native anti-spam toggle, which — when on — deletes
+// messages before the bot can see them.
+type BotRights struct {
+	IsAdmin            bool
+	CanDelete          bool
+	CanRestrict        bool
+	AggressiveAntiSpam bool
+}
+
 // Port is the narrow Telegram surface the incident logic depends on.
 type Port interface {
 	CopyMessages(ctx context.Context, dstChat, srcChat int64, ids []int) ([]int, error)
@@ -47,4 +58,5 @@ type Port interface {
 	EditAdminMarkup(ctx context.Context, adminChat int64, messageID int, buttons [][]Button) error
 	DeleteMessageReaction(ctx context.Context, chat int64, messageID int, userID int64) error
 	SendEphemeral(ctx context.Context, chat, userID int64, text string) (int, error)
+	CheckBotRights(ctx context.Context, chat int64) (BotRights, error)
 }
