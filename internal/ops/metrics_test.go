@@ -8,21 +8,21 @@ import (
 
 func TestRegistryExposition(t *testing.T) {
 	r := NewRegistry()
-	r.IncCounter("updates_total", 1)
-	r.IncCounter("updates_total", 2)
-	r.IncCounter("incidents_total", 1, "action", "ban")
-	r.SetGauge("blocklist_size", 4860000)
+	r.IncCounter("tg_antispam_updates_total", 1)
+	r.IncCounter("tg_antispam_updates_total", 2)
+	r.IncCounter("tg_antispam_incidents_total", 1, "action", "ban")
+	r.SetGauge("tg_antispam_blocklist_size", 4860000)
 
 	var b strings.Builder
 	r.Write(&b)
 	out := b.String()
 
 	for _, want := range []string{
-		"# TYPE updates_total counter",
-		"updates_total 3",
-		`incidents_total{action="ban"} 1`,
-		"# TYPE blocklist_size gauge",
-		"blocklist_size 4.86e+06",
+		"# TYPE tg_antispam_updates_total counter",
+		"tg_antispam_updates_total 3",
+		`tg_antispam_incidents_total{action="ban"} 1`,
+		"# TYPE tg_antispam_blocklist_size gauge",
+		"tg_antispam_blocklist_size 4.86e+06",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("exposition missing %q\n---\n%s", want, out)

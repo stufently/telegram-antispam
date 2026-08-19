@@ -235,13 +235,13 @@ func main() {
 		tgbot.WithDefaultHandler(func(updateCtx context.Context, b *tgbot.Bot, update *models.Update) {
 			switch {
 			case update.Message != nil:
-				reg.IncCounter("updates_total", 1, "kind", "message")
+				reg.IncCounter("tg_antispam_updates_total", 1, "kind", "message")
 				handler.OnMessage(updateCtx, update.ID, telegram.ToDomainMessage(update.Message))
 			case update.EditedMessage != nil:
-				reg.IncCounter("updates_total", 1, "kind", "edited")
+				reg.IncCounter("tg_antispam_updates_total", 1, "kind", "edited")
 				handler.OnEditedMessage(updateCtx, update.ID, telegram.ToDomainMessage(update.EditedMessage))
 			case update.CallbackQuery != nil:
-				reg.IncCounter("updates_total", 1, "kind", "callback")
+				reg.IncCounter("tg_antispam_updates_total", 1, "kind", "callback")
 				cb := update.CallbackQuery
 				// Offload onto the sequencer: WithNotAsyncHandlers runs this
 				// inline on the single poll-consumer goroutine, and
@@ -276,7 +276,7 @@ func main() {
 					}
 				})
 			case update.ChatMember != nil:
-				reg.IncCounter("updates_total", 1, "kind", "chat_member")
+				reg.IncCounter("tg_antispam_updates_total", 1, "kind", "chat_member")
 				cm := update.ChatMember
 				mem := telegram.MemberFromChatMember(cm.NewChatMember)
 				// Only a change that touches the admin roster invalidates it.
@@ -299,7 +299,7 @@ func main() {
 					}
 				})
 			case update.MessageReaction != nil:
-				reg.IncCounter("updates_total", 1, "kind", "reaction")
+				reg.IncCounter("tg_antispam_updates_total", 1, "kind", "reaction")
 				mr := update.MessageReaction
 				if mr.User != nil { // only user-attributed reactions (skip anonymous/actor-chat)
 					ev := watch.ReactionEvent{ChatID: mr.Chat.ID, MessageID: mr.MessageID, UserID: mr.User.ID, Added: len(mr.NewReaction) > len(mr.OldReaction)}
@@ -316,7 +316,7 @@ func main() {
 				// self-check so a revoked can_delete/can_restrict (or a newly
 				// enabled native Aggressive Anti-Spam) is surfaced immediately
 				// instead of only at the next restart (spec §13).
-				reg.IncCounter("updates_total", 1, "kind", "my_chat_member")
+				reg.IncCounter("tg_antispam_updates_total", 1, "kind", "my_chat_member")
 				chat := update.MyChatMember.Chat.ID
 				// The bot's own promotion/demotion changes this chat's
 				// administrator roster too, so the cached list is now wrong
@@ -430,7 +430,7 @@ func main() {
 		startBackground(func() { bl.Run(signalCtx) })
 		blocklistSource = bl
 
-		// blocklist_size gauge: sampled on a ticker rather than pushed from
+		// tg_antispam_blocklist_size gauge: sampled on a ticker rather than pushed from
 		// the syncer itself, so the ops package stays decoupled from
 		// internal/blocklist (see the M7 brief's "keep instrumentation
 		// minimal, don't thread the registry deep" guidance).
@@ -442,7 +442,7 @@ func main() {
 				case <-signalCtx.Done():
 					return
 				case <-t.C:
-					reg.SetGauge("blocklist_size", float64(bl.Len()))
+					reg.SetGauge("tg_antispam_blocklist_size", float64(bl.Len()))
 				}
 			}
 		})
@@ -523,7 +523,7 @@ func main() {
 			cctx, cancel := context.WithTimeout(workCtx, llmTimeout)
 			spam := llmJudge.Adjudicate(cctx, m.Text)
 			cancel()
-			reg.IncCounter("llm_checks_total", 1, "result", boolLabel(spam))
+			reg.IncCounter("tg_antispam_llm_checks_total", 1, "result", boolLabel(spam))
 			if spam {
 				v = domain.Verdict{
 					Action:     cfg.Action,
@@ -536,7 +536,7 @@ func main() {
 			}
 		}
 		if ok {
-			reg.IncCounter("incidents_total", 1, "action", string(v.Action))
+			reg.IncCounter("tg_antispam_incidents_total", 1, "action", string(v.Action))
 		}
 		return v, ok
 	}

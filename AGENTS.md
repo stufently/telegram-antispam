@@ -148,6 +148,10 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
 
 ## Change patterns
 
+- Every exported metric name starts with `tg_antispam_`. These land in a shared
+  Prometheus/VictoriaMetrics instance where a bare `updates_total` would collide
+  with someone else's series, and renaming after dashboards and alerts exist is
+  far more expensive than getting it right here.
 - Put focused tests beside the changed package. Use `telegram/fake` for port
   behavior and `httptest` for external HTTP integrations; unit tests must not
   require Telegram, CAS, LOLS, OpenAI, or Anthropic credentials.
