@@ -491,3 +491,62 @@ func TestCascadeDecide_StaleAdminListDefersEveryoneElse(t *testing.T) {
 		t.Fatalf("a deferred message must still be observed, recorded %d", len(hist.recordedDups))
 	}
 }
+
+// emptyBayes is a BayesSource with no corpus at all: the state a freshly
+// deployed bot is in before anyone runs `tg-antispam import`.
+type emptyBayes struct{}
+
+func (emptyBayes) TokenCounts(string, []string) (map[string]int, map[string]int, error) {
+	return map[string]int{}, map[string]int{}, nil
+}
+func (emptyBayes) Totals(string) (BayesCounts, error) { return BayesCounts{}, nil }
+
+func TestUntrainedBayesStillReachesTheLLMStage(t *testing.T) {
+	base := Cascade{
+		Trust:           &fakeTrustSource{counts: map[[2]int64]int{}},
+		TrustThreshold:  5,
+		Bayes:           emptyBayes{},
+		BayesScope:      "global",
+		BayesEnabled:    true,
+		BayesThreshold:  1.0,
+		BayesVocabGuess: 5000,
+		DefaultAction:   domain.ActionBan,
+		Hist:            &fakeHistory{},
+	}
+	msg := domain.Message{ChatID: -100, MessageID: 1, Text: "быстрый заработок пиши в личку", Sender: domain.Sender{UserID: 7, Kind: domain.SenderUser}}
+
+	// LLM wired (band > 0): an untrained corpus must still produce the
+	// borderline signal, otherwise the paid stage never runs on a fresh
+	// deploy — exactly when it is needed most.
+	withLLM := base
+	withLLM.BayesBorderlineBand = 0.5
+	v, actionable := withLLM.Decide(msg, false)
+	if actionable {
+		t.Fatal("untrained bayes must never be actionable on its own")
+	}
+	if len(v.Signals) != 1 || v.Signals[0].Name != "bayes_borderline" {
+		t.Fatalf("signals = %+v, want one bayes_borderline", v.Signals)
+	}
+
+	// LLM not wired (band 0): nothing changes, no signal, no cost.
+	v, actionable = base.Decide(msg, false)
+	if actionable || len(v.Signals) != 0 {
+		t.Fatalf("without the LLM stage: actionable=%v signals=%+v, want a silent pass", actionable, v.Signals)
+	}
+}
+
+func TestUntrainedBayesSkipsEmptyTokenMessages(t *testing.T) {
+	c := Cascade{
+		Trust: &fakeTrustSource{counts: map[[2]int64]int{}}, TrustThreshold: 5,
+		Bayes: emptyBayes{}, BayesScope: "global", BayesEnabled: true,
+		BayesThreshold: 1.0, BayesVocabGuess: 5000, BayesBorderlineBand: 0.5,
+		DefaultAction: domain.ActionBan, Hist: &fakeHistory{},
+	}
+	// A captionless photo still tokenizes to meta features like "len:short",
+	// but it carries no text to judge — sending it to a paid API would buy
+	// an opinion about the empty string.
+	v, actionable := c.Decide(domain.Message{ChatID: -100, MessageID: 1, Sender: domain.Sender{UserID: 7, Kind: domain.SenderUser}}, false)
+	if actionable || len(v.Signals) != 0 {
+		t.Fatalf("empty message: actionable=%v signals=%+v, want a silent pass", actionable, v.Signals)
+	}
+}

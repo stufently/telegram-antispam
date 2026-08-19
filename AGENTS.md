@@ -145,6 +145,10 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
 - Preserve unset-versus-explicit-zero semantics in configuration. Boolean and
   numeric fields where `false` or `0` is meaningful use pointers; defaults,
   validation, YAML example, and config tests must change together.
+- While the Bayes corpus is empty, an untrusted user's text message is
+  reported as `bayes_borderline` so the (opt-in) LLM stage still runs. A fresh
+  deploy would otherwise never consult the API the operator explicitly enabled.
+  Messages with no text never go: there is nothing to classify.
 - New chats default to dry-run. External failures must not manufacture a spam
   result: LLM errors return not-spam and each blocklist source retains its own
   last-good data. Conversely, an unreadable admin or stored chat lifecycle gate

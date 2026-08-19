@@ -4,7 +4,11 @@
 // itself (e.g. bumping trust); that happens in the caller (see M3 task 9).
 package detect
 
-import "github.com/stufently/telegram-antispam/internal/domain"
+import (
+	"strings"
+
+	"github.com/stufently/telegram-antispam/internal/domain"
+)
 
 // Cascade holds the injected dependencies and config needed to run the full
 // M3 detection pipeline over one message. It carries no mutable state of its
@@ -139,7 +143,8 @@ func (c Cascade) Decide(m domain.Message, edited bool) (domain.Verdict, bool) {
 	if c.BayesEnabled && !trusted {
 		tokens := Tokenize(n)
 		ratio, scoreable, _ := bayesScore(c.Bayes, c.BayesScope, tokens, c.BayesVocabGuess)
-		if scoreable {
+		switch {
+		case scoreable:
 			if ratio >= c.BayesThreshold {
 				return c.actionable(domain.Signal{Name: "bayes"}), true
 			}
@@ -150,6 +155,17 @@ func (c Cascade) Decide(m domain.Message, edited bool) (domain.Verdict, bool) {
 			if c.BayesBorderlineBand > 0 && c.BayesThreshold-ratio <= c.BayesBorderlineBand {
 				return domain.Verdict{Action: domain.ActionNone, Signals: []domain.Signal{{Name: "bayes_borderline"}}}, false
 			}
+		case c.BayesBorderlineBand > 0 && strings.TrimSpace(n.Text) != "":
+			// No basis to score at all — an untrained corpus. Without this
+			// branch a freshly deployed bot with the LLM enabled would never
+			// consult it: every message would be unscoreable, so the
+			// borderline signal above could not fire, and the paid stage the
+			// operator explicitly turned on would sit idle until someone
+			// imported a corpus. Treating "unknown" as borderline is also
+			// the honest reading of it. The cost is bounded by the enclosing
+			// !trusted gate: only newcomers reach here, and each one stops
+			// once they clear the trust threshold.
+			return domain.Verdict{Action: domain.ActionNone, Signals: []domain.Signal{{Name: "bayes_borderline"}}}, false
 		}
 	}
 

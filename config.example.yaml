@@ -200,6 +200,12 @@ llm:
   policy: any
   # Width below bayes_threshold within which a message is sent to the LLM.
   # Must be > 0 for the stage to run. Default: 0.5.
+  #
+  # It also governs the untrained case: while the Bayes corpus is empty
+  # there is no score to be near, so every message from an untrusted user
+  # that carries text is treated as borderline and goes to the LLM. Without
+  # that, a fresh deploy with the LLM enabled would never call it. Trusted
+  # users are never sent, so the volume falls off as newcomers settle in.
   borderline_band: 0.5
   # Per-provider call timeout. Default: 10s.
   http_timeout: 10s
