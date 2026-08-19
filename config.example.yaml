@@ -55,12 +55,12 @@ detection:
   # over messages the earlier rule/behavior stages didn't already decide.
   # Turn the whole stage on or off. Default: true.
   bayes_enabled: true
-  # Minimum log-ratio (see detect.BayesLogRatio) at or above which a
-  # message is flagged spam-leaning; 0.0 means "the scorer favors spam at
-  # all, however slightly". Default: 0.0. An explicit 0.0 is honored the
-  # same as leaving this unset.
-  # Naive-Bayes decision threshold (log-ratio). Default 1.0 (conservative:
-  # requires clearer spam evidence than the neutral 0.0). Tune via Evaluate.
+  # Minimum log-ratio (see detect.BayesLogRatio) at or above which a message
+  # is flagged spam-leaning. Default: 1.0 — conservative: requires clearer
+  # spam evidence than the neutral 0.0 boundary (P(spam) >= P(ham)), reducing
+  # false positives on a trained corpus. An explicit 0.0 is honored (neutral
+  # boundary) and differs from leaving the key unset (which yields 1.0). Tune
+  # precisely with detect.Evaluate (precision/recall).
   bayes_threshold: 1.0
   # Estimated vocabulary size used for Laplace smoothing of per-token
   # likelihoods (detect.BayesLogRatio's vocabGuess param). 0 is not a
@@ -81,9 +81,13 @@ detection:
   # Prevents distance-1 false positives on short names (e.g. CEO vs CFO).
   # Default: 5.
   fake_admin_min_fuzzy_len: 5
-  # Substrings in a display name treated as suspicious admin-impersonation
-  # signals, case-insensitive. An explicit empty list ([]) disables this
-  # check. Default: [admin, support, verified, moderator].
+  # Sender tags (a message's sender_tag / author signature) that flag
+  # admin-impersonation. Matched by EXACT case-insensitive equality against
+  # the sender_tag — NOT a substring scan of the display name — so entries
+  # must be whole tags a spammer would set (e.g. "admin"), not fragments.
+  # An explicit empty list ([]) disables this check.
+  # Default: [admin, support, verified, moderator, админ, саппорт, поддержка,
+  #           модератор, модер, верифицирован].
   fake_admin_suspicious_tags: [admin, support, verified, moderator, админ, саппорт, поддержка, модератор, модер, верифицирован]
   # How long the fake-admin detector caches a chat's real admin list
   # before refreshing it, in seconds. 0 is not a meaningful TTL, so it is

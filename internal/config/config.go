@@ -140,14 +140,16 @@ type Detection struct {
 	// positives on short names (e.g. "CEO" vs "CFO"). Plain int: 0 doubles as
 	// "unset" and gets the default. Default: 5.
 	FakeAdminMinFuzzyLen int `yaml:"fake_admin_min_fuzzy_len"`
-	// FakeAdminSuspiciousTags is the list of substrings in a display
-	// name (e.g. "admin", "support") that the fake-admin detector treats
-	// as suspicious. nil (key absent from YAML) means "unset" and gets
-	// the default list; an explicit empty list in YAML ([]) means
-	// "disable the suspicious-tag check" and is preserved as empty, not
-	// re-defaulted — a YAML [] unmarshals to a non-nil empty slice, so
-	// applyDetectionDefaults can tell the two apart with a nil check.
-	// Default: ["admin", "support", "verified", "moderator"].
+	// FakeAdminSuspiciousTags is the list of sender tags (a message's
+	// sender_tag / author signature) that the fake-admin detector flags,
+	// matched by EXACT case-insensitive equality against the sender_tag —
+	// not a substring scan of the display name. nil (key absent from YAML)
+	// means "unset" and gets the default list; an explicit empty list in
+	// YAML ([]) means "disable the suspicious-tag check" and is preserved as
+	// empty, not re-defaulted — a YAML [] unmarshals to a non-nil empty
+	// slice, so applyDetectionDefaults can tell the two apart with a nil
+	// check. Default: ["admin", "support", "verified", "moderator", "админ",
+	// "саппорт", "поддержка", "модератор", "модер", "верифицирован"].
 	FakeAdminSuspiciousTags []string `yaml:"fake_admin_suspicious_tags"`
 	// AdminCacheTTLSeconds is how long the fake-admin detector caches the
 	// chat's real admin list before refreshing it, in seconds. A plain
@@ -291,7 +293,6 @@ func Parse(b []byte) (*Config, error) {
 	if err := yaml.Unmarshal(b, &c); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
-	c.applyChatsDefaults()
 	c.applyDetectionDefaults()
 	c.applyBlocklistDefaults()
 	c.applyOpsDefaults()
@@ -306,15 +307,6 @@ func Parse(b []byte) (*Config, error) {
 		return nil, err
 	}
 	return &c, nil
-}
-
-// applyChatsDefaults fills the chats block. StartInDryRun defaults to TRUE
-// (observe-first safety): a fresh deploy must not silently start banning.
-func (c *Config) applyChatsDefaults() {
-	if c.Chats.StartInDryRun == nil {
-		def := true
-		c.Chats.StartInDryRun = &def
-	}
 }
 
 // applyDetectionDefaults fills in sane defaults for any Detection field left
