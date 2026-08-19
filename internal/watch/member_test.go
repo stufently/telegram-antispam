@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stufently/telegram-antispam/internal/detect"
@@ -25,11 +26,12 @@ func (s *fakeStore) UpsertIdentity(chatID, userID int64, username, displayName s
 
 // fakeAdmins is a scripted detect.AdminSource.
 type fakeAdmins struct {
-	a []detect.AdminIdentity
+	a   []detect.AdminIdentity
+	err error
 }
 
-func (f fakeAdmins) AdminIdentities(chatID int64) []detect.AdminIdentity {
-	return f.a
+func (f fakeAdmins) AdminIdentities(chatID int64) ([]detect.AdminIdentity, error) {
+	return f.a, f.err
 }
 
 func TestObserveAdminLikeRenameSendsOneNotice(t *testing.T) {
@@ -221,5 +223,26 @@ func TestObserveDisabledStillRecordsButSendsNoNotice(t *testing.T) {
 	}
 	if store.calls != 1 {
 		t.Fatalf("expected UpsertIdentity still called once when disabled, got %d", store.calls)
+	}
+}
+
+func TestObserveAdminLookupErrorReturnsWithoutNotice(t *testing.T) {
+	store := &fakeStore{prevUsername: "bob", prevDisplay: "Bob", changed: true}
+	port := fake.New()
+	w := &MemberWatcher{
+		Store:   store,
+		Admins:  fakeAdmins{err: errors.New("telegram unavailable")},
+		Port:    port,
+		Enabled: true,
+	}
+
+	err := w.Observe(context.Background(), MemberEvent{ChatID: 1, UserID: 2, Username: "owner"})
+	if err == nil {
+		t.Fatal("expected admin lookup error")
+	}
+	for _, call := range port.Calls() {
+		if call == "SendAdmin" {
+			t.Fatal("admin lookup failure must not produce an impersonation notice")
+		}
 	}
 }

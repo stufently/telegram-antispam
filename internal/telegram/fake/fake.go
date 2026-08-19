@@ -14,15 +14,19 @@ type Fake struct {
 	calls []string
 
 	// knobs
-	CopyErr      error
-	SendAdminID  int
-	Admins       []telegram.Member
-	AdminsErr    error
-	BanSenderErr error
-	EphemeralID  int
-	EphemeralErr error
-	Rights       telegram.BotRights
-	RightsErr    error
+	CopyErr     error
+	SendAdminID int
+	Admins      []telegram.Member
+	AdminsErr   error
+	// BeforeGetAdmins, when set, runs at the start of
+	// GetChatAdministrators. Tests use it to hold a fetch in flight and
+	// interleave other cache operations with it.
+	BeforeGetAdmins func()
+	BanSenderErr    error
+	EphemeralID     int
+	EphemeralErr    error
+	Rights          telegram.BotRights
+	RightsErr       error
 
 	// LastAdmin captures the most recent AdminMessage passed to SendAdmin, so
 	// tests can assert on fields SendAdmin doesn't otherwise record.
@@ -102,8 +106,14 @@ func (f *Fake) BanSenderChat(_ context.Context, _, _ int64) error {
 	return f.BanSenderErr
 }
 
-func (f *Fake) GetChatAdministrators(_ context.Context, _ int64) ([]telegram.Member, error) {
+func (f *Fake) GetChatAdministrators(ctx context.Context, _ int64) ([]telegram.Member, error) {
 	f.log("GetChatAdministrators")
+	if f.BeforeGetAdmins != nil {
+		f.BeforeGetAdmins()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if f.AdminsErr != nil {
 		return nil, f.AdminsErr
 	}

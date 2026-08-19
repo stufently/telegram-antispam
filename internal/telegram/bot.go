@@ -77,13 +77,11 @@ type Handler struct {
 	// SetDecide) working unchanged.
 	editedDecide func(domain.Message) (domain.Verdict, bool)
 
-	// rootCtx is used for work that runs off the AlbumBuffer's own timer
-	// goroutine (flushAlbum), which has no request context of its own. It
-	// defaults to context.Background() so tests need not set it, but main
-	// overrides it via SetContext with the process's shutdown-aware ctx: an
-	// album flush that fires during shutdown must observe cancellation
-	// (LivePort's submitSync blocks on <-ctx.Done()), or it would hang
-	// forever if the dispatcher has already stopped consuming jobs.
+	// rootCtx is the lifecycle context for every job accepted by the per-chat
+	// sequencer, including work flushed by AlbumBuffer. It is deliberately
+	// independent from the short-lived update callback context, so accepted
+	// work can drain during shutdown. Main cancels it after the bounded drain
+	// deadline and only then stops the outbound dispatcher.
 	rootCtx context.Context
 }
 
@@ -144,7 +142,7 @@ func (h *Handler) OnEditedMessage(ctx context.Context, updateID int64, m domain.
 	h.onUpdate(ctx, updateID, m, true)
 }
 
-func (h *Handler) onUpdate(ctx context.Context, updateID int64, m domain.Message, edited bool) {
+func (h *Handler) onUpdate(_ context.Context, updateID int64, m domain.Message, edited bool) {
 	fresh, err := h.db.MarkUpdateSeen(updateID)
 	if err != nil {
 		log.Printf("dedup update %d: %v", updateID, err)
@@ -161,7 +159,7 @@ func (h *Handler) onUpdate(ctx context.Context, updateID int64, m domain.Message
 	// parts are buffered and flushed together as one incident.
 	if h.album.Add(m) {
 		h.seq.Submit(m.ChatID, func() {
-			h.process(ctx, []domain.Message{m}, edited)
+			h.process(h.rootCtx, []domain.Message{m}, edited)
 		})
 	}
 }
@@ -209,10 +207,14 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 		// reads this back via detect.TrustSource). This is a wiring-level
 		// side effect, not part of the pure cascade: detect.Cascade.Decide
 		// never bumps trust itself.
-		if first.Sender.Kind == domain.SenderUser && detect.IsMeaningful(detect.Normalize(first)) {
+		if verdict.Reason != detect.ReasonAdminLookupUnavailable && first.Sender.Kind == domain.SenderUser && detect.IsMeaningful(detect.Normalize(first)) {
 			if _, err := h.db.BumpTrust(first.ChatID, first.Sender.UserID); err != nil {
 				log.Printf("bump trust chat=%d user=%d: %v", first.ChatID, first.Sender.UserID, err)
 			}
+		}
+		if verdict.Reason == detect.ReasonAdminLookupUnavailable {
+			log.Printf("chat=%d msg=%d: moderation deferred: admin lookup unavailable", first.ChatID, first.MessageID)
+			return
 		}
 		for _, m := range parts {
 			log.Printf("chat=%d msg=%d sender=%s: observed (dry-run spine)", m.ChatID, m.MessageID, m.Sender.Kind)

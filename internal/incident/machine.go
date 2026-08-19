@@ -13,7 +13,7 @@ import (
 
 // Repo is the persistence surface the machine needs; *store.DB satisfies it.
 type Repo interface {
-	InsertPending(chatID int64, messageID int, userID int64, dryRun bool) (int64, bool, error)
+	InsertPending(chatID int64, messageID int, userID int64, dryRun bool, verdict domain.Verdict) (int64, bool, error)
 	SetIncidentState(id int64, s domain.IncidentState) error
 	AddEvidence(id int64, adminChatID int64, adminMessageIDs []int) error
 }
@@ -57,7 +57,7 @@ func (m *Machine) Handle(ctx context.Context, inc domain.Incident) error {
 	if len(inc.MessageIDs) == 0 {
 		return fmt.Errorf("incident has no message ids")
 	}
-	id, fresh, err := m.repo.InsertPending(inc.ChatID, inc.MessageIDs[0], inc.Sender.UserID, inc.DryRun)
+	id, fresh, err := m.repo.InsertPending(inc.ChatID, inc.MessageIDs[0], inc.Sender.UserID, inc.DryRun, inc.Verdict)
 	if err != nil {
 		return fmt.Errorf("insert pending: %w", err)
 	}

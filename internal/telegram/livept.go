@@ -37,10 +37,11 @@ func NewLivePort(b *bot.Bot, disp *queue.Dispatcher, prio func(method string) qu
 	return &LivePort{b: b, disp: disp, prio: prio}
 }
 
-// me resolves and caches the bot's own user id. It caches only on success,
-// so a transient GetMe failure is retried on the next call rather than
-// poisoning every later self-check.
-func (p *LivePort) me(ctx context.Context) (int64, error) {
+// me resolves and caches the bot's own user id. GetMe goes through the same
+// dispatcher as every other outbound Port call, so rate limits and 429 retry
+// apply consistently. It caches only on success, so a transient terminal
+// failure is retried on the next call rather than poisoning later checks.
+func (p *LivePort) me(ctx context.Context, chat int64) (int64, error) {
 	p.mu.Lock()
 	id := p.selfID
 	p.mu.Unlock()
@@ -50,7 +51,10 @@ func (p *LivePort) me(ctx context.Context) (int64, error) {
 	// Resolve outside the lock so a slow/unreachable GetMe at boot cannot
 	// serialize concurrent self-checks behind the mutex. Two racing callers
 	// may both call GetMe once; that is harmless and idempotent.
-	u, err := p.b.GetMe(ctx)
+	u, err := submitSync(ctx, p.disp, chat, p.prio("GetMe"), func(ctx context.Context) (*models.User, error) {
+		u, err := p.b.GetMe(ctx)
+		return u, mapRetry(err)
+	})
 	if err != nil {
 		return 0, mapRetry(err)
 	}
@@ -60,11 +64,21 @@ func (p *LivePort) me(ctx context.Context) (int64, error) {
 	return u.ID, nil
 }
 
+// Self returns the bot's own user id, resolving it via GetMe on first use.
+// Startup calls it as an explicit connectivity/token probe: Bot.New is
+// constructed WithSkipGetMe so that the very first identity lookup is routed
+// through the dispatcher like every other call, which means this is the only
+// thing standing between a revoked token and a process that polls forever
+// while reporting itself healthy.
+func (p *LivePort) Self(ctx context.Context) (int64, error) {
+	return p.me(ctx, 0)
+}
+
 // CheckBotRights reports the bot's own admin rights in chat plus whether the
 // chat has native Aggressive Anti-Spam enabled (spec §13). Owners implicitly
 // have every right; a non-admin bot reports IsAdmin=false with no rights.
 func (p *LivePort) CheckBotRights(ctx context.Context, chat int64) (BotRights, error) {
-	selfID, err := p.me(ctx)
+	selfID, err := p.me(ctx, chat)
 	if err != nil {
 		return BotRights{}, err
 	}
@@ -146,8 +160,16 @@ func submitSync[T any](ctx context.Context, disp *queue.Dispatcher, chat int64, 
 		err error
 	}
 	ch := make(chan res, 1)
-	disp.Submit(chat, queue.Job{Priority: prio, Run: func(ctx context.Context) error {
-		val, err := do(ctx)
+	disp.Submit(chat, queue.Job{Priority: prio, Run: func(dispatchCtx context.Context) error {
+		// A queued request has two owners: the dispatcher lifecycle and the
+		// caller waiting for its result. Cancel the actual HTTP attempt when
+		// either ends; otherwise a caller can return while stale work continues
+		// against Telegram during shutdown.
+		attemptCtx, cancelAttempt := context.WithCancel(dispatchCtx)
+		stopCallerCancel := context.AfterFunc(ctx, cancelAttempt)
+		val, err := do(attemptCtx)
+		stopCallerCancel()
+		cancelAttempt()
 		if ra, ok := err.(queue.RetryAfter); ok {
 			return ra // let the dispatcher retry; nothing terminal yet
 		}

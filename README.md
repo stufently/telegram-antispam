@@ -12,9 +12,9 @@
 
 telegram-antispam keeps spam, scam links, flooding, and impersonators out of your Telegram
 **groups and supergroups**. It runs as a single container, deletes and mutes/bans spammers,
-copies the evidence to a private admin chat, and lets your moderators reverse any action with
-one tap. It is designed to be **correct and reversible first** — evidence and ordering before
-detectors — so a false positive is always undoable.
+copies the evidence to a private admin chat, and lets moderators record feedback with inline
+buttons. It is designed to be **evidence-first** — ordering and an audit trail before
+destructive actions — and defaults new chats to dry-run for safe tuning.
 
 **Keywords:** telegram anti-spam bot · telegram spam filter · telegram moderation bot ·
 self-hosted · Go / Golang · CAS (Combot Anti-Spam) · LOLS blocklist · Bayesian spam
@@ -31,8 +31,8 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
 - **Text normalizer / de-obfuscation** — folds homoglyphs, zero-width characters, and
   look-alike Unicode so `Ｃ𝗮𝘀іno` reads as `casino`.
 - **Shared blocklists (CAS + LOLS)** — pulls the Combot Anti-Spam (`cas.chat`) and
-  `lols.bot` ban lists on a schedule into a bounded in-memory set, **fail-open** so a
-  blocklist outage never blocks your chat.
+  `lols.bot` ban lists on a schedule into an atomically swapped in-memory set; each source's
+  last-good data survives a partial outage, so refresh failures never block your chat.
 - **Bayesian spam filter** — log-space naive Bayes with Laplace smoothing, an idempotent
   `import` command to train from labeled samples, and offline precision/recall calibration.
 - **Fake-admin / impersonation detection** — bounded Levenshtein match against the real
@@ -42,14 +42,15 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
 - **Optional LLM adjudication (opt-in)** — for messages whose Bayes score sits near the
   threshold, consult OpenAI and/or Anthropic with an `any`/`all` consensus policy.
   **Disabled by default** — no message text ever leaves the process unless you opt in.
-- **Reversible moderation** — evidence is copied to a private admin chat with inline
+- **Evidence-backed moderation** — evidence is copied to a private admin chat with inline
   **Confirm spam / False positive / Lift (no learn) / Delete evidence** buttons and
-  per-callback RBAC.
+  per-callback RBAC. Confirm/false-positive feedback is recorded; automated lift and evidence
+  deletion are not wired yet.
 - **Newcomer defenses** — spam-reaction cleanup, ephemeral one-way notices, and a trust
   score that graduates real users out of the strict checks.
 - **Dry-run mode** — observe and log verdicts without touching anyone, per chat.
 - **Observability** — Prometheus `/metrics`, a `/healthz` endpoint, and a **daily digest**
-  of actions to the admin chat.
+  of actions to the admin chat, reporting applied, dry-run, and incomplete actions separately.
 - **Startup self-check** — warns if the bot lacks `can_delete_messages` /
   `can_restrict_members`, or if Telegram's native Aggressive Anti-Spam would hide messages.
 - **Single static binary** — pure Go (`CGO_ENABLED=0`), pure-Go SQLite, distroless image.
@@ -59,9 +60,9 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
 telegram-antispam is a **simpler, self-hosted alternative to [tg-spam](https://github.com/umputun/tg-spam)**.
 It fixes the identity bugs that plague hash-based spam bots (message identity is
 `(chat_id, message_id)`, never a text hash — so captionless media can't collapse into one
-key and ban random people), keeps a full audit row for every verdict so an unban never loses
-the reasoning, and never re-imports presets over your learned data. It ships as one container
-with no external database.
+key and ban random people), keeps a full audit row for every actionable incident so later
+review never loses the reasoning, and never re-imports presets over your learned data. It
+ships as one container with no external database.
 
 ## Quick start (Docker Compose)
 
@@ -151,12 +152,15 @@ A clean, testable layering keeps the detection core pure and the side effects at
 |---|---|
 | `internal/detect` | **Pure** detection cascade — normalizer, rules, behavioral, Bayes, fake-admin (stdlib + `x/text` only) |
 | `internal/telegram` | The only package that talks to the Telegram Bot API; rate-limited outbound queue with 429 retry |
-| `internal/incident` | Evidence-before-action state machine; every verdict is auditable and reversible |
-| `internal/blocklist` | CAS + LOLS syncer with a bounded, fail-open in-memory set |
+| `internal/incident` | Evidence-before-action state machine with durable incident/audit state |
+| `internal/blocklist` | CAS + LOLS syncer with atomic snapshots and per-source last-good data |
 | `internal/llm` | Opt-in OpenAI / Anthropic borderline adjudication with consensus |
 | `internal/store` | SQLite (WAL, single writer), migrations, audit log |
 | `internal/ops` | Prometheus metrics, `/healthz`, daily admin digest |
 | `internal/config` | YAML config load, validation, and hot-reload |
+
+See [`docs/architecture.md`](docs/architecture.md) for the current runtime flow,
+safety invariants, config-reload scope, and implementation boundaries.
 
 ## Configuration reference
 
@@ -182,8 +186,9 @@ Or run the test suite in Docker (no local toolchain needed):
 **Does it need a database server?** No. It uses embedded SQLite (pure Go, no CGO) on a
 writable volume.
 
-**Will it ban people by accident?** Every action is evidence-backed and reversible from the
-admin chat, and you can run any chat in dry-run first.
+**Will it ban people by accident?** Every action is evidence-backed, administrator lookups
+fail safely, and you can run any chat in dry-run first. Admin feedback is recorded, but the
+current `Lift` button does not yet unmute or unban automatically.
 
 **Does it send my users' messages to a third party?** Only if you explicitly enable the LLM
 stage. By default nothing leaves the process.

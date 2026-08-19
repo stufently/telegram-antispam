@@ -1,6 +1,7 @@
 package detect
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -166,9 +167,12 @@ func TestCascadeDecide_BayesSpamActionableForUntrustedOnly(t *testing.T) {
 	}
 }
 
-type fakeAdminSrc struct{ a []AdminIdentity }
+type fakeAdminSrc struct {
+	a   []AdminIdentity
+	err error
+}
 
-func (f fakeAdminSrc) AdminIdentities(int64) []AdminIdentity { return f.a }
+func (f fakeAdminSrc) AdminIdentities(int64) ([]AdminIdentity, error) { return f.a, f.err }
 
 func TestCascadeDecide_FakeAdminUntrustedOnly(t *testing.T) {
 	c := Cascade{
@@ -227,6 +231,84 @@ func TestCascadeDecide_CurrentAdminImmune(t *testing.T) {
 	imp := domain.Message{ChatID: 1, Sender: domain.Sender{UserID: 99, Username: "alice_admln", DisplayName: "Alice"}}
 	if _, ok := c.Decide(imp, false); !ok {
 		t.Fatal("non-admin impersonator must still be flagged")
+	}
+}
+
+func TestCascadeDecide_AdminLookupFailureDefersAllModeration(t *testing.T) {
+	c := Cascade{
+		Trust:            &fakeTrustSource{counts: map[[2]int64]int{}},
+		Hist:             &fakeHistory{},
+		Rules:            Rules{DenyStopwords: []string{"spamword"}},
+		TrustThreshold:   5,
+		Admins:           fakeAdminSrc{err: errors.New("telegram unavailable")},
+		DefaultAction:    domain.ActionBan,
+		DefaultScope:     domain.ScopeGlobal,
+		Blocklist:        fakeBlocklist{ids: map[int64]bool{42: true}},
+		BlocklistEnabled: true,
+	}
+	m := domain.Message{ChatID: 1, Sender: domain.Sender{UserID: 42}, Text: "spamword"}
+
+	v, actionable := c.Decide(m, false)
+	if actionable || v.IsActionable() {
+		t.Fatalf("admin lookup failure must suppress punitive detectors, got %+v", v)
+	}
+	if v.Reason != ReasonAdminLookupUnavailable || len(v.Signals) != 1 {
+		t.Fatalf("expected explicit deferred signal, got %+v", v)
+	}
+}
+
+// Deferring must not create a hole in the behavioral window. The wiring layer
+// marks the update seen before Decide runs, so a message dropped here is never
+// reprocessed: if the deferral also skipped CheckBehavior, a flood arriving
+// during a Telegram hiccup would leave no trace in the duplicate counters and
+// stay invisible even after the admin lookup recovered.
+func TestCascadeDecide_AdminLookupFailureStillRecordsBehavior(t *testing.T) {
+	hist := &fakeHistory{}
+	c := Cascade{
+		Trust:          &fakeTrustSource{counts: map[[2]int64]int{}},
+		Hist:           hist,
+		Rules:          Rules{},
+		TrustThreshold: 5,
+		Admins:         fakeAdminSrc{err: errors.New("telegram unavailable")},
+		Behavior:       BehaviorCfg{DupThreshold: 3, DupWindow: time.Minute},
+		DefaultAction:  domain.ActionBan,
+		DefaultScope:   domain.ScopeGlobal,
+	}
+	m := domain.Message{ChatID: 1, Sender: domain.Sender{UserID: 42}, Text: "buy my thing"}
+
+	v, actionable := c.Decide(m, false)
+	if actionable || v.Reason != ReasonAdminLookupUnavailable {
+		t.Fatalf("expected a deferred verdict, got %+v", v)
+	}
+	if len(hist.recordedDups) != 1 {
+		t.Fatalf("deferred message must still be recorded in the dup window, recorded %d", len(hist.recordedDups))
+	}
+}
+
+// The recording above is for its side effect only: a duplicate flood that
+// crosses the threshold while the admin list is unavailable must still not
+// produce an actionable verdict, because we cannot prove the sender is not
+// an admin.
+func TestCascadeDecide_AdminLookupFailureNeverActsOnRecordedBehavior(t *testing.T) {
+	hist := &fakeHistory{defaultDupCount: 99}
+	c := Cascade{
+		Trust:          &fakeTrustSource{counts: map[[2]int64]int{}},
+		Hist:           hist,
+		Rules:          Rules{},
+		TrustThreshold: 5,
+		Admins:         fakeAdminSrc{err: errors.New("telegram unavailable")},
+		Behavior:       BehaviorCfg{DupThreshold: 3, DupWindow: time.Minute},
+		DefaultAction:  domain.ActionBan,
+		DefaultScope:   domain.ScopeGlobal,
+	}
+	m := domain.Message{ChatID: 1, Sender: domain.Sender{UserID: 42}, Text: "buy my thing"}
+
+	v, actionable := c.Decide(m, false)
+	if actionable || v.IsActionable() {
+		t.Fatalf("a deferred lookup must never produce an action, got %+v", v)
+	}
+	if v.Reason != ReasonAdminLookupUnavailable {
+		t.Fatalf("expected the deferred reason, got %+v", v)
 	}
 }
 

@@ -12,11 +12,13 @@ import (
 
 // stubRepo is a minimal in-memory Repo.
 type stubRepo struct {
-	state domain.IncidentState
-	fresh bool
+	state   domain.IncidentState
+	fresh   bool
+	verdict domain.Verdict
 }
 
-func (r *stubRepo) InsertPending(int64, int, int64, bool) (int64, bool, error) {
+func (r *stubRepo) InsertPending(_ int64, _ int, _ int64, _ bool, verdict domain.Verdict) (int64, bool, error) {
+	r.verdict = verdict
 	return 1, r.fresh, nil
 }
 func (r *stubRepo) SetIncidentState(_ int64, s domain.IncidentState) error { r.state = s; return nil }

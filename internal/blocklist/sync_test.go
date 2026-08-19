@@ -63,6 +63,66 @@ func TestRefreshFullOneFailsPartialAppliedWithError(t *testing.T) {
 	}
 }
 
+func TestRefreshFullPartialFailureKeepsFailedSourceLastGood(t *testing.T) {
+	b := New()
+	b.cfg = Config{LolsFullURL: "lols", CasFullURL: "cas"}
+	b.fetch = scriptedFetch(map[string][]int64{
+		"lols": {1, 2},
+		"cas":  {10, 20},
+	}, nil)
+	if err := b.RefreshFull(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// CAS advances while LOLS is unavailable. The new CAS list replaces the
+	// old CAS contribution, but the last-good LOLS contribution must survive.
+	b.fetch = scriptedFetch(map[string][]int64{
+		"cas": {30},
+	}, map[string]error{
+		"lols": errors.New("lols down"),
+	})
+	if err := b.RefreshFull(context.Background()); err == nil {
+		t.Fatal("expected informational partial-refresh error")
+	}
+
+	for _, id := range []int64{1, 2, 30} {
+		if !b.Listed(id) {
+			t.Errorf("last-good partial snapshot lost id %d", id)
+		}
+	}
+	if b.Listed(10) || b.Listed(20) {
+		t.Fatal("successful CAS refresh did not replace its own old contribution")
+	}
+}
+
+func TestRefreshFullPartialFailurePreservesAccumulatedDelta(t *testing.T) {
+	b := New()
+	b.cfg = Config{LolsFullURL: "lols", CasFullURL: "cas", LolsDeltaURL: "delta"}
+	b.fetch = scriptedFetch(map[string][]int64{
+		"lols": {1},
+		"cas":  {10},
+	}, nil)
+	if err := b.RefreshFull(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	b.fetch = scriptedFetch(map[string][]int64{"delta": {2}}, nil)
+	if err := b.RefreshDelta(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	b.fetch = scriptedFetch(map[string][]int64{"cas": {20}}, map[string]error{
+		"lols": errors.New("lols down"),
+	})
+	if err := b.RefreshFull(context.Background()); err == nil {
+		t.Fatal("expected informational partial-refresh error")
+	}
+	for _, id := range []int64{1, 2, 20} {
+		if !b.Listed(id) {
+			t.Errorf("partial refresh lost id %d", id)
+		}
+	}
+}
+
 func TestRefreshFullBothFailKeepsLastGood(t *testing.T) {
 	b := New()
 	b.cfg = Config{LolsFullURL: "lols", CasFullURL: "cas"}

@@ -3,6 +3,7 @@ package blocklist
 import (
 	"context"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -26,6 +27,14 @@ type fetchFn func(ctx context.Context, url string) ([]int64, error)
 // moderation cascade) look up user IDs concurrently.
 type Blocklist struct {
 	snap atomic.Pointer[Set]
+
+	// refreshMu serializes full/delta refreshes and protects the last-good
+	// data kept separately for each source. Keeping sources separate prevents
+	// a partial outage from erasing the failed provider's previous IDs.
+	refreshMu sync.Mutex
+	lolsFull  []int64
+	casFull   []int64
+	lolsDelta []int64
 
 	cfg    Config
 	fetch  fetchFn

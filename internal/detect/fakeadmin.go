@@ -15,11 +15,11 @@ type AdminIdentity struct {
 	CustomTitle string
 }
 
-// AdminSource returns the cached admin list for a chat. Implementations
-// return an empty slice when the admin list is unknown/uncached — the
-// detector treats empty as "no basis" and never panics.
+// AdminSource returns the cached admin list for a chat. An error means the
+// caller cannot safely determine current-admin immunity; moderation callers
+// must defer the decision rather than treating an unknown list as empty.
 type AdminSource interface {
-	AdminIdentities(chatID int64) []AdminIdentity
+	AdminIdentities(chatID int64) ([]AdminIdentity, error)
 }
 
 // FakeAdminCfg configures the fake-admin (impersonation) detector.

@@ -369,3 +369,67 @@ func TestOnMessageDoesNotBumpTrustWhenActionable(t *testing.T) {
 		t.Fatalf("expected trust not bumped for an actionable message, got %d", count)
 	}
 }
+
+func TestOnMessageAcceptedWorkUsesLifecycleContext(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	f := fake.New()
+	m := incident.New(f, db, 999)
+	cfg := config.NewStore(&config.Config{Chats: config.ChatsPolicy{Mode: "auto", StartInDryRun: boolPtr(false)}})
+	seq := telegram.NewSequencer()
+	h := telegram.NewHandler(db, seq, cfg, m)
+	lifecycleCtx, stopLifecycle := context.WithCancel(context.Background())
+	defer stopLifecycle()
+	h.SetContext(lifecycleCtx)
+	h.SetDecide(func(domain.Message) (domain.Verdict, bool) {
+		return domain.Verdict{Action: domain.ActionBan, Confidence: 1}, true
+	})
+	updateCtx, cancelUpdate := context.WithCancel(context.Background())
+	cancelUpdate()
+
+	h.OnMessage(updateCtx, 1, domain.Message{ChatID: 1, MessageID: 1, Sender: domain.Sender{Kind: domain.SenderUser, UserID: 7}})
+	seq.Wait()
+
+	for _, call := range f.Calls() {
+		if call == "BanMember" {
+			return
+		}
+	}
+	t.Fatalf("accepted work was canceled with its update context; calls=%v", f.Calls())
+}
+
+func TestOnMessageAdminLookupUnavailableDoesNotBumpTrust(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.NewStore(&config.Config{Chats: config.ChatsPolicy{Mode: "auto", StartInDryRun: boolPtr(false)}})
+	seq := telegram.NewSequencer()
+	h := telegram.NewHandler(db, seq, cfg, incident.New(fake.New(), db, 999))
+	h.SetDecide(func(domain.Message) (domain.Verdict, bool) {
+		return domain.Verdict{Action: domain.ActionNone, Reason: detect.ReasonAdminLookupUnavailable}, false
+	})
+
+	h.OnMessage(context.Background(), 1, domain.Message{
+		ChatID: 1, MessageID: 1, Text: "meaningful message", Sender: domain.Sender{Kind: domain.SenderUser, UserID: 7},
+	})
+	seq.Wait()
+
+	count, err := db.TrustCount(1, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("deferred moderation must not grant trust, got %d", count)
+	}
+}

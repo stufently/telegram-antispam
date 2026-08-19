@@ -2,13 +2,21 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 
 	"github.com/stufently/telegram-antispam/internal/domain"
 )
 
-// InsertPending inserts a pending incident keyed by (chat_id, message_id).
-// On a duplicate it returns the existing id and fresh=false.
-func (db *DB) InsertPending(chatID int64, messageID int, userID int64, dryRun bool) (int64, bool, error) {
+// InsertPending inserts a pending incident and its audit verdict atomically,
+// keyed by (chat_id, message_id). On a duplicate it returns the existing id
+// and fresh=false without adding a second audit row.
+//
+// The audit row is written here, at the pending stage — before the incident
+// machine checks the dry-run gate and before any action is actually applied.
+// Readers must therefore not treat an audit row as proof that its action
+// happened; ActionCountsSince joins the incident's dry_run and state to tell
+// applied actions from simulated and incomplete ones.
+func (db *DB) InsertPending(chatID int64, messageID int, userID int64, dryRun bool, verdict domain.Verdict) (int64, bool, error) {
 	var id int64
 	var fresh bool
 	err := db.Write(func(tx *sql.Tx) error {
@@ -22,6 +30,17 @@ VALUES(?,?,?,?,?)`,
 		if n, _ := res.RowsAffected(); n == 1 {
 			fresh = true
 			id, err = res.LastInsertId()
+			if err != nil {
+				return err
+			}
+			signals, err := json.Marshal(verdict.Signals)
+			if err != nil {
+				return err
+			}
+			_, err = tx.Exec(
+				`INSERT INTO audit(incident_id, action, scope, reason, signals) VALUES(?,?,?,?,?)`,
+				id, string(verdict.Action), string(verdict.Scope), verdict.Reason, string(signals),
+			)
 			return err
 		}
 		// existing row: fetch its id

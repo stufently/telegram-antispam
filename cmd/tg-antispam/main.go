@@ -34,7 +34,15 @@ import (
 // historySweepInterval is how often the in-memory detection history
 // (duplicate/short-message sliding windows) is swept to drop stale events
 // and bound memory usage.
-const historySweepInterval = 5 * time.Minute
+const (
+	historySweepInterval = 5 * time.Minute
+	// gracefulShutdownTimeout bounds the per-chat drain of work the
+	// sequencer already accepted; backgroundShutdownTimeout separately bounds
+	// the producers that stop ahead of it. They are separate budgets on
+	// purpose: one phase overrunning must not silently consume the other's.
+	gracefulShutdownTimeout   = 30 * time.Second
+	backgroundShutdownTimeout = 10 * time.Second
+)
 
 // globalRateLimit and globalRateBurst bound total outbound Telegram calls
 // across all chats; perChatRateLimit/perChatRateBurst bound calls to any one
@@ -133,21 +141,30 @@ func main() {
 
 	seq := telegram.NewSequencer()
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	// shutdownCtx names ctx distinctly for use inside the default handler
-	// below, whose own ctx parameter shadows this one: callback jobs run
-	// asynchronously via the sequencer, after the handler call that
-	// submitted them returns, so they must observe process shutdown
-	// (shutdownCtx) rather than the update-scoped ctx the library hands the
-	// handler, which the library may treat as done once the handler returns.
-	shutdownCtx := ctx
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
 
-	go func() {
-		if err := cfgStore.Watch(ctx, cfgPath); err != nil {
+	// workCtx outlives signalCtx during the bounded drain. Polling and
+	// background producers stop on signalCtx; already-accepted sequencer jobs
+	// and the outbound dispatcher keep workCtx until they finish or the grace
+	// deadline expires.
+	workCtx, stopWork := context.WithCancel(context.Background())
+	defer stopWork()
+
+	var background sync.WaitGroup
+	startBackground := func(fn func()) {
+		background.Add(1)
+		go func() {
+			defer background.Done()
+			fn()
+		}()
+	}
+
+	startBackground(func() {
+		if err := cfgStore.Watch(signalCtx, cfgPath); err != nil {
 			log.Printf("config watcher stopped: %v", err)
 		}
-	}()
+	})
 
 	// reg is the M7 metrics registry: populated at the wiring seams below
 	// (the default-handler switch, the decide hook, the blocklist gauge)
@@ -155,20 +172,21 @@ func main() {
 	// is known to be fully defaulted.
 	reg := ops.NewRegistry()
 	if *cfg.Ops.MetricsEnabled {
-		go func() {
-			if err := ops.NewServer(cfg.Ops.MetricsAddr, reg).Run(ctx); err != nil {
+		startBackground(func() {
+			if err := ops.NewServer(cfg.Ops.MetricsAddr, reg).Run(signalCtx); err != nil {
 				log.Printf("ops server: %v", err)
 			}
-		}()
+		})
 	}
 
-	// The dispatcher owns every outbound Telegram call: global + per-chat
-	// rate limiting, priority ordering, 429 retry.
+	// The dispatcher owns every outbound telegram.Port call (long-polling
+	// transport is library-owned): global + per-chat rate limiting, priority
+	// ordering, and 429 retry.
 	limiters := newChatLimiters()
 	disp := queue.NewDispatcher(rate.NewLimiter(rate.Limit(globalRateLimit), globalRateBurst), limiters.get)
 	dispDone := make(chan struct{})
 	go func() {
-		disp.Run(ctx)
+		disp.Run(workCtx)
 		close(dispDone)
 	}()
 
@@ -182,10 +200,16 @@ func main() {
 		adminHandler    *admin.Handler
 		memberWatcher   *watch.MemberWatcher
 		reactionCleaner *watch.ReactionCleaner
-		selfCheck       func(chat int64)
+		adminCache      *telegram.AdminCache
+		selfCheck       func(context.Context, int64)
 	)
 
 	opts := []tgbot.Option{
+		// Bot.New otherwise performs a direct GetMe before LivePort exists.
+		// Skip it so the first identity lookup is routed through LivePort and
+		// therefore receives the same rate limiting and 429 retry as every
+		// other telegram.Port call.
+		tgbot.WithSkipGetMe(),
 		// The library otherwise runs every handler in its own untracked
 		// goroutine (`go r(ctx, b, upd)` in ProcessUpdate), so b.Start could
 		// return — letting shutdown call handler.Stop() — while a handler
@@ -202,14 +226,14 @@ func main() {
 			"message", "edited_message", "callback_query",
 			"chat_member", "my_chat_member", "message_reaction",
 		}),
-		tgbot.WithDefaultHandler(func(ctx context.Context, b *tgbot.Bot, update *models.Update) {
+		tgbot.WithDefaultHandler(func(updateCtx context.Context, b *tgbot.Bot, update *models.Update) {
 			switch {
 			case update.Message != nil:
 				reg.IncCounter("updates_total", 1, "kind", "message")
-				handler.OnMessage(ctx, update.ID, telegram.ToDomainMessage(update.Message))
+				handler.OnMessage(updateCtx, update.ID, telegram.ToDomainMessage(update.Message))
 			case update.EditedMessage != nil:
 				reg.IncCounter("updates_total", 1, "kind", "edited")
-				handler.OnEditedMessage(ctx, update.ID, telegram.ToDomainMessage(update.EditedMessage))
+				handler.OnEditedMessage(updateCtx, update.ID, telegram.ToDomainMessage(update.EditedMessage))
 			case update.CallbackQuery != nil:
 				reg.IncCounter("updates_total", 1, "kind", "callback")
 				cb := update.CallbackQuery
@@ -219,11 +243,9 @@ func main() {
 				// (network) + AnswerCallback work that would otherwise stall
 				// polling. All admin callbacks share one bucket (cfg's admin
 				// chat id) — fine since they're low volume; seq.Wait() at
-				// shutdown drains this job like any other. Use shutdownCtx
-				// (the process's shutdown-aware context, same one passed to
-				// handler.SetContext), not the per-update ctx the library
-				// hands this closure, since the job runs after this handler
-				// call returns.
+				// shutdown drains this job like any other. Use workCtx, not the
+				// per-update context, so an accepted job remains live during the
+				// bounded drain after polling stops.
 				seq.Submit(cfgStore.Current().AdminChatID, func() {
 					// EvidenceText is intentionally left empty here: M2 does
 					// not persist the offending message's text/tokens (the
@@ -234,7 +256,7 @@ func main() {
 					// in production until a later milestone persists incident
 					// tokens (privacy-safe — Bayes stores only counts). The
 					// offline `tg-antispam import` path trains fully today.
-					err := adminHandler.Handle(shutdownCtx, admin.Callback{
+					err := adminHandler.Handle(workCtx, admin.Callback{
 						ID:        cb.ID,
 						Data:      cb.Data,
 						PresserID: cb.From.ID,
@@ -247,10 +269,21 @@ func main() {
 				reg.IncCounter("updates_total", 1, "kind", "chat_member")
 				cm := update.ChatMember
 				mem := telegram.MemberFromChatMember(cm.NewChatMember)
+				// Only a change that touches the admin roster invalidates it.
+				// chat_member also fires for every ordinary join, leave, and
+				// restriction, and dropping the cache on those would turn the
+				// TTL cache into a per-event GetChatAdministrators during a
+				// raid — and stretch the windows where a failing lookup has
+				// nothing cached to fall back on. Invalidate on the inline
+				// consumer, before later updates from this chat can be
+				// submitted, then let the sequenced watcher refetch as needed.
+				if isAdminStatus(telegram.MemberFromChatMember(cm.OldChatMember).Status) || isAdminStatus(mem.Status) {
+					adminCache.Invalidate(cm.Chat.ID)
+				}
 				ev := watch.MemberEvent{ChatID: cm.Chat.ID, UserID: mem.UserID, Username: mem.Username, DisplayName: mem.DisplayName}
 				seq.Submit(cm.Chat.ID, func() {
 					if memberWatcher != nil {
-						if err := memberWatcher.Observe(shutdownCtx, ev); err != nil {
+						if err := memberWatcher.Observe(workCtx, ev); err != nil {
 							log.Printf("member watch: %v", err)
 						}
 					}
@@ -262,7 +295,7 @@ func main() {
 					ev := watch.ReactionEvent{ChatID: mr.Chat.ID, MessageID: mr.MessageID, UserID: mr.User.ID, Added: len(mr.NewReaction) > len(mr.OldReaction)}
 					seq.Submit(mr.Chat.ID, func() {
 						if reactionCleaner != nil {
-							if err := reactionCleaner.Observe(shutdownCtx, ev); err != nil {
+							if err := reactionCleaner.Observe(workCtx, ev); err != nil {
 								log.Printf("reaction cleanup: %v", err)
 							}
 						}
@@ -275,9 +308,15 @@ func main() {
 				// instead of only at the next restart (spec §13).
 				reg.IncCounter("updates_total", 1, "kind", "my_chat_member")
 				chat := update.MyChatMember.Chat.ID
+				// The bot's own promotion/demotion changes this chat's
+				// administrator roster too, so the cached list is now wrong
+				// for the §4 immunity gate and the fake-admin matcher alike.
+				// Invalidate on the inline consumer, exactly as chat_member
+				// does, rather than waiting out the TTL.
+				adminCache.Invalidate(chat)
 				seq.Submit(chat, func() {
 					if selfCheck != nil {
-						selfCheck(chat)
+						selfCheck(workCtx, chat)
 					}
 				})
 			}
@@ -290,11 +329,23 @@ func main() {
 	}
 
 	livePort := telegram.NewLivePort(b, disp, priorityFor)
+	// Explicit token/connectivity probe. Bot.New ran WithSkipGetMe (above), so
+	// nothing has validated the token yet; without this a revoked or
+	// mistyped token would not fail startup at all — b.Start would sit in
+	// getUpdates retrying every 5s while /healthz and /metrics reported a
+	// perfectly healthy container. Fatal on failure, matching Bot.New's own
+	// behavior before the identity lookup moved onto the dispatcher. The
+	// resolved id is cached on livePort, so self-checks skip GetMe.
+	selfID, err := livePort.Self(signalCtx)
+	if err != nil {
+		log.Fatalf("bot identity (GetMe): %v", err)
+	}
+	log.Printf("bot identity resolved: id=%d", selfID)
 	// selfCheck reads the bot's admin rights in one chat and logs any missing
 	// rights or hazards (spec §13). Best-effort: a transient read error is
 	// logged and dropped, never fatal.
-	selfCheck = func(chat int64) {
-		warnings, err := selfcheck.Check(shutdownCtx, livePort, chat)
+	selfCheck = func(ctx context.Context, chat int64) {
+		warnings, err := selfcheck.Check(ctx, livePort, chat)
 		if err != nil {
 			log.Printf("self-check chat %d: %v", chat, err)
 			return
@@ -308,7 +359,7 @@ func main() {
 	machine.EphemeralNotice = *cfg.Detection.EphemeralNoticeEnabled
 	machine.EphemeralText = cfg.Detection.EphemeralNoticeText
 	handler = telegram.NewHandler(db, seq, cfgStore, machine)
-	handler.SetContext(ctx) // so an album flush triggered off-request during shutdown observes cancellation instead of blocking forever
+	handler.SetContext(workCtx)
 	adminHandler = admin.NewHandler(livePort, db, operatorSet(cfg))
 	adminHandler.SetTrainer(func(scope, label, text string) error {
 		_, err := train.ImportSample(db, scope, label, "user", text)
@@ -319,7 +370,8 @@ func main() {
 	// TTL-cached wrapper over GetChatAdministrators so both the cascade
 	// (message-time check) and the member watcher (join/rename-time check)
 	// share one cache per chat instead of hitting Telegram on every event.
-	adminCache := telegram.NewAdminCache(livePort, time.Duration(cfg.Detection.AdminCacheTTLSeconds)*time.Second)
+	adminCache = telegram.NewAdminCache(livePort, time.Duration(cfg.Detection.AdminCacheTTLSeconds)*time.Second)
+	adminCache.SetContext(workCtx)
 	memberWatcher = &watch.MemberWatcher{
 		Store:       db,
 		Admins:      adminCache,
@@ -353,8 +405,8 @@ func main() {
 	// Blocklist mirror (LOLS + CAS). Declared as the interface so a disabled
 	// blocklist leaves cascade.Blocklist a true nil interface — assigning a
 	// typed-nil *blocklist.Blocklist would make `c.Blocklist != nil` true and
-	// risk a nil-receiver call. The syncer runs under shutdownCtx like the
-	// history sweeper.
+	// risk a nil-receiver call. The syncer stops with the background producers
+	// on signalCtx.
 	var blocklistSource detect.BlocklistSource
 	if *cfg.Blocklist.Enabled {
 		bl := blocklist.NewWithConfig(blocklist.Config{
@@ -365,25 +417,25 @@ func main() {
 			DeltaInterval: cfg.Blocklist.DeltaRefresh.Duration(),
 			HTTPTimeout:   cfg.Blocklist.HTTPTimeout.Duration(),
 		})
-		go bl.Run(shutdownCtx)
+		startBackground(func() { bl.Run(signalCtx) })
 		blocklistSource = bl
 
 		// blocklist_size gauge: sampled on a ticker rather than pushed from
 		// the syncer itself, so the ops package stays decoupled from
 		// internal/blocklist (see the M7 brief's "keep instrumentation
 		// minimal, don't thread the registry deep" guidance).
-		go func() {
+		startBackground(func() {
 			t := time.NewTicker(time.Minute)
 			defer t.Stop()
 			for {
 				select {
-				case <-ctx.Done():
+				case <-signalCtx.Done():
 					return
 				case <-t.C:
 					reg.SetGauge("blocklist_size", float64(bl.Len()))
 				}
 			}
-		}()
+		})
 	}
 
 	// Optional borderline LLM stage (§5.4): built only when explicitly enabled
@@ -446,7 +498,7 @@ func main() {
 	decideWith := func(m domain.Message, edited bool) (domain.Verdict, bool) {
 		v, ok := cascade.Decide(m, edited)
 		if !ok && llmJudge != nil && hasBorderline(v) {
-			cctx, cancel := context.WithTimeout(shutdownCtx, llmTimeout)
+			cctx, cancel := context.WithTimeout(workCtx, llmTimeout)
 			spam := llmJudge.Adjudicate(cctx, m.Text)
 			cancel()
 			reg.IncCounter("llm_checks_total", 1, "result", boolLabel(spam))
@@ -480,40 +532,40 @@ func main() {
 	if sweepMaxAge <= 0 {
 		sweepMaxAge = time.Hour
 	}
-	go func() {
+	startBackground(func() {
 		ticker := time.NewTicker(historySweepInterval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
 				hist.Sweep(sweepMaxAge)
-			case <-ctx.Done():
+			case <-signalCtx.Done():
 				return
 			}
 		}
-	}()
+	})
 
 	if *cfg.Ops.DigestEnabled {
-		go func() {
+		startBackground(func() {
 			t := time.NewTicker(cfg.Ops.DigestInterval.Duration())
 			defer t.Stop()
 			for {
 				select {
-				case <-ctx.Done():
+				case <-signalCtx.Done():
 					return
 				case <-t.C:
-					if err := ops.SendDigest(shutdownCtx, livePort, cfg.AdminChatID, db, time.Now().Unix()); err != nil {
+					if err := ops.SendDigest(signalCtx, livePort, cfg.AdminChatID, db, time.Now().Unix()); err != nil {
 						log.Printf("digest: %v", err)
 					}
 				}
 			}
-		}()
+		})
 	}
 
 	// Startup self-check: verify the bot's rights in every enabled chat once,
 	// off the critical path, so misconfiguration is visible in the logs from
 	// boot rather than only when an admin flips a right later.
-	go func() {
+	startBackground(func() {
 		chats, err := db.ListEnabledChats()
 		if err != nil {
 			log.Printf("self-check: list chats: %v", err)
@@ -521,28 +573,64 @@ func main() {
 		}
 		for _, chat := range chats {
 			select {
-			case <-shutdownCtx.Done():
+			case <-signalCtx.Done():
 				return
 			default:
 			}
-			selfCheck(chat)
+			selfCheck(signalCtx, chat)
 		}
-	}()
+	})
 
 	log.Print("long polling started")
-	b.Start(ctx) // blocks until ctx is cancelled (SIGINT/SIGTERM)
+	b.Start(signalCtx) // blocks until signalCtx is cancelled (SIGINT/SIGTERM)
 
-	// Graceful shutdown, in dependency order: stop producing new work (flush
-	// any buffered album parts into the sequencer), drain everything the
-	// sequencer still owns (which may submit final jobs to the dispatcher),
-	// then let the dispatcher finish/exit, and only then close the db that
-	// sequencer jobs depend on. A plain defer chain would run these in
-	// declaration-reversed order and could drain the dispatcher before the
-	// sequencer's last jobs reach it, or close the db while jobs still use
-	// it — hence the explicit order here instead.
+	// Graceful shutdown, in dependency order. The dispatcher stays alive on
+	// workCtx while producers stop and accepted per-chat work drains. A hard
+	// deadline cancels workCtx so a stuck network call or repeated 429 cannot
+	// block process termination forever.
+	if !waitWithin(&background, backgroundShutdownTimeout) {
+		log.Printf("background producers still running after %s; proceeding with shutdown", backgroundShutdownTimeout)
+	}
+	// Arm the drain deadline only now. It exists to bound the per-chat work
+	// below; arming it before the producers stopped would let a slow producer
+	// eat the drain's entire budget and cancel workCtx before any accepted
+	// work had a chance to finish — the opposite of the intent.
+	shutdownTimer := time.AfterFunc(gracefulShutdownTimeout, func() {
+		log.Printf("graceful shutdown timed out after %s; canceling accepted work", gracefulShutdownTimeout)
+		stopWork()
+	})
 	handler.Stop()
 	seq.Wait()
+	shutdownTimer.Stop()
+	stopWork()
 	<-dispDone
+}
+
+// isAdminStatus reports whether a chat_member status is one that puts the
+// member on the administrator roster the admin cache holds.
+func isAdminStatus(status string) bool {
+	return status == "administrator" || status == "creator"
+}
+
+// waitWithin waits for wg, reporting false if d elapses first. Overrunning
+// goroutines are not abandoned — they keep running against an already
+// cancelled signalCtx — but shutdown stops blocking on them, so a producer
+// that refuses to stop cannot hold the process open indefinitely or eat the
+// drain budget that follows.
+func waitWithin(wg *sync.WaitGroup, d time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
 }
 
 // operatorSet builds the global-operator set admin.NewHandler expects. M2's

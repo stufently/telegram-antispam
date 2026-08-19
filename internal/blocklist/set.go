@@ -26,6 +26,15 @@ func BuildSet(sources ...[]int64) *Set {
 	// Deduplicate in-place
 	all = slices.Compact(all)
 
+	// Compact only reslices; the backing array still spans every duplicate
+	// that was dropped, and this array is retained for as long as the
+	// snapshot lives. Release that slack when it is worth an extra copy —
+	// the merged blocklist runs to hundreds of thousands of ids and overlaps
+	// heavily between LOLS full, its deltas, and CAS.
+	if cap(all)-len(all) > len(all)/4 {
+		all = append([]int64(nil), all...)
+	}
+
 	return &Set{ids: all}
 }
 

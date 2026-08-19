@@ -56,7 +56,12 @@ func (w *MemberWatcher) Observe(ctx context.Context, e MemberEvent) error {
 	newUsername := strings.ToLower(e.Username)
 	newDisplay := strings.ToLower(e.DisplayName)
 
-	for _, admin := range w.Admins.AdminIdentities(e.ChatID) {
+	admins, err := w.Admins.AdminIdentities(e.ChatID)
+	if err != nil {
+		return fmt.Errorf("get chat administrators: %w", err)
+	}
+
+	for _, admin := range admins {
 		if admin.UserID != 0 && admin.UserID == e.UserID {
 			// An admin renaming themselves matches their own admin-list
 			// entry by construction; that's not impersonation.

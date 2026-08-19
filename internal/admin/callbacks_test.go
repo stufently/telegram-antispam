@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/stufently/telegram-antispam/internal/domain"
 	"github.com/stufently/telegram-antispam/internal/store"
 	"github.com/stufently/telegram-antispam/internal/telegram"
 	"github.com/stufently/telegram-antispam/internal/telegram/fake"
@@ -63,7 +64,7 @@ func TestHandleConfirmSpamTrainsBayesWhenAuthorized(t *testing.T) {
 	db := newMigrated(t)
 	defer db.Close()
 
-	incidentID, _, err := db.InsertPending(-100123, 55, 7, true)
+	incidentID, _, err := db.InsertPending(-100123, 55, 7, true, domain.Verdict{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +101,7 @@ func TestHandleConfirmSpamUnauthorizedDoesNotTrain(t *testing.T) {
 	db := newMigrated(t)
 	defer db.Close()
 
-	incidentID, _, err := db.InsertPending(-100123, 55, 7, true)
+	incidentID, _, err := db.InsertPending(-100123, 55, 7, true, domain.Verdict{})
 	if err != nil {
 		t.Fatal(err)
 	}

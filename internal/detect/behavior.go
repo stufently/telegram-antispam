@@ -39,6 +39,31 @@ func DupHash(n NormalizedMessage) string {
 	return hex.EncodeToString(hash[:])
 }
 
+// ObserveBehavior records a message into every behavioral window that its
+// config enables, without evaluating any threshold.
+//
+// CheckBehavior cannot be used for observation alone: it is first-hit-wins, so
+// an edited message returns before either window is touched and a duplicate
+// hit returns before the short-message window is. In the normal path that is
+// harmless — a hit means the message is acted on anyway — but a caller that
+// must observe a message it will NOT act on (the cascade's admin-lookup
+// deferral) needs every window updated, or the burst leaves no trace and stays
+// invisible once the lookup recovers.
+//
+// The enabling conditions mirror CheckBehavior's exactly, so the windows hold
+// the same population either way.
+func ObserveBehavior(h History, chatID, userID int64, n NormalizedMessage, cfg BehaviorCfg) {
+	if h == nil {
+		return
+	}
+	if cfg.DupThreshold > 0 && strings.TrimSpace(n.Text) != "" {
+		h.RecordAndCountDup(chatID, userID, DupHash(n), cfg.DupWindow)
+	}
+	if cfg.ShortFloodThreshold > 0 && n.RawLen <= cfg.ShortLen {
+		h.RecentShortCount(chatID, userID, cfg.ShortWindow)
+	}
+}
+
 // CheckBehavior evaluates behavioral anomalies against the injected History and config.
 // Returns a Signal and a boolean indicating whether a behavioral rule was triggered.
 // Decision order (first hit wins):
