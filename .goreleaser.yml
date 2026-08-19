@@ -12,7 +12,7 @@ builds:
     ldflags:
       - -s -w -X github.com/stufently/telegram-antispam/internal/version.version={{ .Version }}
 archives:
-  - formats: [tar.gz]
+  - format: tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 checksum:
   name_template: checksums.txt
