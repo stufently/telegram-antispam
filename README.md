@@ -8,6 +8,7 @@
 [![CI](https://github.com/stufently/telegram-antispam/actions/workflows/ci.yml/badge.svg)](https://github.com/stufently/telegram-antispam/actions/workflows/ci.yml)
 [![Go 1.25+](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go)](https://go.dev)
 [![container: GHCR](https://img.shields.io/badge/container-ghcr.io-2496ED?logo=docker)](https://github.com/stufently/telegram-antispam/pkgs/container/telegram-antispam)
+[![license: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 telegram-antispam keeps spam, scam links, flooding, and impersonators out of your Telegram
 **groups and supergroups**. It runs as a single container, deletes and mutes/bans spammers,
@@ -187,5 +188,4 @@ stage. By default nothing leaves the process.
 
 ## License
 
-No open-source license is declared yet — usage terms are at the maintainer's discretion.
-If you intend to use or contribute, open an issue to ask about licensing.
+[MIT](LICENSE) © stufently.
