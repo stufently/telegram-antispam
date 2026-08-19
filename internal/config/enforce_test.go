@@ -99,3 +99,13 @@ func TestLLMTuningParamsPreserveUnsetVersusZero(t *testing.T) {
 		t.Errorf("max_tokens=%d prompt=%q", c.LLM.MaxTokens, c.LLM.Prompt)
 	}
 }
+
+func TestOperatorsParsed(t *testing.T) {
+	c, err := Parse([]byte("bot_token: t\nadmin_chat_id: -1\naction: ban\nchats:\n  mode: auto\n  operators: [7, 42]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Chats.Operators) != 2 || c.Chats.Operators[0] != 7 || c.Chats.Operators[1] != 42 {
+		t.Fatalf("operators = %v, want [7 42]", c.Chats.Operators)
+	}
+}

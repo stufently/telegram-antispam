@@ -149,6 +149,10 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   reported as `bayes_borderline` so the (opt-in) LLM stage still runs. A fresh
   deploy would otherwise never consult the API the operator explicitly enabled.
   Messages with no text never go: there is nothing to classify.
+- A Bayes read ERROR is not an untrained corpus. Treating the two alike would
+  route every newcomer's message to the paid LLM stage for as long as the
+  database stays broken, so the cascade skips the stage on an error and only
+  the empty-corpus case produces a borderline signal.
 - New chats default to dry-run. External failures must not manufacture a spam
   result: LLM errors return not-spam and each blocklist source retains its own
   last-good data. Conversely, an unreadable admin or stored chat lifecycle gate

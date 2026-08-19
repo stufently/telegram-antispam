@@ -85,6 +85,11 @@ training:
   existingConfigMap: "" # name of a ConfigMap with the corpus files
   spamKey: spam.txt
   hamKey: ham.txt
+  # Checksum of the corpus content. The chart cannot hash a ConfigMap it does
+  # not own, so without this a corpus update would sit in the ConfigMap and
+  # only be imported at the next unrelated restart. Put any value that changes
+  # with the corpus (e.g. `sha256sum spam.txt ham.txt`) here and the pod rolls.
+  checksum: ""
 
 # The bot config.yaml, rendered into a ConfigMap. Do NOT put bot_token or LLM
 # api_key here — those come from Secrets above. Provide the rest of your

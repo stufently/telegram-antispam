@@ -23,6 +23,11 @@ spec:
         # this annotation a config change would be applied to the ConfigMap
         # and silently never reach the running process.
         checksum/config: {{ .Values.config | sha256sum }}
+        {{- if .Values.training.checksum }}
+        # Rolls the pod when the corpus changes: the init containers import it
+        # at startup, so without a restart new samples are never learned.
+        checksum/corpus: {{ .Values.training.checksum | sha256sum }}
+        {{- end }}
     spec:
       automountServiceAccountToken: false # the bot never talks to the API server
       securityContext:

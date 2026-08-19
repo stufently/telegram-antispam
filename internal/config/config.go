@@ -11,10 +11,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Operators are Telegram user ids allowed to press the admin-chat buttons in
+// ANY chat. Without them the only people who can act are administrators of the
+// source chat itself, which is wrong for a shared admin chat: a moderator who
+// watches the evidence feed but is not an admin of that particular group gets
+// "not authorized" and the incident sits unreviewed.
 type ChatsPolicy struct {
 	Mode          string  `yaml:"mode"`
 	StartInDryRun *bool   `yaml:"start_in_dry_run"`
 	Allowlist     []int64 `yaml:"allowlist"`
+	// Operators may act on incidents from any chat (see the type doc).
+	Operators []int64 `yaml:"operators"`
 	// Enforce lists chats that moderate for real, overriding whatever
 	// dry-run value was stored when the chat first registered. It exists
 	// because start_in_dry_run only ever seeds a NEW chat row (see

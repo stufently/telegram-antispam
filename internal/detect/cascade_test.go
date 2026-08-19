@@ -550,3 +550,35 @@ func TestUntrainedBayesSkipsEmptyTokenMessages(t *testing.T) {
 		t.Fatalf("empty message: actionable=%v signals=%+v, want a silent pass", actionable, v.Signals)
 	}
 }
+
+// failingBayes reports an error on every read, standing in for a corrupted or
+// locked database rather than an untrained corpus.
+type failingBayes struct{}
+
+func (failingBayes) TokenCounts(string, []string) (map[string]int, map[string]int, error) {
+	return nil, nil, errors.New("db read failed")
+}
+func (failingBayes) Totals(string) (BayesCounts, error) {
+	return BayesCounts{}, errors.New("db read failed")
+}
+
+func TestBayesReadErrorDoesNotBecomeAnLLMCall(t *testing.T) {
+	c := Cascade{
+		Trust: &fakeTrustSource{counts: map[[2]int64]int{}}, TrustThreshold: 5,
+		Bayes: failingBayes{}, BayesScope: "global", BayesEnabled: true,
+		BayesThreshold: 2.0, BayesVocabGuess: 5000, BayesBorderlineBand: 4.5,
+		DefaultAction: domain.ActionBan, Hist: &fakeHistory{},
+	}
+	// A broken database must not read as "untrained": that would route every
+	// message from every newcomer to a paid API until someone noticed.
+	v, actionable := c.Decide(domain.Message{
+		ChatID: -100, MessageID: 1, Text: "какое-то обычное сообщение",
+		Sender: domain.Sender{UserID: 7, Kind: domain.SenderUser},
+	}, false)
+	if actionable {
+		t.Fatal("a bayes read error must never be actionable")
+	}
+	if len(v.Signals) != 0 {
+		t.Fatalf("signals = %+v, want none (no borderline signal on a read error)", v.Signals)
+	}
+}

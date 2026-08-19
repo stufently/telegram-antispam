@@ -682,12 +682,17 @@ func waitWithin(wg *sync.WaitGroup, d time.Duration) bool {
 	}
 }
 
-// operatorSet builds the global-operator set admin.NewHandler expects. M2's
-// config has no operators field yet, so this is empty (source-chat admins
-// can still act); a later milestone can add cfg.Operators and populate it
-// here.
+// operatorSet builds the global-operator set admin.NewHandler expects from
+// chats.operators. An empty set is a working configuration — administrators of
+// the source chat can still act — but it is the wrong default for a shared
+// admin chat: a moderator who watches the evidence feed without being an admin
+// of that particular group would get "not authorized".
 func operatorSet(cfg *config.Config) map[int64]bool {
-	return map[int64]bool{}
+	ops := make(map[int64]bool, len(cfg.Chats.Operators))
+	for _, id := range cfg.Chats.Operators {
+		ops[id] = true
+	}
+	return ops
 }
 
 // hasBorderline reports whether a verdict carries the cascade's

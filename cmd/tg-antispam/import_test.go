@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stufently/telegram-antispam/internal/config"
 	"github.com/stufently/telegram-antispam/internal/store"
 )
 
@@ -78,5 +79,20 @@ func TestRunImportBadLabel(t *testing.T) {
 	_, _, err := runImport(args, openDB)
 	if err == nil {
 		t.Error("expected error for invalid label")
+	}
+}
+
+func TestOperatorSetFromConfig(t *testing.T) {
+	ops := operatorSet(&config.Config{Chats: config.ChatsPolicy{Operators: []int64{7, 42}}})
+	if !ops[7] || !ops[42] {
+		t.Fatalf("operators = %v, want 7 and 42 present", ops)
+	}
+	if ops[99] {
+		t.Fatal("unlisted user must not be a global operator")
+	}
+	// An absent list must yield an empty (not nil-dereferencing) set: with no
+	// operators, source-chat admins are still allowed to act.
+	if len(operatorSet(&config.Config{})) != 0 {
+		t.Fatal("empty config must produce an empty operator set")
 	}
 }

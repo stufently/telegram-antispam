@@ -24,6 +24,12 @@ chats:
   # enforce. The brake: it wins every conflict, so pulling a misbehaving
   # chat back out of enforcement is a one-line change.
   force_dry_run: []
+  # Telegram user ids allowed to press the admin-chat buttons for ANY chat.
+  # Without this, only administrators of the chat an incident came from can
+  # act — which is wrong for a shared admin chat, where a moderator watching
+  # the evidence feed may not be an admin of that particular group and would
+  # simply get "not authorized".
+  operators: []
 
 # detection configures the M3 detection cascade (internal/detect). Every
 # field below is optional; unset fields fall back to the defaults shown

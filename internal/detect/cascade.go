@@ -142,7 +142,15 @@ func (c Cascade) Decide(m domain.Message, edited bool) (domain.Verdict, bool) {
 
 	if c.BayesEnabled && !trusted {
 		tokens := Tokenize(n)
-		ratio, scoreable, _ := bayesScore(c.Bayes, c.BayesScope, tokens, c.BayesVocabGuess)
+		ratio, scoreable, err := bayesScore(c.Bayes, c.BayesScope, tokens, c.BayesVocabGuess)
+		if err != nil {
+			// A read error is NOT an untrained corpus, and the difference is
+			// expensive: falling through to the unscoreable branch below would
+			// send every message of every newcomer to a paid API for as long
+			// as the database stays broken. Skip the stage instead — the
+			// earlier hard rules and the blocklist have already run.
+			return domain.Verdict{Action: domain.ActionNone}, false
+		}
 		switch {
 		case scoreable:
 			if ratio >= c.BayesThreshold {
