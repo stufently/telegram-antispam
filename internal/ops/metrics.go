@@ -149,6 +149,7 @@ func labelSetKey(labels []string) string {
 func escapeLabelValue(v string) string {
 	v = strings.ReplaceAll(v, `\`, `\\`)
 	v = strings.ReplaceAll(v, `"`, `\"`)
+	v = strings.ReplaceAll(v, "\n", `\n`)
 	return v
 }
 

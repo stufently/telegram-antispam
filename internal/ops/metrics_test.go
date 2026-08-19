@@ -79,6 +79,22 @@ func TestLabelValueEscaping(t *testing.T) {
 	}
 }
 
+func TestLabelValueEscapesNewline(t *testing.T) {
+	r := NewRegistry()
+	r.IncCounter("errors_total", 1, "msg", "line1\nline2")
+	var b strings.Builder
+	r.Write(&b)
+	out := b.String()
+	// A raw newline in a label value would break the Prometheus text format
+	// (one sample per line); it must be escaped to the two-char sequence \n.
+	if strings.Contains(out, "line1\nline2") {
+		t.Errorf("raw newline leaked into exposition:\n%s", out)
+	}
+	if !strings.Contains(out, `msg="line1\nline2"`) {
+		t.Errorf("newline not escaped to \\n:\n%s", out)
+	}
+}
+
 func TestMultipleLabelSetsSortedKeys(t *testing.T) {
 	r := NewRegistry()
 	r.IncCounter("requests_total", 1, "b", "2", "a", "1")

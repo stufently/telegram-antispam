@@ -11,3 +11,4 @@ Makefile
 docker-compose.yml
 deploy
 .github
+config.yaml

@@ -2,6 +2,7 @@ package detect
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/stufently/telegram-antispam/internal/domain"
 )
@@ -26,6 +27,29 @@ type FakeAdminCfg struct {
 	Enabled        bool
 	SuspiciousTags []string
 	MaxDistance    int
+	// MinFuzzyLen is the minimum rune length (of the shorter string) required
+	// before fuzzy Levenshtein matching is allowed. Below it, only an exact
+	// match counts. Without this floor a distance-1 match on short strings
+	// (e.g. "CEO" vs "CFO", or a 3-letter handle vs a 3-letter admin title)
+	// produces constant false positives. Default: 5.
+	MinFuzzyLen int
+}
+
+// nameMatch reports whether sender name a plausibly impersonates admin name b.
+// It requires an exact match when either string is shorter than MinFuzzyLen
+// (rune count), and otherwise allows up to MaxDistance edits. Empty inputs
+// never match.
+func (cfg FakeAdminCfg) nameMatch(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	if cfg.MaxDistance <= 0 {
+		return a == b
+	}
+	if utf8.RuneCountInString(a) < cfg.MinFuzzyLen || utf8.RuneCountInString(b) < cfg.MinFuzzyLen {
+		return a == b
+	}
+	return LevenshteinWithin(a, b, cfg.MaxDistance)
 }
 
 // CheckFakeAdmin flags a non-admin sender whose name is a near-match to a
@@ -46,27 +70,14 @@ func CheckFakeAdmin(m domain.Message, admins []AdminIdentity, cfg FakeAdminCfg) 
 		adminDisplayName := strings.ToLower(admin.DisplayName)
 		adminCustomTitle := strings.ToLower(admin.CustomTitle)
 
-		if senderUsername != "" {
-			if adminUsername != "" && LevenshteinWithin(senderUsername, adminUsername, cfg.MaxDistance) {
-				return fakeAdminSignal(senderUsername, adminUsername), true
+		for _, sender := range []string{senderUsername, senderDisplayName} {
+			if sender == "" {
+				continue
 			}
-			if adminDisplayName != "" && LevenshteinWithin(senderUsername, adminDisplayName, cfg.MaxDistance) {
-				return fakeAdminSignal(senderUsername, adminDisplayName), true
-			}
-			if adminCustomTitle != "" && LevenshteinWithin(senderUsername, adminCustomTitle, cfg.MaxDistance) {
-				return fakeAdminSignal(senderUsername, adminCustomTitle), true
-			}
-		}
-
-		if senderDisplayName != "" {
-			if adminUsername != "" && LevenshteinWithin(senderDisplayName, adminUsername, cfg.MaxDistance) {
-				return fakeAdminSignal(senderDisplayName, adminUsername), true
-			}
-			if adminDisplayName != "" && LevenshteinWithin(senderDisplayName, adminDisplayName, cfg.MaxDistance) {
-				return fakeAdminSignal(senderDisplayName, adminDisplayName), true
-			}
-			if adminCustomTitle != "" && LevenshteinWithin(senderDisplayName, adminCustomTitle, cfg.MaxDistance) {
-				return fakeAdminSignal(senderDisplayName, adminCustomTitle), true
+			for _, adminName := range []string{adminUsername, adminDisplayName, adminCustomTitle} {
+				if cfg.nameMatch(sender, adminName) {
+					return fakeAdminSignal(sender, adminName), true
+				}
 			}
 		}
 	}

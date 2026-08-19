@@ -6,7 +6,7 @@
 # fully static and runs on distroless/static with no libc.
 FROM golang:1.26 AS build
 WORKDIR /src
-ENV CGO_ENABLED=0 GOSUMDB=off GOFLAGS=-mod=mod
+ENV CGO_ENABLED=0 GOSUMDB=off GOFLAGS=-mod=readonly
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .

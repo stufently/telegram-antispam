@@ -432,6 +432,7 @@ func main() {
 			Enabled:        *cfg.Detection.FakeAdminEnabled,
 			SuspiciousTags: cfg.Detection.FakeAdminSuspiciousTags,
 			MaxDistance:    cfg.Detection.FakeAdminMaxDistance,
+			MinFuzzyLen:    cfg.Detection.FakeAdminMinFuzzyLen,
 		},
 		Blocklist:        blocklistSource,
 		BlocklistEnabled: *cfg.Blocklist.Enabled,
