@@ -393,7 +393,11 @@ func main() {
 		return v, ok
 	})
 	handler.SetEditedDecide(func(m domain.Message) (domain.Verdict, bool) {
-		return cascade.Decide(m, true)
+		v, ok := cascade.Decide(m, true)
+		if ok {
+			reg.IncCounter("incidents_total", 1, "action", string(v.Action))
+		}
+		return v, ok
 	})
 
 	// Periodically sweep hist so stale duplicate/short-message events don't
