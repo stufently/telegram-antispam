@@ -194,7 +194,7 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 	}
 	first := parts[0]
 	cfg := h.cfg.Current()
-	if err := h.db.RegisterChat(first.ChatID, cfg.Chats.StartInDryRun); err != nil {
+	if err := h.db.RegisterChat(first.ChatID, cfg.Chats.DryRunDefault()); err != nil {
 		log.Printf("register chat %d: %v", first.ChatID, err)
 	}
 
@@ -220,7 +220,7 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 		return
 	}
 
-	dryRun := cfg.Chats.StartInDryRun
+	dryRun := cfg.Chats.DryRunDefault()
 	if row, found, err := h.db.GetChat(first.ChatID); err != nil {
 		// Fail closed: an unreadable Enabled/DryRun gate must not fall
 		// through to acting with a guessed default (which could act live

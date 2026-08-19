@@ -5,6 +5,8 @@ admin_chat_id: -1000000000000
 action: delete_mute
 chats:
   mode: auto
+  # Observe-first safety: default is true (bot logs verdicts but does NOT
+  # act until you set this to false). An explicit false is honored.
   start_in_dry_run: true
   allowlist: []
 
@@ -57,7 +59,9 @@ detection:
   # message is flagged spam-leaning; 0.0 means "the scorer favors spam at
   # all, however slightly". Default: 0.0. An explicit 0.0 is honored the
   # same as leaving this unset.
-  bayes_threshold: 0.0
+  # Naive-Bayes decision threshold (log-ratio). Default 1.0 (conservative:
+  # requires clearer spam evidence than the neutral 0.0). Tune via Evaluate.
+  bayes_threshold: 1.0
   # Estimated vocabulary size used for Laplace smoothing of per-token
   # likelihoods (detect.BayesLogRatio's vocabGuess param). 0 is not a
   # meaningful guess, so it is always treated as "unset". Default: 5000.
@@ -80,7 +84,7 @@ detection:
   # Substrings in a display name treated as suspicious admin-impersonation
   # signals, case-insensitive. An explicit empty list ([]) disables this
   # check. Default: [admin, support, verified, moderator].
-  fake_admin_suspicious_tags: [admin, support, verified, moderator]
+  fake_admin_suspicious_tags: [admin, support, verified, moderator, админ, саппорт, поддержка, модератор, модер, верифицирован]
   # How long the fake-admin detector caches a chat's real admin list
   # before refreshing it, in seconds. 0 is not a meaningful TTL, so it is
   # always treated as "unset". Default: 300.

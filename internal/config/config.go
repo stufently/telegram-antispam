@@ -13,8 +13,19 @@ import (
 
 type ChatsPolicy struct {
 	Mode          string  `yaml:"mode"`
-	StartInDryRun bool    `yaml:"start_in_dry_run"`
+	StartInDryRun *bool   `yaml:"start_in_dry_run"`
 	Allowlist     []int64 `yaml:"allowlist"`
+}
+
+// DryRunDefault reports whether new chats start in dry-run. It is a *bool so an
+// explicit start_in_dry_run: false is never re-promoted to the default; nil
+// (key absent) means the safe default TRUE — a fresh deploy observes and logs
+// verdicts without acting until the operator opts into enforcement.
+func (p ChatsPolicy) DryRunDefault() bool {
+	if p.StartInDryRun == nil {
+		return true
+	}
+	return *p.StartInDryRun
 }
 
 // Duration wraps time.Duration so it can be parsed from YAML as a Go
@@ -280,6 +291,7 @@ func Parse(b []byte) (*Config, error) {
 	if err := yaml.Unmarshal(b, &c); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	c.applyChatsDefaults()
 	c.applyDetectionDefaults()
 	c.applyBlocklistDefaults()
 	c.applyOpsDefaults()
@@ -294,6 +306,15 @@ func Parse(b []byte) (*Config, error) {
 		return nil, err
 	}
 	return &c, nil
+}
+
+// applyChatsDefaults fills the chats block. StartInDryRun defaults to TRUE
+// (observe-first safety): a fresh deploy must not silently start banning.
+func (c *Config) applyChatsDefaults() {
+	if c.Chats.StartInDryRun == nil {
+		def := true
+		c.Chats.StartInDryRun = &def
+	}
 }
 
 // applyDetectionDefaults fills in sane defaults for any Detection field left
@@ -347,7 +368,10 @@ func (c *Config) applyDetectionDefaults() {
 		c.Detection.BayesEnabled = &def
 	}
 	if c.Detection.BayesThreshold == nil {
-		def := 0.0
+		// A conservative positive default: require clearer spam evidence than
+		// the neutral 0.0 boundary, reducing false positives on a trained
+		// corpus. Operators tune this precisely via detect.Evaluate.
+		def := 1.0
 		c.Detection.BayesThreshold = &def
 	}
 	if c.Detection.BayesVocabGuess == 0 {
@@ -364,7 +388,7 @@ func (c *Config) applyDetectionDefaults() {
 		c.Detection.FakeAdminMinFuzzyLen = 5
 	}
 	if c.Detection.FakeAdminSuspiciousTags == nil {
-		c.Detection.FakeAdminSuspiciousTags = []string{"admin", "support", "verified", "moderator"}
+		c.Detection.FakeAdminSuspiciousTags = []string{"admin", "support", "verified", "moderator", "админ", "саппорт", "поддержка", "модератор", "модер", "верифицирован"}
 	}
 	if c.Detection.AdminCacheTTLSeconds == 0 {
 		c.Detection.AdminCacheTTLSeconds = 300

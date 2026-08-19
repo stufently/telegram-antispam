@@ -21,6 +21,10 @@ import (
 	"github.com/stufently/telegram-antispam/internal/telegram/fake"
 )
 
+// enforceMode makes tests run with actions enabled; start_in_dry_run now
+// defaults to true, so enforcement tests must opt out explicitly.
+var enforceMode = false
+
 func TestOnMessageDrivesMachineWhenVerdictActionable(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
@@ -33,7 +37,7 @@ func TestOnMessageDrivesMachineWhenVerdictActionable(t *testing.T) {
 	f := fake.New()
 	f.SendAdminID = 5
 	m := incident.New(f, db, 999)
-	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto"}})
+	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto", StartInDryRun: &enforceMode}})
 	seq := telegram.NewSequencer()
 	h := telegram.NewHandler(db, seq, cfg, m)
 	h.SetDecide(func(domain.Message) (domain.Verdict, bool) {
@@ -69,7 +73,7 @@ func TestOnEditedMessageDrivesMachineWhenVerdictActionable(t *testing.T) {
 	f := fake.New()
 	f.SendAdminID = 5
 	m := incident.New(f, db, 999)
-	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto"}})
+	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto", StartInDryRun: &enforceMode}})
 	seq := telegram.NewSequencer()
 	h := telegram.NewHandler(db, seq, cfg, m)
 	h.SetDecide(func(domain.Message) (domain.Verdict, bool) {
@@ -105,7 +109,7 @@ func TestOnMessageAlbumFlushBuildsOneIncident(t *testing.T) {
 	f := fake.New()
 	f.SendAdminID = 5
 	m := incident.New(f, db, 999)
-	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto"}})
+	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto", StartInDryRun: &enforceMode}})
 	seq := telegram.NewSequencer()
 	h := telegram.NewHandler(db, seq, cfg, m)
 	h.SetDecide(func(domain.Message) (domain.Verdict, bool) {
@@ -146,7 +150,7 @@ func TestOnMessageWithCascadeDecideDrivesMachineOnStopword(t *testing.T) {
 	f := fake.New()
 	f.SendAdminID = 5
 	m := incident.New(f, db, 999)
-	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto"}})
+	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto", StartInDryRun: &enforceMode}})
 	seq := telegram.NewSequencer()
 	h := telegram.NewHandler(db, seq, cfg, m)
 
@@ -204,7 +208,7 @@ func TestOnEditedMessageCascadeSeesEditedTrue(t *testing.T) {
 	f := fake.New()
 	f.SendAdminID = 5
 	m := incident.New(f, db, 999)
-	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto"}})
+	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto", StartInDryRun: &enforceMode}})
 	seq := telegram.NewSequencer()
 	h := telegram.NewHandler(db, seq, cfg, m)
 
@@ -263,7 +267,7 @@ func TestOnEditedMessageFallsBackToDecideWithoutEditedHook(t *testing.T) {
 	f := fake.New()
 	f.SendAdminID = 5
 	m := incident.New(f, db, 999)
-	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto"}})
+	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto", StartInDryRun: &enforceMode}})
 	seq := telegram.NewSequencer()
 	h := telegram.NewHandler(db, seq, cfg, m)
 	h.SetDecide(func(domain.Message) (domain.Verdict, bool) {
@@ -302,7 +306,7 @@ func TestOnMessageBumpsTrustForNonActionableMeaningfulMessage(t *testing.T) {
 	f := fake.New()
 	f.SendAdminID = 5
 	m := incident.New(f, db, 999)
-	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto"}})
+	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto", StartInDryRun: &enforceMode}})
 	seq := telegram.NewSequencer()
 	h := telegram.NewHandler(db, seq, cfg, m)
 	h.SetDecide(func(domain.Message) (domain.Verdict, bool) {
@@ -341,7 +345,7 @@ func TestOnMessageDoesNotBumpTrustWhenActionable(t *testing.T) {
 	f := fake.New()
 	f.SendAdminID = 5
 	m := incident.New(f, db, 999)
-	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto"}})
+	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto", StartInDryRun: &enforceMode}})
 	seq := telegram.NewSequencer()
 	h := telegram.NewHandler(db, seq, cfg, m)
 	h.SetDecide(func(domain.Message) (domain.Verdict, bool) {

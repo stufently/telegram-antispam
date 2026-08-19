@@ -10,7 +10,7 @@ func TestLoadValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.AdminChatID != -1009999 || c.Chats.Mode != "auto" || !c.Chats.StartInDryRun {
+	if c.AdminChatID != -1009999 || c.Chats.Mode != "auto" || !c.Chats.DryRunDefault() {
 		t.Fatalf("unexpected config: %+v", c)
 	}
 }
@@ -61,8 +61,8 @@ func TestDetectionDefaultsAppliedWhenUnset(t *testing.T) {
 	if d.BayesEnabled == nil || !*d.BayesEnabled {
 		t.Errorf("BayesEnabled: want default true, got %v", d.BayesEnabled)
 	}
-	if d.BayesThreshold == nil || *d.BayesThreshold != 0.0 {
-		t.Errorf("BayesThreshold: want default 0.0, got %v", d.BayesThreshold)
+	if d.BayesThreshold == nil || *d.BayesThreshold != 1.0 {
+		t.Errorf("BayesThreshold: want default 1.0, got %v", d.BayesThreshold)
 	}
 	if d.BayesVocabGuess != 5000 {
 		t.Errorf("BayesVocabGuess: want default 5000, got %v", d.BayesVocabGuess)
@@ -73,7 +73,7 @@ func TestDetectionDefaultsAppliedWhenUnset(t *testing.T) {
 	if d.FakeAdminMaxDistance != 1 {
 		t.Errorf("FakeAdminMaxDistance: want default 1, got %v", d.FakeAdminMaxDistance)
 	}
-	wantTags := []string{"admin", "support", "verified", "moderator"}
+	wantTags := []string{"admin", "support", "verified", "moderator", "админ", "саппорт", "поддержка", "модератор", "модер", "верифицирован"}
 	if len(d.FakeAdminSuspiciousTags) != len(wantTags) {
 		t.Errorf("FakeAdminSuspiciousTags: want %v, got %v", wantTags, d.FakeAdminSuspiciousTags)
 	} else {
@@ -449,5 +449,27 @@ func TestBotTokenFromEnvWhenFileEmpty(t *testing.T) {
 	}
 	if c.BotToken != "env-only-token" {
 		t.Fatalf("got %q", c.BotToken)
+	}
+}
+
+func TestStartInDryRunDefaultsTrue(t *testing.T) {
+	// No chats.start_in_dry_run in baseValidYAML → safe default TRUE.
+	c, err := Parse([]byte(baseValidYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Chats.DryRunDefault() {
+		t.Fatal("start_in_dry_run must default to true (observe-first)")
+	}
+}
+
+func TestStartInDryRunExplicitFalseHonored(t *testing.T) {
+	yaml := baseValidYAML + "  start_in_dry_run: false\n"
+	c, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Chats.DryRunDefault() {
+		t.Fatal("explicit start_in_dry_run: false must be honored, not re-defaulted to true")
 	}
 }
