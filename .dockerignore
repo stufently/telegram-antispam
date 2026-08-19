@@ -1,0 +1,13 @@
+.git
+.gitignore
+.gopath
+.worktrees
+.superpowers
+docs
+scripts/dev.sh
+*_test.go
+README.md
+Makefile
+docker-compose.yml
+deploy
+.github

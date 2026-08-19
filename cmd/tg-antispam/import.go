@@ -42,7 +42,7 @@ func runImport(args []string, openDB func(string) (*store.DB, error)) (added, sk
 	if err != nil {
 		return 0, 0, fmt.Errorf("open db: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Run migrations (idempotent)
 	if err := db.Migrate(); err != nil {

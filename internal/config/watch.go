@@ -18,7 +18,7 @@ func (s *Store) Watch(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	// Watch the parent directory, not the file: many editors replace the file
 	// via rename, which invalidates a watch registered on the file itself.

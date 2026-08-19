@@ -118,3 +118,17 @@ blocklist:
   # Per-request timeout used when fetching any of the blocklist sources
   # above. Default: 30s.
   http_timeout: 30s
+
+# ops configures the M7 observability surface: the metrics HTTP server and
+# the daily digest scheduler. Every field below is optional; unset fields
+# fall back to the defaults shown here as comments.
+ops:
+  # Turn the /metrics + /healthz HTTP server on or off. Default: true.
+  metrics_enabled: true
+  # Listen address for the metrics HTTP server. Default: ":9090".
+  metrics_addr: ":9090"
+  # Turn the daily admin-chat digest scheduler on or off. Default: true.
+  digest_enabled: true
+  # How often the digest is sent. A non-positive value falls back to the
+  # default. Default: 24h.
+  digest_interval: 24h

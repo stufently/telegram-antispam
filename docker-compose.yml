@@ -1,0 +1,23 @@
+# docker-compose for a single-host deployment.
+#
+# Ownership note: the container runs as a non-root user (uid:gid 1002:1002 to
+# match the repo/dev convention). The bind-mounted ./data directory and the
+# ./config.yaml file must be readable/writable by that uid on the host, e.g.:
+#   mkdir -p data && sudo chown -R 1002:1002 data && cp config.example.yaml config.yaml
+services:
+  tg-antispam:
+    build:
+      context: .
+      args:
+        VERSION: local
+    image: ghcr.io/stufently/telegram-antispam:latest
+    user: "1002:1002"
+    restart: unless-stopped
+    environment:
+      CONFIG_PATH: /config/config.yaml
+      DB_PATH: /data/antispam.db
+    volumes:
+      - ./data:/data
+      - ./config.yaml:/config/config.yaml:ro
+    ports:
+      - "9090:9090" # Prometheus /metrics and /healthz
