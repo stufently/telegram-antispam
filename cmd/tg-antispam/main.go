@@ -20,6 +20,7 @@ import (
 	"github.com/stufently/telegram-antispam/internal/detect"
 	"github.com/stufently/telegram-antispam/internal/domain"
 	"github.com/stufently/telegram-antispam/internal/incident"
+	"github.com/stufently/telegram-antispam/internal/llm"
 	"github.com/stufently/telegram-antispam/internal/ops"
 	"github.com/stufently/telegram-antispam/internal/queue"
 	"github.com/stufently/telegram-antispam/internal/selfcheck"
@@ -385,6 +386,28 @@ func main() {
 		}()
 	}
 
+	// Optional borderline LLM stage (§5.4): built only when explicitly enabled
+	// in config (privacy: external calls are opt-in). When off, the judge is
+	// nil and the cascade's borderline band stays 0, so no message text ever
+	// leaves the process.
+	var llmJudge *llm.Judge
+	var bayesBorderlineBand float64
+	if *cfg.LLM.Enabled && len(cfg.LLM.Providers) > 0 {
+		provs := make([]llm.Provider, 0, len(cfg.LLM.Providers))
+		for _, pc := range cfg.LLM.Providers {
+			switch pc.Kind {
+			case "openai":
+				provs = append(provs, llm.OpenAI{APIKey: pc.APIKey, Model: pc.Model})
+			case "anthropic":
+				provs = append(provs, llm.Anthropic{APIKey: pc.APIKey, Model: pc.Model})
+			}
+		}
+		llmJudge = &llm.Judge{Providers: provs, Policy: llm.Policy(cfg.LLM.Policy)}
+		bayesBorderlineBand = cfg.LLM.BorderlineBand
+		log.Printf("LLM borderline stage enabled: %d provider(s), policy=%s, band=%.3g",
+			len(provs), cfg.LLM.Policy, bayesBorderlineBand)
+	}
+
 	cascade := detect.Cascade{
 		Trust: db,
 		Hist:  hist,
@@ -394,16 +417,17 @@ func main() {
 			BlockLinksForUntrusted: *cfg.Detection.Rules.BlockLinksForUntrusted,
 			BannedDomains:          cfg.Detection.Rules.BannedDomains,
 		},
-		Behavior:        behaviorCfg,
-		TrustThreshold:  *cfg.Detection.TrustThreshold,
-		DefaultAction:   cfg.Action,
-		DefaultScope:    domain.ScopeGlobal,
-		Bayes:           bayesAdapter{db: db},
-		BayesScope:      "global",
-		BayesThreshold:  *cfg.Detection.BayesThreshold,
-		BayesVocabGuess: cfg.Detection.BayesVocabGuess,
-		BayesEnabled:    *cfg.Detection.BayesEnabled,
-		Admins:          adminCache,
+		Behavior:            behaviorCfg,
+		TrustThreshold:      *cfg.Detection.TrustThreshold,
+		DefaultAction:       cfg.Action,
+		DefaultScope:        domain.ScopeGlobal,
+		Bayes:               bayesAdapter{db: db},
+		BayesScope:          "global",
+		BayesThreshold:      *cfg.Detection.BayesThreshold,
+		BayesVocabGuess:     cfg.Detection.BayesVocabGuess,
+		BayesEnabled:        *cfg.Detection.BayesEnabled,
+		BayesBorderlineBand: bayesBorderlineBand,
+		Admins:              adminCache,
 		FakeAdmin: detect.FakeAdminCfg{
 			Enabled:        *cfg.Detection.FakeAdminEnabled,
 			SuspiciousTags: cfg.Detection.FakeAdminSuspiciousTags,
@@ -412,20 +436,37 @@ func main() {
 		Blocklist:        blocklistSource,
 		BlocklistEnabled: *cfg.Blocklist.Enabled,
 	}
-	handler.SetDecide(func(m domain.Message) (domain.Verdict, bool) {
-		v, ok := cascade.Decide(m, false)
+	llmTimeout := cfg.LLM.HTTPTimeout.Duration()
+	// decideWith runs the pure cascade, then — for a non-actionable
+	// "bayes_borderline" result and only when the LLM stage is enabled —
+	// consults the LLM judge. A spam consensus upgrades the verdict to an
+	// actionable "llm" incident. Runs on the per-chat sequencer worker, so a
+	// blocking LLM call delays only that chat's queue, never all updates.
+	decideWith := func(m domain.Message, edited bool) (domain.Verdict, bool) {
+		v, ok := cascade.Decide(m, edited)
+		if !ok && llmJudge != nil && hasBorderline(v) {
+			cctx, cancel := context.WithTimeout(shutdownCtx, llmTimeout)
+			spam := llmJudge.Adjudicate(cctx, m.Text)
+			cancel()
+			reg.IncCounter("llm_checks_total", 1, "result", boolLabel(spam))
+			if spam {
+				v = domain.Verdict{
+					Action:     cfg.Action,
+					Scope:      domain.ScopeGlobal,
+					Confidence: 1.0,
+					Signals:    []domain.Signal{{Name: "llm"}},
+					Reason:     "llm",
+				}
+				ok = true
+			}
+		}
 		if ok {
 			reg.IncCounter("incidents_total", 1, "action", string(v.Action))
 		}
 		return v, ok
-	})
-	handler.SetEditedDecide(func(m domain.Message) (domain.Verdict, bool) {
-		v, ok := cascade.Decide(m, true)
-		if ok {
-			reg.IncCounter("incidents_total", 1, "action", string(v.Action))
-		}
-		return v, ok
-	})
+	}
+	handler.SetDecide(func(m domain.Message) (domain.Verdict, bool) { return decideWith(m, false) })
+	handler.SetEditedDecide(func(m domain.Message) (domain.Verdict, bool) { return decideWith(m, true) })
 
 	// Periodically sweep hist so stale duplicate/short-message events don't
 	// accumulate forever. maxAge is a couple of windows wide so a burst
@@ -509,4 +550,23 @@ func main() {
 // here.
 func operatorSet(cfg *config.Config) map[int64]bool {
 	return map[int64]bool{}
+}
+
+// hasBorderline reports whether a verdict carries the cascade's
+// "bayes_borderline" signal, marking it a candidate for LLM adjudication (§5.4).
+func hasBorderline(v domain.Verdict) bool {
+	for _, s := range v.Signals {
+		if s.Name == "bayes_borderline" {
+			return true
+		}
+	}
+	return false
+}
+
+// boolLabel maps a spam decision to a stable metric label value.
+func boolLabel(spam bool) string {
+	if spam {
+		return "spam"
+	}
+	return "ham"
 }

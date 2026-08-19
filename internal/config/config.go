@@ -215,6 +215,41 @@ type Ops struct {
 	DigestInterval Duration `yaml:"digest_interval"`
 }
 
+// LLMProvider is one configured LLM backend for the borderline stage (§5.4).
+// Kind selects the API ("openai" or "anthropic"); APIKey and Model are the
+// credentials and model name for that API.
+type LLMProvider struct {
+	Kind   string `yaml:"kind"`
+	APIKey string `yaml:"api_key"`
+	Model  string `yaml:"model"`
+}
+
+// LLM configures the optional, opt-in borderline LLM adjudication stage
+// (spec §5.4). It runs one or two paid official LLM APIs over a message whose
+// Bayes score sits within BorderlineBand of the threshold and combines their
+// verdicts under Policy. It is disabled by default because it sends message
+// text to an external service (spec §9 privacy rules).
+//
+// Enabled is a *bool so an explicit "false" is never re-promoted; unlike the
+// Blocklist/Ops blocks its default is FALSE (privacy: external calls are
+// opt-in).
+type LLM struct {
+	// Enabled turns the borderline LLM stage on. Default: false.
+	Enabled *bool `yaml:"enabled"`
+	// Policy combines multiple providers' verdicts: "any" (spam if any says
+	// spam) or "all" (spam only if all agree). Default: "any". Ignored with a
+	// single provider.
+	Policy string `yaml:"policy"`
+	// BorderlineBand is the width below BayesThreshold within which a message
+	// is sent to the LLM. Must be > 0 for the stage to ever run. Default: 0.5.
+	BorderlineBand float64 `yaml:"borderline_band"`
+	// HTTPTimeout bounds each provider call. Default: 10s.
+	HTTPTimeout Duration `yaml:"http_timeout"`
+	// Providers lists the LLM backends (1 or 2). An empty list disables the
+	// stage regardless of Enabled.
+	Providers []LLMProvider `yaml:"providers"`
+}
+
 type Config struct {
 	BotToken    string        `yaml:"bot_token"`
 	AdminChatID int64         `yaml:"admin_chat_id"`
@@ -223,6 +258,7 @@ type Config struct {
 	Detection   Detection     `yaml:"detection"`
 	Blocklist   Blocklist     `yaml:"blocklist"`
 	Ops         Ops           `yaml:"ops"`
+	LLM         LLM           `yaml:"llm"`
 }
 
 func Load(path string) (*Config, error) {
@@ -241,6 +277,7 @@ func Parse(b []byte) (*Config, error) {
 	c.applyDetectionDefaults()
 	c.applyBlocklistDefaults()
 	c.applyOpsDefaults()
+	c.applyLLMDefaults()
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -390,6 +427,25 @@ func (c *Config) applyOpsDefaults() {
 	}
 }
 
+// applyLLMDefaults fills LLM fields left unset. Enabled defaults to FALSE
+// (external calls are opt-in), so — unlike the other blocks — a nil Enabled
+// stays disabled.
+func (c *Config) applyLLMDefaults() {
+	if c.LLM.Enabled == nil {
+		def := false
+		c.LLM.Enabled = &def
+	}
+	if c.LLM.Policy == "" {
+		c.LLM.Policy = "any"
+	}
+	if c.LLM.BorderlineBand == 0 {
+		c.LLM.BorderlineBand = 0.5
+	}
+	if c.LLM.HTTPTimeout <= 0 {
+		c.LLM.HTTPTimeout = Duration(10 * time.Second)
+	}
+}
+
 func (c *Config) Validate() error {
 	if c.BotToken == "" {
 		return fmt.Errorf("bot_token is required")
@@ -406,6 +462,29 @@ func (c *Config) Validate() error {
 	case domain.ActionDeleteMute, domain.ActionMute, domain.ActionBan, domain.ActionDeleteOnly:
 	default:
 		return fmt.Errorf("action must be delete_mute|mute|ban|delete_only, got %q", c.Action)
+	}
+	if c.LLM.Enabled != nil && *c.LLM.Enabled {
+		switch c.LLM.Policy {
+		case "any", "all":
+		default:
+			return fmt.Errorf("llm.policy must be any|all, got %q", c.LLM.Policy)
+		}
+		if len(c.LLM.Providers) == 0 {
+			return fmt.Errorf("llm.enabled is true but no llm.providers are configured")
+		}
+		for i, p := range c.LLM.Providers {
+			switch p.Kind {
+			case "openai", "anthropic":
+			default:
+				return fmt.Errorf("llm.providers[%d].kind must be openai|anthropic, got %q", i, p.Kind)
+			}
+			if p.APIKey == "" {
+				return fmt.Errorf("llm.providers[%d] (%s) missing api_key", i, p.Kind)
+			}
+			if p.Model == "" {
+				return fmt.Errorf("llm.providers[%d] (%s) missing model", i, p.Kind)
+			}
+		}
 	}
 	return nil
 }

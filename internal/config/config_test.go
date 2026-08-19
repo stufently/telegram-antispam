@@ -355,3 +355,74 @@ func TestOpsDigestIntervalClampedWhenNonPositive(t *testing.T) {
 		t.Errorf("DigestInterval: want clamped to 24h default, got %v", c.Ops.DigestInterval.Duration())
 	}
 }
+
+func TestLLMDefaultsDisabledByDefault(t *testing.T) {
+	c, err := Parse([]byte(baseValidYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := c.LLM
+	if l.Enabled == nil || *l.Enabled {
+		t.Errorf("LLM.Enabled: want default false, got %v", l.Enabled)
+	}
+	if l.Policy != "any" {
+		t.Errorf("LLM.Policy: want default any, got %q", l.Policy)
+	}
+	if l.BorderlineBand != 0.5 {
+		t.Errorf("LLM.BorderlineBand: want default 0.5, got %v", l.BorderlineBand)
+	}
+	if l.HTTPTimeout.Duration() != 10*time.Second {
+		t.Errorf("LLM.HTTPTimeout: want default 10s, got %v", l.HTTPTimeout.Duration())
+	}
+}
+
+func TestLLMEnabledValid(t *testing.T) {
+	yaml := baseValidYAML +
+		"llm:\n" +
+		"  enabled: true\n" +
+		"  policy: all\n" +
+		"  borderline_band: 1.5\n" +
+		"  providers:\n" +
+		"    - kind: openai\n" +
+		"      api_key: sk-x\n" +
+		"      model: gpt-4o-mini\n" +
+		"    - kind: anthropic\n" +
+		"      api_key: ak-x\n" +
+		"      model: claude-3-5-haiku-latest\n"
+	c, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.LLM.Enabled == nil || !*c.LLM.Enabled || c.LLM.Policy != "all" || len(c.LLM.Providers) != 2 {
+		t.Fatalf("unexpected LLM config: %+v", c.LLM)
+	}
+	if c.LLM.BorderlineBand != 1.5 {
+		t.Errorf("BorderlineBand: want explicit 1.5, got %v", c.LLM.BorderlineBand)
+	}
+}
+
+func TestLLMEnabledValidationErrors(t *testing.T) {
+	cases := map[string]string{
+		"no providers":  "llm:\n  enabled: true\n",
+		"bad policy":    "llm:\n  enabled: true\n  policy: majority\n  providers:\n    - kind: openai\n      api_key: k\n      model: m\n",
+		"bad kind":      "llm:\n  enabled: true\n  providers:\n    - kind: cohere\n      api_key: k\n      model: m\n",
+		"missing key":   "llm:\n  enabled: true\n  providers:\n    - kind: openai\n      model: m\n",
+		"missing model": "llm:\n  enabled: true\n  providers:\n    - kind: openai\n      api_key: k\n",
+	}
+	for name, frag := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse([]byte(baseValidYAML + frag)); err == nil {
+				t.Fatalf("%s: expected validation error", name)
+			}
+		})
+	}
+}
+
+func TestLLMDisabledSkipsValidation(t *testing.T) {
+	// enabled:false with a bogus policy must still parse — validation only
+	// applies when the stage is on.
+	yaml := baseValidYAML + "llm:\n  enabled: false\n  policy: nonsense\n"
+	if _, err := Parse([]byte(yaml)); err != nil {
+		t.Fatalf("disabled LLM should skip validation, got %v", err)
+	}
+}

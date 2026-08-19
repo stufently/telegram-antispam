@@ -10,22 +10,27 @@ import "github.com/stufently/telegram-antispam/internal/domain"
 // M3 detection pipeline over one message. It carries no mutable state of its
 // own, so Decide is pure with respect to Cascade itself.
 type Cascade struct {
-	Trust            TrustSource
-	Hist             History
-	Rules            Rules
-	Behavior         BehaviorCfg
-	TrustThreshold   int
-	DefaultAction    domain.Action
-	DefaultScope     domain.Scope
-	Bayes            BayesSource
-	BayesScope       string
-	BayesThreshold   float64
-	BayesVocabGuess  int
-	BayesEnabled     bool
-	Admins           AdminSource
-	FakeAdmin        FakeAdminCfg
-	Blocklist        BlocklistSource
-	BlocklistEnabled bool
+	Trust           TrustSource
+	Hist            History
+	Rules           Rules
+	Behavior        BehaviorCfg
+	TrustThreshold  int
+	DefaultAction   domain.Action
+	DefaultScope    domain.Scope
+	Bayes           BayesSource
+	BayesScope      string
+	BayesThreshold  float64
+	BayesVocabGuess int
+	BayesEnabled    bool
+	// BayesBorderlineBand, when > 0, defines a band just below BayesThreshold
+	// [threshold-band, threshold) in which a non-spam Bayes result is emitted
+	// as a non-actionable "bayes_borderline" signal instead of silently
+	// passing, so the wiring layer can consult the optional LLM stage (§5.4).
+	BayesBorderlineBand float64
+	Admins              AdminSource
+	FakeAdmin           FakeAdminCfg
+	Blocklist           BlocklistSource
+	BlocklistEnabled    bool
 }
 
 // BlocklistSource reports whether a user ID is present in a global blocklist
@@ -95,8 +100,18 @@ func (c Cascade) Decide(m domain.Message, edited bool) (domain.Verdict, bool) {
 
 	if c.BayesEnabled && !trusted {
 		tokens := Tokenize(n)
-		if spam, _, _ := BayesIsSpam(c.Bayes, c.BayesScope, tokens, c.BayesVocabGuess, c.BayesThreshold); spam {
-			return c.actionable(domain.Signal{Name: "bayes"}), true
+		ratio, scoreable, _ := bayesScore(c.Bayes, c.BayesScope, tokens, c.BayesVocabGuess)
+		if scoreable {
+			if ratio >= c.BayesThreshold {
+				return c.actionable(domain.Signal{Name: "bayes"}), true
+			}
+			// Below threshold but close to it: hand the wiring layer a
+			// non-actionable borderline signal so it can optionally ask the
+			// LLM stage (§5.4). Non-actionable means behavior is unchanged
+			// (trust still bumps, no action taken) unless the LLM is wired.
+			if c.BayesBorderlineBand > 0 && c.BayesThreshold-ratio <= c.BayesBorderlineBand {
+				return domain.Verdict{Action: domain.ActionNone, Signals: []domain.Signal{{Name: "bayes_borderline"}}}, false
+			}
 		}
 	}
 

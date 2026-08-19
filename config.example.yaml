@@ -132,3 +132,32 @@ ops:
   # How often the digest is sent. A non-positive value falls back to the
   # default. Default: 24h.
   digest_interval: 24h
+
+# llm configures the optional, opt-in borderline LLM adjudication stage
+# (spec §5.4). It runs one or two paid, official LLM APIs over a message whose
+# Bayes score sits just below the threshold (within borderline_band) and
+# combines their verdicts under a consensus policy. DISABLED by default: it
+# sends message text to an external service, so it is strictly opt-in
+# (spec §9 privacy rules). When disabled, no message text ever leaves the bot.
+llm:
+  # Turn the borderline LLM stage on. Default: false.
+  enabled: false
+  # Combine multiple providers: "any" (spam if any provider says spam) or
+  # "all" (spam only if all agree). Ignored with a single provider.
+  # Default: "any".
+  policy: any
+  # Width below bayes_threshold within which a message is sent to the LLM.
+  # Must be > 0 for the stage to run. Default: 0.5.
+  borderline_band: 0.5
+  # Per-provider call timeout. Default: 10s.
+  http_timeout: 10s
+  # 1 or 2 backends. kind is "openai" or "anthropic"; api_key and model are
+  # that API's credentials and model name. Fail-open: any provider error errs
+  # toward "not spam", so an outage or quota exhaustion never causes a ban.
+  providers: []
+  #  - kind: openai
+  #    api_key: "sk-..."
+  #    model: gpt-4o-mini
+  #  - kind: anthropic
+  #    api_key: "sk-ant-..."
+  #    model: claude-3-5-haiku-latest

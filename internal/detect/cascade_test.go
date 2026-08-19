@@ -296,3 +296,49 @@ func TestCascadeDecide_BlocklistAppliesToEveryone(t *testing.T) {
 		t.Fatalf("expected non-listed sender to fall through, got %+v", v4)
 	}
 }
+
+func TestCascadeDecide_BayesBorderlineSignal(t *testing.T) {
+	// Ham-leaning tokens: ratio sits below threshold. With a wide band the
+	// cascade must emit a non-actionable "bayes_borderline" signal; with the
+	// band off (0) it must stay silent (ActionNone, no signal).
+	bayes := fakeBayes{
+		spam: map[string]int{"hello": 1},
+		ham:  map[string]int{"hello": 80},
+		c:    BayesCounts{SpamDocs: 100, HamDocs: 100, SpamTokenTotal: 500, HamTokenTotal: 500},
+	}
+	m := domain.Message{ChatID: -400, Sender: domain.Sender{UserID: 7}, Text: "hello hello"}
+	base := Cascade{
+		Trust:           &fakeTrustSource{counts: map[[2]int64]int{}},
+		Hist:            &fakeHistory{},
+		TrustThreshold:  5,
+		DefaultAction:   domain.ActionDeleteMute,
+		DefaultScope:    domain.ScopeChat,
+		Bayes:           bayes,
+		BayesScope:      "global",
+		BayesThreshold:  0.0,
+		BayesVocabGuess: 1000,
+		BayesEnabled:    true,
+	}
+
+	// Band off: no borderline signal.
+	if v, actionable := base.Decide(m, false); actionable || len(v.Signals) != 0 {
+		t.Fatalf("band off: expected silent ActionNone, got actionable=%v v=%+v", actionable, v)
+	}
+
+	// Band on and wide: borderline signal, non-actionable.
+	withBand := base
+	withBand.BayesBorderlineBand = 100.0
+	v, actionable := withBand.Decide(m, false)
+	if actionable {
+		t.Fatalf("borderline must be non-actionable, got %+v", v)
+	}
+	if len(v.Signals) != 1 || v.Signals[0].Name != "bayes_borderline" {
+		t.Fatalf("expected bayes_borderline signal, got %+v", v.Signals)
+	}
+
+	// Trusted sender skips Bayes entirely — no borderline signal.
+	withBand.Trust = &fakeTrustSource{counts: map[[2]int64]int{{-400, 7}: 10}}
+	if v3, _ := withBand.Decide(m, false); len(v3.Signals) != 0 {
+		t.Fatalf("trusted sender must skip borderline, got %+v", v3.Signals)
+	}
+}
