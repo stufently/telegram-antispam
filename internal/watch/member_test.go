@@ -246,3 +246,38 @@ func TestObserveAdminLookupErrorReturnsWithoutNotice(t *testing.T) {
 		}
 	}
 }
+
+// A stale list returned alongside the error still names the admins worth
+// impersonating, and nothing punitive follows from a match here — it raises
+// an admin notice. Discarding it would drop impersonation detection for the
+// whole outage.
+func TestObserveUsesStaleAdminListReturnedWithError(t *testing.T) {
+	store := &fakeStore{prevUsername: "bob", prevDisplay: "Bob", changed: true}
+	port := fake.New()
+	w := &MemberWatcher{
+		Store: store,
+		Admins: fakeAdmins{
+			a:   []detect.AdminIdentity{{Username: "owner"}},
+			err: errors.New("telegram unavailable"),
+		},
+		AdminChatID: 999,
+		Port:        port,
+		MaxDistance: 1,
+		Enabled:     true,
+	}
+
+	e := MemberEvent{ChatID: 1, UserID: 2, Username: "0wner", DisplayName: "0wner"}
+	if err := w.Observe(context.Background(), e); err != nil {
+		t.Fatalf("a usable stale list must not surface the error: %v", err)
+	}
+
+	count := 0
+	for _, c := range port.Calls() {
+		if c == "SendAdmin" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 SendAdmin call from the stale list, got %d", count)
+	}
+}

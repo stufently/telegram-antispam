@@ -424,3 +424,70 @@ func TestCascadeDecide_BayesBorderlineSignal(t *testing.T) {
 		t.Fatalf("trusted sender must skip borderline, got %+v", v3.Signals)
 	}
 }
+
+// A stale admin list returned alongside a lookup error still settles the
+// positive case: a sender on it was an admin as of the last good fetch, and a
+// demotion would have invalidated the cache. Immunity, not deferral.
+func TestCascadeDecide_StaleAdminListStillGrantsImmunity(t *testing.T) {
+	hist := &fakeHistory{defaultDupCount: 99}
+	c := Cascade{
+		Trust:          &fakeTrustSource{counts: map[[2]int64]int{}},
+		Hist:           hist,
+		Rules:          Rules{DenyStopwords: []string{"spamword"}},
+		TrustThreshold: 5,
+		Admins: fakeAdminSrc{
+			a:   []AdminIdentity{{UserID: 42, Username: "boss"}},
+			err: errors.New("telegram unavailable"),
+		},
+		Behavior:      BehaviorCfg{DupThreshold: 3, DupWindow: time.Minute},
+		DefaultAction: domain.ActionBan,
+		DefaultScope:  domain.ScopeGlobal,
+	}
+	m := domain.Message{ChatID: 1, Sender: domain.Sender{UserID: 42}, Text: "spamword"}
+
+	v, actionable := c.Decide(m, false)
+	if actionable || v.IsActionable() {
+		t.Fatalf("a stale-listed admin must stay immune, got %+v", v)
+	}
+	if v.Reason == ReasonAdminLookupUnavailable {
+		t.Fatalf("a resolved admin must not be reported as deferred, got %+v", v)
+	}
+	// Admins are not fed to the behavioral windows on the normal path either.
+	if len(hist.recordedDups) != 0 {
+		t.Fatalf("an immune admin must not be recorded, recorded %d", len(hist.recordedDups))
+	}
+}
+
+// Absence from a stale list proves nothing — an admin promoted during the
+// outage would be missing from it — so everyone not on it is deferred rather
+// than exposed to a punitive detector on unverified data.
+func TestCascadeDecide_StaleAdminListDefersEveryoneElse(t *testing.T) {
+	hist := &fakeHistory{}
+	c := Cascade{
+		Trust:          &fakeTrustSource{counts: map[[2]int64]int{}},
+		Hist:           hist,
+		Rules:          Rules{DenyStopwords: []string{"spamword"}},
+		TrustThreshold: 5,
+		Admins: fakeAdminSrc{
+			a:   []AdminIdentity{{UserID: 42, Username: "boss"}},
+			err: errors.New("telegram unavailable"),
+		},
+		Behavior:         BehaviorCfg{DupThreshold: 3, DupWindow: time.Minute},
+		Blocklist:        fakeBlocklist{ids: map[int64]bool{7: true}},
+		BlocklistEnabled: true,
+		DefaultAction:    domain.ActionBan,
+		DefaultScope:     domain.ScopeGlobal,
+	}
+	m := domain.Message{ChatID: 1, Sender: domain.Sender{UserID: 7}, Text: "spamword"}
+
+	v, actionable := c.Decide(m, false)
+	if actionable || v.IsActionable() {
+		t.Fatalf("a sender absent from a stale list must be deferred, got %+v", v)
+	}
+	if v.Reason != ReasonAdminLookupUnavailable {
+		t.Fatalf("expected the deferred reason, got %+v", v)
+	}
+	if len(hist.recordedDups) != 1 {
+		t.Fatalf("a deferred message must still be observed, recorded %d", len(hist.recordedDups))
+	}
+}

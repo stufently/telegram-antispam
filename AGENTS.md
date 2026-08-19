@@ -83,10 +83,11 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   and originals are deleted last. Dry-run still records and copies evidence
   but performs no sanction or deletion. Preserve this order in
   `internal/incident`.
-- Current chat admins are immune before every detector. An admin lookup that
-  fails past the cache's stale-grace window defers moderation and must not
-  grant trust (it still records the message in the behavioral windows, since
-  the update is never reprocessed); `my_chat_member` events and the
+- Current chat admins are immune before every detector. When the admin lookup
+  fails, a stale list may come back with the error: honour a match on it
+  (immunity) but never read absence from it as proof, and defer everyone else
+  without granting trust — a deferred message is still recorded in every
+  behavioral window, since the update is never reprocessed. `my_chat_member` events and the
   `chat_member` events that touch the admin roster invalidate the TTL cache,
   and an invalidation beats a fetch already in flight (that fetch's result is
   neither cached nor returned). Anonymous admins and linked-channel posts

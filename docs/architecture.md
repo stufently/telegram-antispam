@@ -92,20 +92,23 @@ first-hit-wins ordering:
 
 Admin identities use a TTL cache, invalidated on `my_chat_member` updates and
 on the `chat_member` updates that actually touch the administrator roster
-(ordinary joins and leaves do not drop it). An invalidation issued while a fetch is in flight
-wins: that fetch's result is neither cached nor returned, since it predates a
-roster change already known to be real. A failed refetch
-keeps serving the last good list for a short bounded grace window (twice the
-TTL) and backs off to at most one retry per TTL, because every caller reads an
-error as "cannot prove this sender is not an admin" and defers all moderation
-for the chat — including the blocklist and hard rules. The window is the
-exposure to the one thing stale data can get wrong that the TTL does not
-already: an administrator promoted without the promotion's `chat_member` event
-reaching the cache would not be recognized as immune. Once the list ages past the grace window — or when
+(ordinary joins and leaves do not drop it). An invalidation issued while a
+fetch is in flight wins: that fetch's result is neither cached nor returned,
+since it predates a roster change already known to be real. A failed refetch
+returns the last good list *and* the error, for a bounded grace window of twice
+the TTL. Both halves matter: a stale list is asymmetric evidence. A match on it
+proves the sender was an administrator as of the last good lookup — a demotion
+would have invalidated the entry — so immunity is granted. Absence proves
+nothing, because an administrator promoted during the outage would be missing,
+so every other sender is deferred rather than exposed to a punitive detector on
+unverified data. A lookup outage therefore suppresses moderation for the chat,
+which is the §4 fail-safe working as intended rather than a gap. Concurrent
+misses for one chat share a single in-flight request, and a failing refetch
+backs off to at most one retry per TTL. Once the list ages past the grace window — or when
 there is no cached list at all — the cascade emits a non-actionable
 `admin_lookup_unavailable` result, skips every punitive detector, and does not
-increment trust. It still records the message in the behavioral windows, since
-the update is already marked seen and will never be reprocessed.
+increment trust. A deferred message is still recorded in every behavioral window, since the
+update is already marked seen and will never be reprocessed.
 
 The blocklist is an atomic in-memory snapshot refreshed from external sources.
 LOLS full, LOLS delta, and CAS full data are retained separately: a failed or

@@ -57,9 +57,14 @@ func (w *MemberWatcher) Observe(ctx context.Context, e MemberEvent) error {
 	newDisplay := strings.ToLower(e.DisplayName)
 
 	admins, err := w.Admins.AdminIdentities(e.ChatID)
-	if err != nil {
+	if err != nil && len(admins) == 0 {
 		return fmt.Errorf("get chat administrators: %w", err)
 	}
+	// A stale list returned alongside an error still names the admins worth
+	// impersonating. Using it costs at most a missed match against someone
+	// promoted during the outage; discarding it would drop impersonation
+	// detection entirely for as long as the outage lasts. Unlike the cascade,
+	// nothing punitive follows from a match here — it raises an admin notice.
 
 	for _, admin := range admins {
 		if admin.UserID != 0 && admin.UserID == e.UserID {

@@ -67,14 +67,26 @@ func (c Cascade) Decide(m domain.Message, edited bool) (domain.Verdict, bool) {
 	// gate a real admin would match their own admin-list entry at distance 0
 	// and be flagged fake_admin on every message. The admin list is the same
 	// short-TTL cache the fake-admin stage uses; it is fetched once here and
-	// reused below. Failure to resolve this list is fail-safe: without it we
-	// cannot prove that the sender is not an admin, so this message is deferred
-	// instead of being allowed to reach any punitive detector.
+	// reused below. Failure to resolve this list is fail-safe: without a list
+	// we can trust, we cannot prove the sender is not an admin, so the message
+	// is deferred instead of being allowed to reach any punitive detector. A
+	// stale list returned with that error still settles the positive case;
+	// see the error branch below.
 	var admins []AdminIdentity
 	if c.Admins != nil {
 		var err error
 		admins, err = c.Admins.AdminIdentities(m.ChatID)
 		if err != nil {
+			// The source may hand back a stale list alongside the error.
+			// That list is asymmetric evidence: a match proves the sender was
+			// an admin as of the last good lookup (and a demotion would have
+			// invalidated the cache), so honour it. Absence proves nothing —
+			// an admin promoted during the outage would be missing — so
+			// everyone else is deferred rather than exposed to a punitive
+			// detector on unverified data.
+			if isCurrentAdmin(admins, m.Sender.UserID) {
+				return domain.Verdict{Action: domain.ActionNone}, false
+			}
 			// Deferring must not blind the behavioral windows. The wiring
 			// layer has already committed this update as seen before Decide
 			// runs, so a message dropped here is never reprocessed: without

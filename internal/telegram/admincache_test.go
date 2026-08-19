@@ -3,9 +3,11 @@ package telegram_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/stufently/telegram-antispam/internal/detect"
 	"github.com/stufently/telegram-antispam/internal/telegram"
 	"github.com/stufently/telegram-antispam/internal/telegram/fake"
 )
@@ -72,12 +74,10 @@ func TestAdminCacheErrorIsReturnedWithoutStaleData(t *testing.T) {
 	}
 }
 
-// A failing refetch must keep serving the last good list for a bounded
-// window instead of erroring: every caller reads an error as "cannot prove
-// this sender is not an admin" and defers ALL moderation for the chat, so one
-// transient Telegram error would otherwise switch off the blocklist and hard
-// rules too.
-func TestAdminCacheServesStaleWithinGraceOnRefetchFailure(t *testing.T) {
+// A failing refetch returns the last good list AND the error: the list is
+// what still proves a sender was an admin, the error is what stops a caller
+// treating absence from it as proof of the opposite.
+func TestAdminCacheReturnsStaleListWithErrorWithinGrace(t *testing.T) {
 	f := fake.New()
 	f.Admins = []telegram.Member{{UserID: 1, Username: "a"}}
 	c := telegram.NewAdminCache(f, time.Minute)
@@ -99,11 +99,11 @@ func TestAdminCacheServesStaleWithinGraceOnRefetchFailure(t *testing.T) {
 	f.AdminsErr = errors.New("boom")
 
 	ids, err = c.AdminIdentities(10)
-	if err != nil {
-		t.Fatalf("stale list inside the grace window must not error, got %v", err)
+	if err == nil {
+		t.Fatal("a stale list must still carry the refetch error")
 	}
 	if len(ids) != 1 || ids[0].UserID != 1 {
-		t.Fatalf("expected stale identity on refetch error, got %v", ids)
+		t.Fatalf("expected stale identity alongside the error, got %v", ids)
 	}
 }
 
@@ -150,8 +150,8 @@ func TestAdminCacheBacksOffAfterFailedRefetch(t *testing.T) {
 	f.AdminsErr = errors.New("boom")
 	c.SetClock(func() time.Time { return now.Add(90 * time.Second) })
 	for i := 0; i < 5; i++ {
-		if _, err := c.AdminIdentities(10); err != nil {
-			t.Fatalf("call %d: %v", i, err)
+		if _, err := c.AdminIdentities(10); err == nil {
+			t.Fatalf("call %d: expected the refetch error", i)
 		}
 	}
 
@@ -310,5 +310,209 @@ func TestAdminCacheBacksOffWithNoCachedListAtAll(t *testing.T) {
 	}
 	if got := countCalls(f, "GetChatAdministrators"); got != 2 {
 		t.Fatalf("GetChatAdministrators calls = %d, want 2", got)
+	}
+}
+
+// Concurrent misses for one chat must share a single request. Without
+// single-flighting, a burst all misses at once, every one issues its own
+// GetChatAdministrators on the single rate-limited dispatcher, and whichever
+// finishes last installs its result — which may be the older of the two.
+func TestAdminCacheSingleFlightsConcurrentMisses(t *testing.T) {
+	f := fake.New()
+	f.Admins = []telegram.Member{{UserID: 1}}
+	c := telegram.NewAdminCache(f, time.Hour)
+
+	// Hold the first port call open so every other caller is guaranteed to
+	// arrive while it is still in flight.
+	release := make(chan struct{})
+	fetching := make(chan struct{})
+	var once sync.Once
+	f.BeforeGetAdmins = func() {
+		once.Do(func() { close(fetching) })
+		<-release
+	}
+
+	const callers = 8
+	var wg sync.WaitGroup
+	ids := make([]int64, callers)
+	errs := make([]error, callers)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			got, err := c.AdminIdentities(10)
+			errs[i] = err
+			if len(got) > 0 {
+				ids[i] = got[0].UserID
+			}
+		}(i)
+	}
+
+	// One caller is inside the port call; the rest only need to take the
+	// cache mutex, see the in-flight entry, and park on it.
+	<-fetching
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	if got := countCalls(f, "GetChatAdministrators"); got != 1 {
+		t.Fatalf("GetChatAdministrators calls = %d, want 1 for %d concurrent misses", got, callers)
+	}
+	for i := range ids {
+		if errs[i] != nil {
+			t.Fatalf("caller %d: %v", i, errs[i])
+		}
+		if ids[i] != 1 {
+			t.Fatalf("caller %d got user %d, want the shared result", i, ids[i])
+		}
+	}
+}
+
+// A fetch that never returns normally must not strand its waiters on the
+// done channel, and must not hand them a nil error either — that would read
+// as "resolved, no admins" and let every sender past the §4 immunity gate.
+func TestAdminCacheAbandonedFetchReleasesWaitersWithError(t *testing.T) {
+	f := fake.New()
+	f.Admins = []telegram.Member{{UserID: 1}}
+	c := telegram.NewAdminCache(f, time.Hour)
+
+	fetching := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	f.BeforeGetAdmins = func() {
+		once.Do(func() { close(fetching) })
+		<-release
+		panic("telegram client blew up")
+	}
+
+	leaderDone := make(chan struct{})
+	go func() {
+		defer close(leaderDone)
+		defer func() { _ = recover() }()
+		_, _ = c.AdminIdentities(10)
+	}()
+	<-fetching
+
+	waiterDone := make(chan struct{})
+	var waiterIDs []detect.AdminIdentity
+	var waiterErr error
+	go func() {
+		defer close(waiterDone)
+		waiterIDs, waiterErr = c.AdminIdentities(10)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+
+	<-leaderDone
+	select {
+	case <-waiterDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiter was left parked on an abandoned fetch")
+	}
+
+	if waiterErr == nil {
+		t.Fatalf("waiter got a nil error (ids=%v); an abandoned fetch must fail closed", waiterIDs)
+	}
+	if len(waiterIDs) != 0 {
+		t.Fatalf("waiter got identities %v from an abandoned fetch", waiterIDs)
+	}
+}
+
+// Waiters on a shared fetch get exactly what the leader got, including the
+// stale-list-with-error pairing. A waiter that saw only the error would
+// wrongly defer an administrator the stale list still vouches for.
+func TestAdminCacheSharedFailureGivesWaitersStaleListAndError(t *testing.T) {
+	f := fake.New()
+	f.Admins = []telegram.Member{{UserID: 1}}
+	c := telegram.NewAdminCache(f, time.Minute)
+
+	now := time.Now()
+	c.SetClock(func() time.Time { return now })
+	if _, err := c.AdminIdentities(10); err != nil {
+		t.Fatal(err)
+	}
+
+	// Past the TTL, inside the grace window, with the port now failing.
+	c.SetClock(func() time.Time { return now.Add(90 * time.Second) })
+	f.AdminsErr = errors.New("boom")
+
+	fetching := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	f.BeforeGetAdmins = func() {
+		once.Do(func() { close(fetching) })
+		<-release
+	}
+
+	const callers = 4
+	var wg sync.WaitGroup
+	ids := make([][]detect.AdminIdentity, callers)
+	errs := make([]error, callers)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			ids[i], errs[i] = c.AdminIdentities(10)
+		}(i)
+	}
+	<-fetching
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	if got := countCalls(f, "GetChatAdministrators"); got != 2 {
+		t.Fatalf("GetChatAdministrators calls = %d, want 2 (initial + one shared refetch)", got)
+	}
+	for i := range ids {
+		if errs[i] == nil {
+			t.Fatalf("caller %d got a nil error; the stale list must carry the failure", i)
+		}
+		if len(ids[i]) != 1 || ids[i][0].UserID != 1 {
+			t.Fatalf("caller %d got %v, want the shared stale list", i, ids[i])
+		}
+	}
+}
+
+// An Invalidate that lands while a shared fetch is in flight must reach the
+// waiters too: publishing the pre-invalidation list to them with a nil error
+// is the one combination the contract forbids.
+func TestAdminCacheInvalidateDuringSharedFetchFailsEveryCaller(t *testing.T) {
+	f := fake.New()
+	f.Admins = []telegram.Member{{UserID: 1}}
+	c := telegram.NewAdminCache(f, time.Hour)
+
+	fetching := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	f.BeforeGetAdmins = func() {
+		once.Do(func() { close(fetching) })
+		<-release
+	}
+
+	const callers = 4
+	var wg sync.WaitGroup
+	ids := make([][]detect.AdminIdentity, callers)
+	errs := make([]error, callers)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			ids[i], errs[i] = c.AdminIdentities(10)
+		}(i)
+	}
+	<-fetching
+	time.Sleep(50 * time.Millisecond)
+	// The demotion lands while every caller is committed to this fetch.
+	c.Invalidate(10)
+	close(release)
+	wg.Wait()
+
+	for i := range ids {
+		if errs[i] == nil {
+			t.Fatalf("caller %d got a nil error alongside %v; an invalidated list must never resolve", i, ids[i])
+		}
+		if len(ids[i]) != 0 {
+			t.Fatalf("caller %d got identities %v from an invalidated fetch", i, ids[i])
+		}
 	}
 }

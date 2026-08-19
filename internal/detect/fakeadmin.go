@@ -15,9 +15,24 @@ type AdminIdentity struct {
 	CustomTitle string
 }
 
-// AdminSource returns the cached admin list for a chat. An error means the
-// caller cannot safely determine current-admin immunity; moderation callers
-// must defer the decision rather than treating an unknown list as empty.
+// AdminSource returns the admin list for a chat. An error means the caller
+// cannot safely determine current-admin immunity; moderation callers must
+// defer the decision rather than treating an unknown list as empty.
+//
+// A non-nil error MAY arrive with a non-empty list — an implementation that
+// caches is allowed to hand back its last good list when a refresh fails.
+// That pairing is asymmetric evidence and must be read as such:
+//
+//   - a MATCH on the list is conclusive: the sender was an administrator as
+//     of the last successful lookup, so immunity applies;
+//   - ABSENCE from it proves nothing, because an administrator promoted since
+//     that lookup would be missing. Absent senders are deferred, never passed
+//     to a punitive detector on the strength of a list that came with an
+//     error.
+//
+// An implementation that returns ids with an error therefore must not return
+// a list it already knows to be wrong (e.g. one superseded by an explicit
+// invalidation) — only one that is merely old.
 type AdminSource interface {
 	AdminIdentities(chatID int64) ([]AdminIdentity, error)
 }
