@@ -103,7 +103,7 @@ func (r *Registry) Write(w io.Writer) {
 
 	for _, name := range names {
 		m := r.metrics[name]
-		fmt.Fprintf(w, "# TYPE %s %s\n", name, m.typ)
+		_, _ = fmt.Fprintf(w, "# TYPE %s %s\n", name, m.typ)
 
 		keys := make([]string, 0, len(m.values))
 		for k := range m.values {
@@ -114,9 +114,9 @@ func (r *Registry) Write(w io.Writer) {
 		for _, k := range keys {
 			v := m.values[k]
 			if k == "" {
-				fmt.Fprintf(w, "%s %s\n", name, formatValue(v))
+				_, _ = fmt.Fprintf(w, "%s %s\n", name, formatValue(v))
 			} else {
-				fmt.Fprintf(w, "%s{%s} %s\n", name, k, formatValue(v))
+				_, _ = fmt.Fprintf(w, "%s{%s} %s\n", name, k, formatValue(v))
 			}
 		}
 	}

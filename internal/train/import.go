@@ -49,7 +49,7 @@ func ImportFile(db *store.DB, scope, label, origin, path string) (added, skipped
 	if err != nil {
 		return 0, 0, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	lineNo := 0

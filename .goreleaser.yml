@@ -1,0 +1,22 @@
+version: 2
+project_name: tg-antispam
+builds:
+  - id: tg-antispam
+    main: ./cmd/tg-antispam
+    binary: tg-antispam
+    env:
+      - CGO_ENABLED=0
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/stufently/telegram-antispam/internal/version.version={{ .Version }}
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+checksum:
+  name_template: checksums.txt
+release:
+  github:
+    owner: stufently
+    name: telegram-antispam

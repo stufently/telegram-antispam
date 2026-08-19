@@ -1,0 +1,27 @@
+version: "2"
+linters:
+  default: standard
+  enable:
+    - misspell
+    - unconvert
+  settings:
+    errcheck:
+      # Ignoring the deferred error of *sql.Rows.Close is universal Go practice.
+      exclude-functions:
+        - (*database/sql.Rows).Close
+  exclusions:
+    rules:
+      # Test code intentionally ignores errors from DB writes / row scans.
+      - path: _test\.go
+        linters:
+          - errcheck
+      # QF1001 (De Morgan quickfix) is a style suggestion — the explicit
+      # !(a && b) form is intentionally readable where it fires.
+      - linters: [staticcheck]
+        text: QF1001
+      # ST1018 fires on a test that deliberately embeds zero-width characters
+      # to exercise the normalizer.
+      - linters: [staticcheck]
+        text: ST1018
+run:
+  timeout: 5m

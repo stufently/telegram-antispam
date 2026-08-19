@@ -124,7 +124,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("store: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if err := db.Migrate(); err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
