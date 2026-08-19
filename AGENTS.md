@@ -83,6 +83,26 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   and originals are deleted last. Dry-run still records and copies evidence
   but performs no sanction or deletion. Preserve this order in
   `internal/incident`.
+- The admin-chat buttons are real moderation, not bookkeeping: false-positive and
+  lift call Telegram to unban/unmute, delete-evidence deletes the copies, and
+  confirm/false-positive train Bayes from the incident's stored tokens. Undo is
+  skipped for a dry-run incident or one that never reached `StateActed`, since
+  nothing was applied. Deleted messages are unrecoverable — do not imply otherwise
+  in reply text.
+- Incidents persist the offending message's normalized TOKENS
+  (`store.SaveIncidentTokens`), never its raw text. This is the documented
+  exception to "do not store message text": tokens are what the Bayes feature
+  store already counts, rows are deleted the moment an admin reviews the
+  incident, and a periodic prune bounds unreviewed ones. Do not widen this to
+  raw text, links, or media ids.
+- The stored `chats` row records where a chat STARTED; `chats.enforce` /
+  `chats.force_dry_run` in config decide where it runs NOW, resolved after the
+  fail-closed database read (`ChatsPolicy.DryRunFor`). `force_dry_run` wins every
+  conflict. Never write a config override back into the row.
+- Short-message flood is judged only for untrusted users and never counts
+  captionless media; duplicate flood stays ungated by trust. The windows are
+  still recorded for trusted users so `CheckBehavior` and `ObserveBehavior`
+  hold the same population.
 - Current chat admins are immune before every detector. When the admin lookup
   fails, a stale list may come back with the error: honour a match on it
   (immunity) but never read absence from it as proof, and defer everyone else
@@ -141,4 +161,11 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
 - Keep detection logic deterministic and explainable: return a stable signal
   name and add cascade-order tests when introducing or moving a stage.
 - Do not commit `config.yaml`, `.env`, database files, bot tokens, or LLM API
-  keys. `BOT_TOKEN` overrides the YAML token and is the preferred secret path.
+  keys. `BOT_TOKEN` overrides the YAML token and is the preferred secret path;
+  `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` do the same for the LLM providers.
+- The Helm chart under `deploy/helm` is part of the delivery surface. Its image
+  tag comes from `Chart.appVersion` and the CI image job publishes that exact
+  semver, so a release is: bump `appVersion` + `version`, then push a `v*` tag.
+  The pod template's `checksum/config` annotation is load-bearing — the config
+  watcher cannot see ConfigMap updates, so removing it silently strands config
+  changes.

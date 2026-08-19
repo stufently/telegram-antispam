@@ -44,8 +44,9 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
   **Disabled by default** — no message text ever leaves the process unless you opt in.
 - **Evidence-backed moderation** — evidence is copied to a private admin chat with inline
   **Confirm spam / False positive / Lift (no learn) / Delete evidence** buttons and
-  per-callback RBAC. Confirm/false-positive feedback is recorded; automated lift and evidence
-  deletion are not wired yet.
+  per-callback RBAC. The buttons act: false-positive and lift really unban / unmute the user
+  in the source chat, delete-evidence really removes the copies, and confirm/false-positive
+  train the Bayes filter. (Deleted messages cannot be restored — Telegram has no such call.)
 - **Newcomer defenses** — spam-reaction cleanup, ephemeral one-way notices, and a trust
   score that graduates real users out of the strict checks.
 - **Dry-run mode** — observe and log verdicts without touching anyone, per chat.
@@ -86,8 +87,19 @@ chats:
 ```
 
 Add the bot to your group **as an administrator** with *delete messages* and *ban users*
-rights. Start in `start_in_dry_run: true`, watch the logs and the daily digest, then flip
-to enforcing.
+rights. Start in `start_in_dry_run: true`, watch the logs and the daily digest, then take the
+chat live by listing it under `chats.enforce`:
+
+```yaml
+chats:
+  start_in_dry_run: true   # new chats keep observing
+  enforce: [-1001234567890] # …this one moderates for real
+  force_dry_run: []         # the brake; wins over enforce
+```
+
+`start_in_dry_run` only seeds a chat's row the first time the bot sees it, so changing it
+later does **not** affect a chat that already registered — `enforce` is what graduates an
+observed chat to enforcement, and `force_dry_run` is what pulls it back.
 
 ## Run the container directly
 
@@ -112,9 +124,24 @@ helm install tg-antispam ./deploy/helm/tg-antispam \
 
 The bot token is injected as the `BOT_TOKEN` env var from a Secret, so it never lands in the
 ConfigMap. Use `--set existingSecret=<name>` to reference a pre-created Secret (recommended),
-or `--set botToken=<token>` to let the chart manage one. The chart runs as a non-root user on
-a PVC-backed `/data` volume with a `Recreate` strategy and `replicaCount: 1` (SQLite is a
-single writer), and wires `/healthz` liveness/readiness probes.
+or `--set botToken=<token>` to let the chart manage one. LLM keys work the same way — set
+`llmSecret.name` plus `llmSecret.openaiKey` / `llmSecret.anthropicKey` and they arrive as
+`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`, so no credential is written into the ConfigMap.
+
+The chart runs as a non-root user with a read-only root filesystem, no service-account token
+and all capabilities dropped, on a PVC-backed `/data` volume with a `Recreate` strategy and
+`replicaCount: 1` (SQLite is a single writer). It wires `/healthz` liveness/readiness probes
+and ships a ClusterIP Service so Prometheus can scrape `:9090/metrics` at a stable address.
+The image tag defaults to `Chart.appVersion`, so chart and image cannot drift.
+
+Two deployment details worth knowing:
+
+- **Changing the config rolls the pod.** The pod template carries a `checksum/config`
+  annotation, and it is load-bearing: the bot's file watcher cannot see a ConfigMap update
+  (kubelet swaps the mounted `..data` directory instead of writing the file), so without the
+  annotation an edited ConfigMap would never reach the running process.
+- **The PVC defaults to 10Gi**, not because the database is big — it is tiny — but because
+  cloud CSI drivers enforce a minimum (Hetzner's is 10Gi and rejects smaller requests).
 
 ## Train the Bayesian filter
 
@@ -126,7 +153,11 @@ tg-antispam import --label ham  --scope global ham-samples.txt
 
 ## Enable the optional LLM stage
 
-Opt-in only — it sends borderline message text to a paid, official API. In `config.yaml`:
+Opt-in only — it sends borderline message text to a paid, official API. The system prompt is
+configurable (`llm.prompt`) and `temperature` / `max_tokens` are sent only when you set them,
+because reasoning models reject an explicit temperature and spend a small token budget on
+hidden reasoning — returning an empty answer this stage would read as "not spam". In
+`config.yaml`:
 
 ```yaml
 llm:

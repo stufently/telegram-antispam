@@ -7,8 +7,23 @@ chats:
   mode: auto
   # Observe-first safety: default is true (bot logs verdicts but does NOT
   # act until you set this to false). An explicit false is honored.
+  #
+  # IMPORTANT: this seeds a chat's stored row the first time the bot sees
+  # that chat, and never touches it again. Flipping it later does NOT take an
+  # already-registered chat live — use `enforce` below for that.
   start_in_dry_run: true
   allowlist: []
+  # Chats that moderate for real, overriding whatever dry-run value was
+  # stored when they registered. This is the supported way to graduate a
+  # chat from observation to enforcement: one line, no database surgery.
+  # In mode: allowlist every entry must also appear in allowlist (a chat
+  # outside it never reaches moderation, so the entry would be a silent
+  # no-op and is rejected at startup instead).
+  enforce: []
+  # Chats pinned to dry-run regardless of what is stored or listed in
+  # enforce. The brake: it wins every conflict, so pulling a misbehaving
+  # chat back out of enforcement is a one-line change.
+  force_dry_run: []
 
 # detection configures the M3 detection cascade (internal/detect). Every
 # field below is optional; unset fields fall back to the defaults shown
@@ -42,6 +57,13 @@ detection:
     dup_window: 60s
     # Messages at or below this length (in runes) count as "short" for
     # short-message flood detection. Default: 10.
+    #
+    # Two limits on this check are deliberate and not configurable:
+    #   * it never applies to a trusted user (see trust_threshold) — a
+    #     regular firing off "ok", "+", "ага" is conversation, not spam;
+    #   * captionless media (a photo or sticker with no text) never counts,
+    #     because a length heuristic cannot see a picture and posting a few
+    #     photos one by one is normal behavior.
     short_len: 10
     # Short-message count within short_window that triggers a hit.
     # 0 disables this check. Default: 5.
@@ -157,6 +179,21 @@ ops:
 llm:
   # Turn the borderline LLM stage on. Default: false.
   enabled: false
+  # Override the built-in classifier system prompt. The built-in one is
+  # English and generic; a chat with its own norms (a marketplace where
+  # "selling my used X" is legitimate, a crypto chat where coin names are
+  # not automatically spam) needs its own wording. Empty ⇒ built-in prompt.
+  prompt: ""
+  # Sent to the provider ONLY when set. Reasoning models reject an explicit
+  # temperature, so it is unset by default; classic completion models
+  # usually want an explicit 0, which is honored (unset differs from 0).
+  # temperature: 0
+  # Reply length cap, sent only when set (the Anthropic API requires one and
+  # falls back to a small internal default). Leave unset with reasoning
+  # models: they spend a small budget on hidden reasoning and return an
+  # empty answer, which this stage reads as "not spam" — a silently
+  # disabled check rather than a visible error.
+  # max_tokens: 8
   # Combine multiple providers: "any" (spam if any provider says spam) or
   # "all" (spam only if all agree). Ignored with a single provider.
   # Default: "any".
@@ -169,6 +206,10 @@ llm:
   # 1 or 2 backends. kind is "openai" or "anthropic"; api_key and model are
   # that API's credentials and model name. Fail-open: any provider error errs
   # toward "not spam", so an outage or quota exhaustion never causes a ban.
+  #
+  # api_key can also come from the OPENAI_API_KEY / ANTHROPIC_API_KEY env
+  # vars (env wins), exactly like BOT_TOKEN — necessary wherever this file is
+  # not a secret, e.g. a Kubernetes ConfigMap kept in version control.
   providers: []
   #  - kind: openai
   #    api_key: "sk-..."
