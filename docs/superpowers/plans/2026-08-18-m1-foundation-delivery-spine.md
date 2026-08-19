@@ -1,6 +1,8 @@
 # telegram-antispam M1 — Foundation & Delivery Spine — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status: ✅ Implemented, reviewed, and merged to `main`.** Every step below is complete; the whole-branch review passed. Checkboxes are ticked for historical record.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Build the correctness spine of the bot — config, storage, the incident state machine, and the polling/sequencer delivery path — so a process can receive Telegram updates for registered chats, persist them idempotently, and drive an incident through evidence→action→cleanup (dry-run) with everything testable off-network.
 
@@ -38,7 +40,7 @@
 - Consumes: nothing.
 - Produces: `version.String() string`; the `scripts/dev.sh` runner (`./scripts/dev.sh <go-args...>`) and `make test` / `make vet` / `make build`, used by every later task's test steps.
 
-- [ ] **Step 1: Create the module file**
+- [x] **Step 1: Create the module file**
 
 `go.mod`:
 ```
@@ -47,7 +49,7 @@ module github.com/stufently/telegram-antispam
 go 1.24
 ```
 
-- [ ] **Step 2: Create the Docker Go runner**
+- [x] **Step 2: Create the Docker Go runner**
 
 `scripts/dev.sh` (make executable with `chmod +x`):
 ```bash
@@ -70,7 +72,7 @@ exec docker run --rm --network host \
 > network's proxy. Integrity is still pinned by the committed `go.sum`; the
 > checksum database is only consulted when adding new modules.
 
-- [ ] **Step 3: Create the Makefile**
+- [x] **Step 3: Create the Makefile**
 
 `Makefile`:
 ```makefile
@@ -85,7 +87,7 @@ tidy:
 	./scripts/dev.sh mod tidy
 ```
 
-- [ ] **Step 4: Extend .gitignore**
+- [x] **Step 4: Extend .gitignore**
 
 Append to `.gitignore`:
 ```
@@ -93,7 +95,7 @@ Append to `.gitignore`:
 /tg-antispam
 ```
 
-- [ ] **Step 5: Write the failing test**
+- [x] **Step 5: Write the failing test**
 
 `internal/version/version_test.go`:
 ```go
@@ -108,12 +110,12 @@ func TestStringNotEmpty(t *testing.T) {
 }
 ```
 
-- [ ] **Step 6: Run the test, expect failure**
+- [x] **Step 6: Run the test, expect failure**
 
 Run: `chmod +x scripts/dev.sh && make test`
 Expected: FAIL — `undefined: String`.
 
-- [ ] **Step 7: Implement**
+- [x] **Step 7: Implement**
 
 `internal/version/version.go`:
 ```go
@@ -127,12 +129,12 @@ var version = "dev"
 func String() string { return version }
 ```
 
-- [ ] **Step 8: Run the test, expect pass**
+- [x] **Step 8: Run the test, expect pass**
 
 Run: `make test`
 Expected: PASS (`ok  .../internal/version`).
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add go.mod scripts Makefile .gitignore internal/version
@@ -159,7 +161,7 @@ git commit -m "Add module scaffold and docker dev harness"
   - `type Incident struct { ChatID int64; MessageIDs []int; ThreadID int; Sender Sender; Verdict Verdict; State IncidentState; DryRun bool; AdminMessageIDs []int }`
   - Method `func (v Verdict) IsActionable() bool` (true when `Action != ActionNone`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `internal/domain/types_test.go`:
 ```go
@@ -184,12 +186,12 @@ func TestIncidentKeyFields(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test, expect failure**
+- [x] **Step 2: Run the test, expect failure**
 
 Run: `make test`
 Expected: FAIL — undefined identifiers.
 
-- [ ] **Step 3: Implement enums**
+- [x] **Step 3: Implement enums**
 
 `internal/domain/enums.go`:
 ```go
@@ -237,7 +239,7 @@ const (
 )
 ```
 
-- [ ] **Step 4: Implement structs**
+- [x] **Step 4: Implement structs**
 
 `internal/domain/types.go`:
 ```go
@@ -297,12 +299,12 @@ type Incident struct {
 }
 ```
 
-- [ ] **Step 5: Run the test, expect pass**
+- [x] **Step 5: Run the test, expect pass**
 
 Run: `make test`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add internal/domain
@@ -331,7 +333,7 @@ git commit -m "Add domain types and enums"
     - `SendAdmin(ctx context.Context, adminChat int64, msg AdminMessage) (int, error)`
   - `fake.New() *Fake` with an ordered call log: `Fake.Calls() []string`, plus `Fake.CopyErr`, `Fake.SendAdminID` knobs. `*Fake` implements `telegram.Port`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `internal/telegram/fake/fake_test.go`:
 ```go
@@ -376,12 +378,12 @@ func TestFakeImplementsPortAndLogsOrder(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test, expect failure**
+- [x] **Step 2: Run the test, expect failure**
 
 Run: `make test`
 Expected: FAIL — package `telegram` and `fake` do not exist.
 
-- [ ] **Step 3: Implement the port**
+- [x] **Step 3: Implement the port**
 
 `internal/telegram/port.go`:
 ```go
@@ -423,7 +425,7 @@ type Port interface {
 }
 ```
 
-- [ ] **Step 4: Implement the fake**
+- [x] **Step 4: Implement the fake**
 
 `internal/telegram/fake/fake.go`:
 ```go
@@ -497,12 +499,12 @@ func (f *Fake) SendAdmin(_ context.Context, _ int64, _ telegram.AdminMessage) (i
 }
 ```
 
-- [ ] **Step 5: Run the test, expect pass**
+- [x] **Step 5: Run the test, expect pass**
 
 Run: `make test`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add internal/telegram
@@ -521,7 +523,7 @@ git commit -m "Add telegram port interface and fake"
 - Consumes: `internal/domain`.
 - Produces: `func ClassifySender(in ClassifyInput) domain.SenderKind` and `type ClassifyInput struct { FromID int64; IsBot bool; SenderChatID int64; SenderChatType string; ChatID int64; LinkedChatID int64; IsAutomaticForward bool }`. Constant `AnonAdminBotID int64 = 1087968824`, `ChannelBotID int64 = 136817688`, `ServiceNotificationsID int64 = 777000`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `internal/detect/identity_test.go`:
 ```go
@@ -555,12 +557,12 @@ func TestClassifySender(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test, expect failure**
+- [x] **Step 2: Run the test, expect failure**
 
 Run: `make test`
 Expected: FAIL — undefined `ClassifySender`, `ClassifyInput`, constants.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `internal/detect/identity.go`:
 ```go
@@ -608,12 +610,12 @@ func ClassifySender(in ClassifyInput) domain.SenderKind {
 }
 ```
 
-- [ ] **Step 4: Run the test, expect pass**
+- [x] **Step 4: Run the test, expect pass**
 
 Run: `make test`
 Expected: PASS (all subtests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/detect
@@ -638,7 +640,7 @@ git commit -m "Add sender identity classification"
   - `func Parse(b []byte) (*Config, error)`.
   - `func (c *Config) Validate() error` — token non-empty, `AdminChatID != 0`, `Chats.Mode ∈ {auto, allowlist, owners_only}`, `Action ∈ {delete_mute, mute, ban, delete_only}`.
 
-- [ ] **Step 1: Add dependency and test fixtures**
+- [x] **Step 1: Add dependency and test fixtures**
 
 Run: `./scripts/dev.sh get gopkg.in/yaml.v3@v3.0.1 && make tidy`
 
@@ -662,7 +664,7 @@ chats:
   mode: auto
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `internal/config/config_test.go`:
 ```go
@@ -694,12 +696,12 @@ func TestValidateRejectsMissingToken(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Run the test, expect failure**
+- [x] **Step 3: Run the test, expect failure**
 
 Run: `make test`
 Expected: FAIL — undefined `Load`, `Parse`.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 `internal/config/config.go`:
 ```go
@@ -768,12 +770,12 @@ func (c *Config) Validate() error {
 }
 ```
 
-- [ ] **Step 5: Run the test, expect pass**
+- [x] **Step 5: Run the test, expect pass**
 
 Run: `make test`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add internal/config go.mod go.sum
@@ -795,11 +797,11 @@ git commit -m "Add config schema, load, and validation"
   - `func (s *Store) tryReload(path string) error` — parse+validate a candidate; on success `Swap`, on failure return the error and keep the old config.
   - `Swap` is atomic (guarded by a mutex; `Current` never returns a half-parsed config).
 
-- [ ] **Step 1: Add dependency**
+- [x] **Step 1: Add dependency**
 
 Run: `./scripts/dev.sh get github.com/fsnotify/fsnotify@v1.7.0 && make tidy`
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `internal/config/reload_test.go`:
 ```go
@@ -847,12 +849,12 @@ func TestReloadSwapsOnValidFile(t *testing.T) {
 > Note: this test references `Action(...)` and `ActionMute`/`ActionBan` — add a
 > local alias in this package so the test reads cleanly. See Step 4.
 
-- [ ] **Step 3: Run the test, expect failure**
+- [x] **Step 3: Run the test, expect failure**
 
 Run: `make test`
 Expected: FAIL — undefined `NewStore`, `Action`, `ActionMute`.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 `internal/config/reload.go`:
 ```go
@@ -909,12 +911,12 @@ func (s *Store) tryReload(path string) error {
 }
 ```
 
-- [ ] **Step 5: Run the test, expect pass**
+- [x] **Step 5: Run the test, expect pass**
 
 Run: `make test`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add internal/config go.mod go.sum
@@ -938,11 +940,11 @@ git commit -m "Add atomic config hot-reload store"
   - `func (db *DB) Read() *sql.DB` — for read queries.
   - `func (db *DB) Close() error`.
 
-- [ ] **Step 1: Add dependency**
+- [x] **Step 1: Add dependency**
 
 Run: `./scripts/dev.sh get modernc.org/sqlite@v1.34.4 && make tidy`
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `internal/store/engine_test.go`:
 ```go
@@ -1004,12 +1006,12 @@ func TestWriteSerializesConcurrentWriters(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Run the test, expect failure**
+- [x] **Step 3: Run the test, expect failure**
 
 Run: `make test`
 Expected: FAIL — undefined `Open`.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 `internal/store/engine.go`:
 ```go
@@ -1093,12 +1095,12 @@ func (db *DB) Close() error {
 }
 ```
 
-- [ ] **Step 5: Run the test, expect pass**
+- [x] **Step 5: Run the test, expect pass**
 
 Run: `./scripts/dev.sh test -race ./internal/store/`
 Expected: PASS with no race warnings.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add internal/store go.mod go.sum
@@ -1117,7 +1119,7 @@ git commit -m "Add sqlite engine with single writer"
 - Consumes: `internal/store` (Task 7).
 - Produces: `func (db *DB) Migrate() error` — idempotent; creates tables `updates`, `chats`, `chat_aliases`, `incidents`, `evidence`, `audit`, `samples` with the keys from spec §9. Safe to call repeatedly.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `internal/store/migrate_test.go`:
 ```go
@@ -1152,12 +1154,12 @@ func TestMigrateIsIdempotent(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test, expect failure**
+- [x] **Step 2: Run the test, expect failure**
 
 Run: `make test`
 Expected: FAIL — undefined `Migrate`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `internal/store/migrate.go`:
 ```go
@@ -1221,12 +1223,12 @@ func (db *DB) Migrate() error {
 }
 ```
 
-- [ ] **Step 4: Run the test, expect pass**
+- [x] **Step 4: Run the test, expect pass**
 
 Run: `make test`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store
@@ -1245,7 +1247,7 @@ git commit -m "Add schema migrations"
 - Consumes: `internal/store` (Tasks 7–8).
 - Produces: `func (db *DB) MarkUpdateSeen(updateID int64) (fresh bool, err error)` — inserts the id; returns `fresh=true` the first time, `fresh=false` on a duplicate (so the caller skips reprocessing).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `internal/store/updates_test.go`:
 ```go
@@ -1273,12 +1275,12 @@ func TestMarkUpdateSeenDedup(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test, expect failure**
+- [x] **Step 2: Run the test, expect failure**
 
 Run: `make test`
 Expected: FAIL — undefined `MarkUpdateSeen`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `internal/store/updates.go`:
 ```go
@@ -1306,12 +1308,12 @@ func (db *DB) MarkUpdateSeen(updateID int64) (bool, error) {
 }
 ```
 
-- [ ] **Step 4: Run the test, expect pass**
+- [x] **Step 4: Run the test, expect pass**
 
 Run: `make test`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store
@@ -1335,7 +1337,7 @@ git commit -m "Add updates repo for idempotency"
   - `func (db *DB) DisableChat(chatID int64) error`.
   - `func (db *DB) AddAlias(oldID, newID int64) error` and `func (db *DB) ResolveChat(id int64) int64` (follows an alias, else returns id).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `internal/store/chats_test.go`:
 ```go
@@ -1392,12 +1394,12 @@ func TestResolveAlias(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test, expect failure**
+- [x] **Step 2: Run the test, expect failure**
 
 Run: `make test`
 Expected: FAIL — undefined `UpsertChat`, `ChatRow`, etc.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `internal/store/chats.go`:
 ```go
@@ -1475,12 +1477,12 @@ func (db *DB) ResolveChat(id int64) int64 {
 }
 ```
 
-- [ ] **Step 4: Run the test, expect pass**
+- [x] **Step 4: Run the test, expect pass**
 
 Run: `make test`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store
@@ -1503,7 +1505,7 @@ git commit -m "Add chats repo with lifecycle and alias"
   - `func (db *DB) AddEvidence(incidentID int64, adminChatID int64, adminMessageIDs []int) error`.
   - `func (db *DB) GetIncidentState(id int64) (domain.IncidentState, error)`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `internal/store/incidents_test.go`:
 ```go
@@ -1547,12 +1549,12 @@ func TestInsertPendingDedupAndAdvance(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test, expect failure**
+- [x] **Step 2: Run the test, expect failure**
 
 Run: `make test`
 Expected: FAIL — undefined `InsertPending`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `internal/store/incidents.go`:
 ```go
@@ -1618,12 +1620,12 @@ func (db *DB) AddEvidence(incidentID int64, adminChatID int64, adminMessageIDs [
 }
 ```
 
-- [ ] **Step 4: Run the test, expect pass**
+- [x] **Step 4: Run the test, expect pass**
 
 Run: `make test`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/store
@@ -1645,7 +1647,7 @@ git commit -m "Add incidents repo"
   - `type Machine struct { ... }` with `func New(port telegram.Port, repo Repo, adminChatID int64) *Machine`.
   - `func (m *Machine) Handle(ctx context.Context, inc domain.Incident) error` — runs the spec §7 ordering: insert pending → copy evidence → save admin ids (evidenced) → apply action if not dry-run (acted) → delete originals if not dry-run (cleaned) → done. On evidence-copy failure with a low-confidence verdict, it stops at `evidence_failed` and performs no destructive action.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `internal/incident/machine_test.go`:
 ```go
@@ -1729,12 +1731,12 @@ func TestEvidenceFailureStopsBeforeAction(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test, expect failure**
+- [x] **Step 2: Run the test, expect failure**
 
 Run: `make test`
 Expected: FAIL — undefined `New`, `Machine`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `internal/incident/machine.go`:
 ```go
@@ -1839,12 +1841,12 @@ func (m *Machine) applyAction(ctx context.Context, inc domain.Incident) error {
 }
 ```
 
-- [ ] **Step 4: Run the test, expect pass**
+- [x] **Step 4: Run the test, expect pass**
 
 Run: `make test`
 Expected: PASS.
 
-- [ ] **Step 5: Verify *store.DB satisfies Repo**
+- [x] **Step 5: Verify *store.DB satisfies Repo**
 
 Add to `internal/store/incidents.go` (a compile-time assertion lives with the machine to avoid an import cycle — put it in the incident package instead):
 
@@ -1860,7 +1862,7 @@ var _ Repo = (*store.DB)(nil)
 Run: `make build`
 Expected: compiles (proves the real store satisfies the machine's Repo).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add internal/incident
@@ -1879,11 +1881,11 @@ git commit -m "Add incident state machine"
 - Consumes: `github.com/go-telegram/bot/models`, `internal/domain`, `internal/detect`.
 - Produces: `func ToDomainMessage(m *models.Message) domain.Message` — maps a library message to `domain.Message`, filling `Sender` via `detect.ClassifySender`, and copying `ChatID`, `MessageID`, `ThreadID` (`MessageThreadID`), `MediaGroupID`, `Text`/`Caption`, `Date`, `IsAutomaticForward`.
 
-- [ ] **Step 1: Add the library**
+- [x] **Step 1: Add the library**
 
 Run: `./scripts/dev.sh get github.com/go-telegram/bot@v1.23.0 && make tidy`
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `internal/telegram/adapter_test.go`:
 ```go
@@ -1926,12 +1928,12 @@ func TestToDomainMessageExternalChannel(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Run the test, expect failure**
+- [x] **Step 3: Run the test, expect failure**
 
 Run: `make test`
 Expected: FAIL — undefined `ToDomainMessage`.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 `internal/telegram/adapter.go`:
 ```go
@@ -1986,12 +1988,12 @@ func ToDomainMessage(m *models.Message) domain.Message {
 > differs in v1.23.0, run `./scripts/dev.sh doc github.com/go-telegram/bot/models.Message`
 > and adjust — the mapping is mechanical.
 
-- [ ] **Step 5: Run the test, expect pass**
+- [x] **Step 5: Run the test, expect pass**
 
 Run: `make test`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add internal/telegram go.mod go.sum
@@ -2013,7 +2015,7 @@ git commit -m "Add telegram adapter to domain message"
   - `func (s *Sequencer) Submit(chatID int64, job func())` — jobs for the same `chatID` run in submission order on one goroutine; different chats run concurrently.
   - `func (s *Sequencer) Wait()` — drains all queues (for tests/shutdown).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `internal/telegram/sequencer_test.go`:
 ```go
@@ -2061,12 +2063,12 @@ func TestSequencerRunsDistinctChats(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test, expect failure**
+- [x] **Step 2: Run the test, expect failure**
 
 Run: `make test`
 Expected: FAIL — undefined `NewSequencer`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `internal/telegram/sequencer.go`:
 ```go
@@ -2116,12 +2118,12 @@ func (s *Sequencer) Wait() {
 }
 ```
 
-- [ ] **Step 4: Run the test, expect pass**
+- [x] **Step 4: Run the test, expect pass**
 
 Run: `./scripts/dev.sh test -race ./internal/telegram/`
 Expected: PASS, no race warnings.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/telegram
@@ -2145,7 +2147,7 @@ git commit -m "Add per-chat sequencer"
   - `type Handler struct { ... }` with `func NewHandler(db *store.DB, seq *Sequencer, cfg *config.Store, machine *incident.Machine) *Handler` (`*config.Store` is from Task 6) and `func (h *Handler) OnMessage(ctx context.Context, updateID int64, m domain.Message)` — dedups the update, skips unregistered/immune chats, and (M1 behaviour) records the chat and logs; it does not fabricate verdicts (detection arrives in M3). The incident machine is wired but only invoked by later milestones.
   - `main()` — load config, open+migrate store, build a live `bot` with the mandated `allowed_updates`, and run long polling. Runs but is guarded so `go vet`/tests don't require a token.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `internal/telegram/bot_test.go`:
 ```go
@@ -2185,12 +2187,12 @@ func TestImmuneKinds(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test, expect failure**
+- [x] **Step 2: Run the test, expect failure**
 
 Run: `make test`
 Expected: FAIL — undefined `RegisteredChat`, `ImmuneSender`.
 
-- [ ] **Step 3: Implement the routing helpers and handler**
+- [x] **Step 3: Implement the routing helpers and handler**
 
 `internal/telegram/bot.go`:
 ```go
@@ -2265,12 +2267,12 @@ func (h *Handler) OnMessage(ctx context.Context, updateID int64, m domain.Messag
 }
 ```
 
-- [ ] **Step 4: Run the test, expect pass**
+- [x] **Step 4: Run the test, expect pass**
 
 Run: `make test`
 Expected: PASS.
 
-- [ ] **Step 5: Write the entry point**
+- [x] **Step 5: Write the entry point**
 
 `cmd/tg-antispam/main.go`:
 ```go
@@ -2357,7 +2359,7 @@ chats:
   allowlist: []
 ```
 
-- [ ] **Step 6: Verify build and vet**
+- [x] **Step 6: Verify build and vet**
 
 Run: `make build && make vet`
 Expected: both succeed. (The binary needs a real token+config at runtime; build/vet do not.)
@@ -2366,7 +2368,7 @@ Expected: both succeed. (The binary needs a real token+config at runtime; build/
 > v1.23.0, check `./scripts/dev.sh doc github.com/go-telegram/bot` and adjust;
 > the wiring shape is unchanged.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add internal/telegram cmd config.example.yaml go.mod go.sum

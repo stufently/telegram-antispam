@@ -1,6 +1,8 @@
 # telegram-antispam M6 — LOLS/CAS Blocklists — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status: ✅ Implemented, reviewed, and merged to `main`.** Every step below is complete; the whole-branch review passed. Checkboxes are ticked for historical record.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add the LOLS+CAS blocklist stage (spec §5.3) — a background-synced in-memory mirror of the union of the two largest public Telegram spammer-ID lists, checked as a cheap authoritative hard signal in the detection cascade — so the bot bans known spammers on sight, fail-open (a blocklist outage never blocks a chat).
 
@@ -44,7 +46,7 @@
   - `func (s *Set) Contains(id int64) bool` — binary search (`sort.Search`); a nil `*Set` receiver returns false (fail-open).
   - `func (s *Set) Len() int` — count (0 for nil receiver).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package blocklist
@@ -76,13 +78,13 @@ func TestBuildSetAndContains(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test, expect failure.**
+- [x] **Step 2: Run test, expect failure.**
 
-- [ ] **Step 3: Implement** `Set`, `BuildSet` (append all, `sort.Slice`/`slices.Sort`, dedup in-place), `Contains` (`sort.Search` + bounds+equality, nil-guard), `Len` (nil-guard).
+- [x] **Step 3: Implement** `Set`, `BuildSet` (append all, `sort.Slice`/`slices.Sort`, dedup in-place), `Contains` (`sort.Search` + bounds+equality, nil-guard), `Len` (nil-guard).
 
-- [ ] **Step 4: Run test, expect pass** (`./scripts/dev.sh test ./internal/blocklist/...`).
+- [x] **Step 4: Run test, expect pass** (`./scripts/dev.sh test ./internal/blocklist/...`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/blocklist/set.go internal/blocklist/set_test.go
 git commit -m "Add sorted-set blocklist snapshot"
@@ -105,15 +107,15 @@ git commit -m "Add sorted-set blocklist snapshot"
   - `func (b *Blocklist) Swap(s *Set)` — atomically replaces the snapshot (used by the syncer).
   - `func (b *Blocklist) Len() int` — current snapshot size (for logging/metrics).
 
-- [ ] **Step 1: Write the failing test** — `New()`; `Listed(5)` is false (empty). `Swap(BuildSet([]int64{5,9}))`; `Listed(5)` true, `Listed(6)` false, `Listed(0)` false; `Len()==2`. Confirm concurrent `Listed` + `Swap` is race-free (a short goroutine loop calling Listed while another Swaps — run under `-race`).
+- [x] **Step 1: Write the failing test** — `New()`; `Listed(5)` is false (empty). `Swap(BuildSet([]int64{5,9}))`; `Listed(5)` true, `Listed(6)` false, `Listed(0)` false; `Len()==2`. Confirm concurrent `Listed` + `Swap` is race-free (a short goroutine loop calling Listed while another Swaps — run under `-race`).
 
-- [ ] **Step 2: Run test, expect failure.**
+- [x] **Step 2: Run test, expect failure.**
 
-- [ ] **Step 3: Implement** using `sync/atomic` `atomic.Pointer[Set]`. `New()` stores an empty `BuildSet()`.
+- [x] **Step 3: Implement** using `sync/atomic` `atomic.Pointer[Set]`. `New()` stores an empty `BuildSet()`.
 
-- [ ] **Step 4: Run tests incl. `-race`** (`./scripts/dev.sh test -race ./internal/blocklist/...`).
+- [x] **Step 4: Run tests incl. `-race`** (`./scripts/dev.sh test -race ./internal/blocklist/...`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/blocklist/blocklist.go internal/blocklist/blocklist_test.go
 git commit -m "Add atomic blocklist store"
@@ -132,7 +134,7 @@ git commit -m "Add atomic blocklist store"
   - `func ParseIDs(r io.Reader) ([]int64, error)` — scans line by line (`bufio.Scanner` with an enlarged buffer, since files are large but lines are short), trims whitespace, SKIPS blank lines and any line that isn't a base-10 int64 (tolerant — a stray header or comment must not fail the whole parse), returns the parsed ids. Returns the scanner's error only for a genuine read error, never for an unparseable line.
   - `func FetchIDs(ctx context.Context, client *http.Client, url string) ([]int64, error)` — GET `url` with the context; on non-2xx returns an error; on success streams the body through `ParseIDs`. Caller supplies the `*http.Client` (so the timeout is injectable/testable).
 
-- [ ] **Step 1: Write the failing test** — `ParseIDs(strings.NewReader("1\n2\n\n  3 \nnotanid\n4\n"))` ⇒ `[1,2,3,4]`, no error. For `FetchIDs`, stand up an `httptest.NewServer` returning `"5\n6\n7\n"` ⇒ `[5,6,7]`; a server returning 500 ⇒ error; a canceled context ⇒ error.
+- [x] **Step 1: Write the failing test** — `ParseIDs(strings.NewReader("1\n2\n\n  3 \nnotanid\n4\n"))` ⇒ `[1,2,3,4]`, no error. For `FetchIDs`, stand up an `httptest.NewServer` returning `"5\n6\n7\n"` ⇒ `[5,6,7]`; a server returning 500 ⇒ error; a canceled context ⇒ error.
 
 ```go
 func TestParseIDsTolerant(t *testing.T) {
@@ -143,13 +145,13 @@ func TestParseIDsTolerant(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test, expect failure.**
+- [x] **Step 2: Run test, expect failure.**
 
-- [ ] **Step 3: Implement** `ParseIDs` (bufio.Scanner, `scanner.Buffer(make([]byte,0,64*1024), 1024*1024)`, `strings.TrimSpace`, `strconv.ParseInt(line,10,64)` skipping errors) and `FetchIDs` (http.NewRequestWithContext, GET, status check, `defer resp.Body.Close()`, `ParseIDs(resp.Body)`).
+- [x] **Step 3: Implement** `ParseIDs` (bufio.Scanner, `scanner.Buffer(make([]byte,0,64*1024), 1024*1024)`, `strings.TrimSpace`, `strconv.ParseInt(line,10,64)` skipping errors) and `FetchIDs` (http.NewRequestWithContext, GET, status check, `defer resp.Body.Close()`, `ParseIDs(resp.Body)`).
 
-- [ ] **Step 4: Run tests, expect pass.**
+- [x] **Step 4: Run tests, expect pass.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/blocklist/fetch.go internal/blocklist/fetch_test.go
 git commit -m "Add blocklist id fetcher"
@@ -174,15 +176,15 @@ git commit -m "Add blocklist id fetcher"
   - `func (b *Blocklist) Run(ctx context.Context)` — the background loop: do an initial `RefreshFull(ctx)` (bootstrap; log on error but keep running — fail-open), then two tickers (`FullInterval`, `DeltaInterval`); on each full tick call `RefreshFull`, on each delta tick call `RefreshDelta`; return when `ctx.Done()`. Never panics; a refresh error is logged, not fatal.
   - To let `RefreshDelta` read the current snapshot's ids for the merge, add `func (s *Set) IDs() []int64` (returns the internal slice; document it as read-only — callers must not mutate) OR have `Blocklist` expose the current `*Set`. Keep it simple: add `func (b *Blocklist) current() *Set { return b.snap.Load() }` (unexported) and `Set.IDs()`.
 
-- [ ] **Step 1: Write the failing test** — inject a fake `fetch` by constructing a `Blocklist` with the unexported fields set in-package (the test is in package `blocklist`). Script the fake to return per-URL id lists. `RefreshFull` with both sources returning ids ⇒ snapshot is their union; one source erroring ⇒ snapshot is the other's ids (partial, no error since one succeeded); BOTH erroring ⇒ returns error AND the prior snapshot is unchanged (fail-open — set a prior snapshot via Swap, then assert it survives). `RefreshDelta` returning new ids ⇒ they're added to the existing snapshot (union), existing ids retained; delta fetch error ⇒ snapshot unchanged, error returned.
+- [x] **Step 1: Write the failing test** — inject a fake `fetch` by constructing a `Blocklist` with the unexported fields set in-package (the test is in package `blocklist`). Script the fake to return per-URL id lists. `RefreshFull` with both sources returning ids ⇒ snapshot is their union; one source erroring ⇒ snapshot is the other's ids (partial, no error since one succeeded); BOTH erroring ⇒ returns error AND the prior snapshot is unchanged (fail-open — set a prior snapshot via Swap, then assert it survives). `RefreshDelta` returning new ids ⇒ they're added to the existing snapshot (union), existing ids retained; delta fetch error ⇒ snapshot unchanged, error returned.
 
-- [ ] **Step 2: Run test, expect failure.**
+- [x] **Step 2: Run test, expect failure.**
 
-- [ ] **Step 3: Implement** `Config`, `NewWithConfig`, `RefreshFull`/`RefreshDelta` (call `b.fetch` per URL, combine results, `errors.Join` the failures), `Run` (bootstrap + tickers + ctx). `Set.IDs()`.
+- [x] **Step 3: Implement** `Config`, `NewWithConfig`, `RefreshFull`/`RefreshDelta` (call `b.fetch` per URL, combine results, `errors.Join` the failures), `Run` (bootstrap + tickers + ctx). `Set.IDs()`.
 
-- [ ] **Step 4: Run tests incl. `-race`, expect pass.**
+- [x] **Step 4: Run tests incl. `-race`, expect pass.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/blocklist
 git commit -m "Add blocklist syncer"
@@ -208,15 +210,15 @@ git commit -m "Add blocklist syncer"
   - `HTTPTimeout Duration` (yaml `http_timeout`) — default 30s.
   Each string/duration defaults only when its zero value (empty / 0); `Enabled` defaults only when nil (explicit `false` honored). Document all keys in `config.example.yaml` under a new `blocklist:` section.
 
-- [ ] **Step 1: Write the failing test** — parse YAML with no `blocklist:` block ⇒ all defaults applied (Enabled true, the three real URLs, 6h/1h/30s). Parse YAML with `blocklist:\n  enabled: false\n  full_refresh: 12h` ⇒ enabled false honored, full_refresh 12h honored, other fields still defaulted.
+- [x] **Step 1: Write the failing test** — parse YAML with no `blocklist:` block ⇒ all defaults applied (Enabled true, the three real URLs, 6h/1h/30s). Parse YAML with `blocklist:\n  enabled: false\n  full_refresh: 12h` ⇒ enabled false honored, full_refresh 12h honored, other fields still defaulted.
 
-- [ ] **Step 2: Run test, expect failure.**
+- [x] **Step 2: Run test, expect failure.**
 
-- [ ] **Step 3: Implement** the struct + `applyBlocklistDefaults` + example.yaml.
+- [x] **Step 3: Implement** the struct + `applyBlocklistDefaults` + example.yaml.
 
-- [ ] **Step 4: Run tests, expect pass.**
+- [x] **Step 4: Run tests, expect pass.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/config config.example.yaml
 git commit -m "Add blocklist config"
@@ -242,15 +244,15 @@ git commit -m "Add blocklist config"
     ```
     Note `trusted` is computed once near the top; ensure the blocklist stage sees it (move the `trusted := IsTrusted(...)` line above this stage if needed, but keep it AFTER the admin-immunity gate). A nil `Blocklist` or `!BlocklistEnabled` skips the stage (existing tests unaffected — zero-value false).
 
-- [ ] **Step 1: Write the failing test** — a `Cascade` with a fake `BlocklistSource` (`type fakeBlocklist struct{ ids map[int64]bool }` with `Listed(id) bool`), `BlocklistEnabled:true`, untrusted sender whose UserID is listed ⇒ `Decide` returns actionable with `Reason=="blocklist"`. A TRUSTED sender with the same listed id ⇒ not actionable (blocklist skipped for trusted). An admin (in the AdminSource) who is also listed ⇒ not actionable (admin-immunity gate wins, runs first). A non-listed untrusted sender ⇒ falls through (not actionable on this stage).
+- [x] **Step 1: Write the failing test** — a `Cascade` with a fake `BlocklistSource` (`type fakeBlocklist struct{ ids map[int64]bool }` with `Listed(id) bool`), `BlocklistEnabled:true`, untrusted sender whose UserID is listed ⇒ `Decide` returns actionable with `Reason=="blocklist"`. A TRUSTED sender with the same listed id ⇒ not actionable (blocklist skipped for trusted). An admin (in the AdminSource) who is also listed ⇒ not actionable (admin-immunity gate wins, runs first). A non-listed untrusted sender ⇒ falls through (not actionable on this stage).
 
-- [ ] **Step 2: Run test, expect failure.**
+- [x] **Step 2: Run test, expect failure.**
 
-- [ ] **Step 3: Implement** the two fields + the stage in the correct position; adjust the `trusted` computation placement so both the admin gate (which does not need `trusted`) and this stage are correct.
+- [x] **Step 3: Implement** the two fields + the stage in the correct position; adjust the `trusted` computation placement so both the admin gate (which does not need `trusted`) and this stage are correct.
 
-- [ ] **Step 4: Run tests + vet, expect pass** — all existing cascade tests still green.
+- [x] **Step 4: Run tests + vet, expect pass** — all existing cascade tests still green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/detect/cascade.go internal/detect/cascade_test.go
 git commit -m "Add blocklist stage to cascade"
@@ -270,15 +272,15 @@ git commit -m "Add blocklist stage to cascade"
   - Add the `internal/blocklist` import. Use the `Duration.Duration()` accessor consistent with how `Detection.Behavior.*Window.Duration()` is already used.
   - Log the initial snapshot size after a moment is NOT required; the syncer logs its own refresh outcomes (add a `log.Printf` inside RefreshFull/Run on success/failure in Task 4 if not already — keep it minimal).
 
-- [ ] **Step 1:** (No failing unit test — this is wiring.) Confirm the cascade literal and the new goroutine compile against the real types.
+- [x] **Step 1:** (No failing unit test — this is wiring.) Confirm the cascade literal and the new goroutine compile against the real types.
 
-- [ ] **Step 2: Build to verify the wiring** — `./scripts/dev.sh build ./...` MUST pass.
+- [x] **Step 2: Build to verify the wiring** — `./scripts/dev.sh build ./...` MUST pass.
 
-- [ ] **Step 3: Implement** the construction, goroutine, cascade fields, import.
+- [x] **Step 3: Implement** the construction, goroutine, cascade fields, import.
 
-- [ ] **Step 4: Run full suite + vet + build** — `./scripts/dev.sh test ./...`, `vet ./...`, `build ./...` all green; `-race` on `./internal/blocklist/...`.
+- [x] **Step 4: Run full suite + vet + build** — `./scripts/dev.sh test ./...`, `vet ./...`, `build ./...` all green; `-race` on `./internal/blocklist/...`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add cmd/tg-antispam/main.go
 git commit -m "Wire blocklist into main"

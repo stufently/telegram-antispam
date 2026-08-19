@@ -1,6 +1,8 @@
 # telegram-antispam M2 — Outbound Queue, Evidence, Admin Chat — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status: ✅ Implemented, reviewed, and merged to `main`.** Every step below is complete; the whole-branch review passed. Checkboxes are ticked for historical record.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Turn the M1 dry-run spine into a bot that actually acts: a real go-telegram/bot-backed Telegram port behind a rate-limited priority outbound queue, album-aware evidence copied to the admin chat before any action, and a four-button admin flow with per-callback RBAC — with the incident machine finally invoked from the update handler.
 
@@ -46,7 +48,7 @@
 - Consumes: existing `Port`, `Member`, `Perms`.
 - Produces: `Port` gains `BanSenderChat(ctx, chat, senderChat int64) error`, `GetChatAdministrators(ctx, chat int64) ([]Member, error)`, `AnswerCallback(ctx, callbackID, text string) error`, `EditAdminMarkup(ctx, adminChat int64, messageID int, buttons [][]Button) error`. New type `Button{Text, Data string}`. The `fake` implements all of them and records calls; add knobs `Admins []Member` (returned by `GetChatAdministrators`) and `BanSenderErr error`.
 
-- [ ] **Step 1: Write the failing test** — extend `fake_test.go`:
+- [x] **Step 1: Write the failing test** — extend `fake_test.go`:
 ```go
 func TestFakeM2Methods(t *testing.T) {
 	f := New()
@@ -75,9 +77,9 @@ func TestFakeM2Methods(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test, expect failure** — `make test` → undefined methods/type.
+- [x] **Step 2: Run test, expect failure** — `make test` → undefined methods/type.
 
-- [ ] **Step 3: Extend the port** — append to `internal/telegram/port.go`:
+- [x] **Step 3: Extend the port** — append to `internal/telegram/port.go`:
 ```go
 // Button is one inline keyboard button (text + opaque callback data ≤64 bytes).
 type Button struct {
@@ -93,7 +95,7 @@ and add these methods to the `Port` interface:
 	EditAdminMarkup(ctx context.Context, adminChat int64, messageID int, buttons [][]Button) error
 ```
 
-- [ ] **Step 4: Extend the fake** — append to `internal/telegram/fake/fake.go`:
+- [x] **Step 4: Extend the fake** — append to `internal/telegram/fake/fake.go`:
 ```go
 func (f *Fake) BanSenderChat(_ context.Context, _, _ int64) error {
 	f.log("BanSenderChat")
@@ -121,9 +123,9 @@ and add the knob fields to the `Fake` struct:
 	BanSenderErr error
 ```
 
-- [ ] **Step 5: Run test, expect pass** — `make test`.
+- [x] **Step 5: Run test, expect pass** — `make test`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 ```bash
 git add internal/telegram
 git commit -m "Extend telegram port for M2 methods"
@@ -144,7 +146,7 @@ git commit -m "Extend telegram port for M2 methods"
   - `type Job struct { Priority Priority; Run func(ctx context.Context) error }`.
   - `type Queue struct { ... }`, `New() *Queue`, `func (q *Queue) Push(j Job)`, `func (q *Queue) pop() (Job, bool)` (lowest Priority number first; FIFO within a priority), `func (q *Queue) Len() int`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```go
 package queue
 
@@ -179,9 +181,9 @@ func TestPopOrdersByPriorityThenFIFO(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test, expect failure** — undefined.
+- [x] **Step 2: Run test, expect failure** — undefined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 ```go
 // Package queue is the outbound work queue: priority-ordered, rate-limited,
 // retrying. All Telegram side effects flow through it (spec §11).
@@ -261,9 +263,9 @@ func (q *Queue) Len() int {
 }
 ```
 
-- [ ] **Step 4: Run test, expect pass** — `make test`.
+- [x] **Step 4: Run test, expect pass** — `make test`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/queue
 git commit -m "Add priority outbound job queue"
@@ -286,7 +288,7 @@ git commit -m "Add priority outbound job queue"
   - `func (d *Dispatcher) Run(ctx context.Context)` — pops jobs, waits on the global + per-chat limiter, runs; on `RetryAfter` re-enqueues the same job after sleeping `Seconds` (respecting ctx); on other errors logs and drops. Returns when ctx is cancelled and the queue drains, or immediately on cancel.
   - `func (d *Dispatcher) clock` seam: an internal `sleep func(context.Context, time.Duration)` field defaulting to a real sleep, overridable in tests.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 ```go
 package queue
 
@@ -338,11 +340,11 @@ func TestDispatcherRunsAndRetriesOn429(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test, expect failure** — add dependency + undefined.
+- [x] **Step 2: Run test, expect failure** — add dependency + undefined.
 
 Run: `./scripts/dev.sh get golang.org/x/time@v0.9.0 && make tidy`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 ```go
 package queue
 
@@ -457,7 +459,7 @@ func asRetry(err error, ra *RetryAfter) bool {
 > import moves into dispatcher.go, or expose a `q.pushLocked(j)` helper in queue.go.
 > Keep the public `Queue.Push` for Task 2's test.
 
-- [ ] **Step 3b: Make Submit atomic** — in `internal/queue/queue.go` add:
+- [x] **Step 3b: Make Submit atomic** — in `internal/queue/queue.go` add:
 ```go
 // pushMapped stamps seq, records chat for seq, and pushes — all under the lock.
 func (q *Queue) pushMapped(j Job, chat int64, jobs map[uint64]int64) {
@@ -488,12 +490,12 @@ func (d *Dispatcher) Submit(chat int64, j Job) {
 > lock `jmu` around the `jobs[seq]=chat` write (do the seq stamping via a `q` helper that
 > returns the seq); in Run lock `jmu` around the read+delete. Ensure `go test -race` is clean.
 
-- [ ] **Step 4: Run test with race, expect pass**
+- [x] **Step 4: Run test with race, expect pass**
 
 Run: `./scripts/dev.sh test -race ./internal/queue/`
 Expected: PASS, no race warnings. (If a race appears on `d.jobs`, tighten the `jmu` locking as noted.)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/queue go.mod go.sum
 git commit -m "Add rate-limited dispatcher with retry"
@@ -512,7 +514,7 @@ git commit -m "Add rate-limited dispatcher with retry"
 - Produces: `type LivePort struct { ... }`, `func NewLivePort(b *bot.Bot, disp *queue.Dispatcher, prio func(method string) queue.Priority) *LivePort` implementing `Port`. Each method builds the library params and submits a `queue.Job` whose `Run` calls the library and maps a Telegram 429 to `queue.RetryAfter`. Synchronous-result methods (`CopyMessages` returns ids; `GetChatAdministrators` returns members) run inline through the dispatcher via a result channel. `DeleteMessages` splits ids into batches of ≤100.
 - Also produces `func mapRetry(err error) error` — detects the library's 429 error and returns `queue.RetryAfter{Seconds: n}`, else the original error.
 
-- [ ] **Step 1: Write the failing test** (unit-tests the pure helpers, not the network):
+- [x] **Step 1: Write the failing test** (unit-tests the pure helpers, not the network):
 ```go
 package telegram
 
@@ -532,9 +534,9 @@ func TestBatchIDs(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test, expect failure** — undefined `batchIDs`.
+- [x] **Step 2: Run test, expect failure** — undefined `batchIDs`.
 
-- [ ] **Step 3: Implement `livept.go`**. Provide `batchIDs`, `mapRetry`, and `LivePort` implementing every `Port` method by submitting jobs. For methods that return values, use a buffered result channel the job closes over. Consult `./scripts/dev.sh doc github.com/go-telegram/bot` for exact method/param names (`CopyMessages`, `DeleteMessages`, `BanChatMember`, `RestrictChatMember`, `SendMessage`, `GetChatAdministrators`, `AnswerCallbackQuery`, `EditMessageReplyMarkup`, `BanChatSenderChat`). Minimum content for the helper under test:
+- [x] **Step 3: Implement `livept.go`**. Provide `batchIDs`, `mapRetry`, and `LivePort` implementing every `Port` method by submitting jobs. For methods that return values, use a buffered result channel the job closes over. Consult `./scripts/dev.sh doc github.com/go-telegram/bot` for exact method/param names (`CopyMessages`, `DeleteMessages`, `BanChatMember`, `RestrictChatMember`, `SendMessage`, `GetChatAdministrators`, `AnswerCallbackQuery`, `EditMessageReplyMarkup`, `BanChatSenderChat`). Minimum content for the helper under test:
 ```go
 package telegram
 
@@ -572,12 +574,12 @@ Then implement `LivePort` and `mapRetry` (full method bodies calling the library
 > ```
 > On retry the job re-runs `callCopyMessages`; only a terminal outcome writes `ch`.
 
-- [ ] **Step 4: Run test + build, expect pass**
+- [x] **Step 4: Run test + build, expect pass**
 
 Run: `make test && make build`
 Expected: `batchIDs` test passes; `LivePort` compiles and satisfies `Port` (add `var _ Port = (*LivePort)(nil)` in livept.go).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/telegram
 git commit -m "Add library-backed live telegram port"
@@ -600,7 +602,7 @@ git commit -m "Add library-backed live telegram port"
   - `func (a *AlbumBuffer) clock` seam: `now func() time.Time` and `afterFunc func(time.Duration, func()) *time.Timer` fields, overridable in tests (default to `time.Now`/`time.AfterFunc`).
   - `func (a *AlbumBuffer) Stop()` — stops pending timers (shutdown).
 
-- [ ] **Step 1: Write the failing test** (fake clock, deterministic):
+- [x] **Step 1: Write the failing test** (fake clock, deterministic):
 ```go
 package telegram
 
@@ -646,9 +648,9 @@ func TestAlbumBufferGroupsParts(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test, expect failure** — undefined.
+- [x] **Step 2: Run test, expect failure** — undefined.
 
-- [ ] **Step 3: Implement `album.go`**:
+- [x] **Step 3: Implement `album.go`**:
 ```go
 package telegram
 
@@ -725,11 +727,11 @@ func (a *AlbumBuffer) Stop() {
 }
 ```
 
-- [ ] **Step 4: Run test with race, expect pass**
+- [x] **Step 4: Run test with race, expect pass**
 
 Run: `./scripts/dev.sh test -race ./internal/telegram/`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/telegram
 git commit -m "Add album buffer for media groups"
@@ -750,7 +752,7 @@ git commit -m "Add album buffer for media groups"
   2. `AdminMessage.CopyMessageIDs` is set to the admin-chat copy ids (`adminIDs` returned by `CopyMessages`), not the source ids.
   3. On the hard-deny evidence-failure path (confidence ≥ 0.9, copy failed) the machine still sends an admin summary (text-only fallback via `SendAdmin` with empty `CopyMessageIDs`) so admins are notified of the action.
 
-- [ ] **Step 1: Write the failing tests** — add to `machine_test.go`:
+- [x] **Step 1: Write the failing tests** — add to `machine_test.go`:
 ```go
 func TestReprocessGuardSkipsDuplicate(t *testing.T) {
 	f := fake.New()
@@ -796,16 +798,16 @@ func (r *stubRepo) InsertPending(int64, int, int64, bool) (int64, bool, error) {
 ```
 and set `fresh: true` in the existing tests' `stubRepo` literals so they still exercise the full path.
 
-- [ ] **Step 2: Run tests, expect the two new ones to fail.**
+- [x] **Step 2: Run tests, expect the two new ones to fail.**
 
-- [ ] **Step 3: Implement** — in `machine.go`:
+- [x] **Step 3: Implement** — in `machine.go`:
   - Capture `fresh` from `InsertPending`; if `!fresh`, `return nil` right after insert.
   - In the success branch, pass `CopyMessageIDs: adminIDs` to `SendAdmin`.
   - In the hard-deny `copyErr` branch, after setting `StateEvidenceFailed`, call `SendAdmin` with `CopyMessageIDs: nil` and a `Text` noting evidence copy failed, before proceeding to `applyAction`.
 
-- [ ] **Step 4: Run tests, expect pass** (all incident tests green).
+- [x] **Step 4: Run tests, expect pass** (all incident tests green).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/incident
 git commit -m "Harden incident machine evidence handling"
@@ -829,7 +831,7 @@ git commit -m "Harden incident machine evidence handling"
   - `func (h *Handler) Authorized(ctx, sourceChatID, presserID int64) (bool, error)` — true if presser is a global operator OR an admin of the source chat (via `port.GetChatAdministrators`).
   - `func (h *Handler) Handle(ctx, cb Callback) error` where `Callback{ID string; Data string; PresserID int64}` — parse, look up the incident's source chat from the store, RBAC-check, act (map each Action to unban/unrestrict + sample, etc. — for M2 the store-side sample writes are stubs writing to `samples` with origin "user"), then `AnswerCallback`.
 
-- [ ] **Step 1: Write the failing test** — RBAC is the load-bearing bit:
+- [x] **Step 1: Write the failing test** — RBAC is the load-bearing bit:
 ```go
 package admin
 
@@ -870,13 +872,13 @@ func TestParseCallbackRoundTrip(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test, expect failure** — undefined.
+- [x] **Step 2: Run test, expect failure** — undefined.
 
-- [ ] **Step 3: Implement `callbacks.go`** — `Buttons`, `ParseCallback`, `Handler`, `Authorized` (operator check first, then `GetChatAdministrators` membership), and `Handle` (RBAC then act then AnswerCallback; the per-action store effects can be minimal writes for M2, but `Authorized` must gate every branch). Keep each callback's `Data` under 64 bytes.
+- [x] **Step 3: Implement `callbacks.go`** — `Buttons`, `ParseCallback`, `Handler`, `Authorized` (operator check first, then `GetChatAdministrators` membership), and `Handle` (RBAC then act then AnswerCallback; the per-action store effects can be minimal writes for M2, but `Authorized` must gate every branch). Keep each callback's `Data` under 64 bytes.
 
-- [ ] **Step 4: Run test, expect pass** — `make test`.
+- [x] **Step 4: Run test, expect pass** — `make test`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/admin
 git commit -m "Add admin callback handler with RBAC"
@@ -898,7 +900,7 @@ git commit -m "Add admin callback handler with RBAC"
   - `OnEditedMessage(ctx, updateID int64, m domain.Message)` — same pipeline for edits (routes `edited_message`, an M1-deferred item).
   - `main()` constructs the `LivePort` (dispatcher + limiters), the `AlbumBuffer`, the real `incident.Machine` bound to the LivePort, the admin callback handler, and registers a callback handler on the bot; starts `dispatcher.Run` in a goroutine tied to ctx. The default update handler routes `update.Message`, `update.EditedMessage`, and `update.CallbackQuery`.
 
-- [ ] **Step 1: Write the failing test** — inject a decide hook and assert machine invocation with evidence-first ordering:
+- [x] **Step 1: Write the failing test** — inject a decide hook and assert machine invocation with evidence-first ordering:
 ```go
 package telegram
 
@@ -951,15 +953,15 @@ func TestOnMessageDrivesMachineWhenVerdictActionable(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test, expect failure** — `decide` field/pipeline not present.
+- [x] **Step 2: Run test, expect failure** — `decide` field/pipeline not present.
 
-- [ ] **Step 3: Implement** — add `decide` hook (default returns `(Verdict{}, false)`), the album buffer wiring, incident construction, `OnMessage`/`OnEditedMessage`, and the `main()` construction of LivePort/dispatcher/machine/admin handler + callback routing. Non-actionable/no-verdict path keeps M1 behavior (register + log). When `decide` returns actionable, build `domain.Incident{ChatID, MessageIDs:[messageID or album ids], Sender, Verdict, DryRun: chat dry-run}` and `machine.Handle` inside the sequencer job.
+- [x] **Step 3: Implement** — add `decide` hook (default returns `(Verdict{}, false)`), the album buffer wiring, incident construction, `OnMessage`/`OnEditedMessage`, and the `main()` construction of LivePort/dispatcher/machine/admin handler + callback routing. Non-actionable/no-verdict path keeps M1 behavior (register + log). When `decide` returns actionable, build `domain.Incident{ChatID, MessageIDs:[messageID or album ids], Sender, Verdict, DryRun: chat dry-run}` and `machine.Handle` inside the sequencer job.
 
-- [ ] **Step 4: Run test + build + vet, expect pass**
+- [x] **Step 4: Run test + build + vet, expect pass**
 
 Run: `make test && make build && make vet`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/telegram cmd
 git commit -m "Wire machine album buffer and dispatcher"

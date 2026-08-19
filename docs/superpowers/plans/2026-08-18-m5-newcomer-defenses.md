@@ -1,6 +1,8 @@
 # telegram-antispam M5 — Newcomer & Impersonation Defenses — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status: ✅ Implemented, reviewed, and merged to `main`.** Every step below is complete; the whole-branch review passed. Checkboxes are ticked for historical record.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add the three library-grounded v1 platform features from spec §5.5 and §12 — fake-admin (impersonation) detection, spammer reaction cleanup, and ephemeral (per-user-visible) newcomer notices — so the bot catches the impersonation attack content-only bots miss, strips reactions left by known spammers, and can tell a sanctioned newcomer why without littering the chat.
 
@@ -48,7 +50,7 @@ Spec build-order 8–9 bundles LOLS/CAS **blocklists** with these features. Bloc
 **Interfaces:**
 - Produces: `func LevenshteinWithin(a, b string, max int) bool` — reports whether the edit distance between `a` and `b` is ≤ `max`, comparing over runes (not bytes) so Unicode names compare correctly. Early-exits: if `abs(len(a)-len(b)) > max` returns false immediately; uses the two-row DP but bails to false as soon as every cell in a row exceeds `max`. Pure.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package detect
@@ -80,13 +82,13 @@ func TestLevenshteinWithin(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test, expect failure** — `./scripts/dev.sh test ./internal/detect/... -run TestLevenshteinWithin` → undefined: LevenshteinWithin.
+- [x] **Step 2: Run test, expect failure** — `./scripts/dev.sh test ./internal/detect/... -run TestLevenshteinWithin` → undefined: LevenshteinWithin.
 
-- [ ] **Step 3: Implement** rune-based two-row DP with the length-difference early-exit and a per-row "min exceeds max ⇒ return false" bail. Convert both strings to `[]rune` once.
+- [x] **Step 3: Implement** rune-based two-row DP with the length-difference early-exit and a per-row "min exceeds max ⇒ return false" bail. Convert both strings to `[]rune` once.
 
-- [ ] **Step 4: Run test, expect pass.**
+- [x] **Step 4: Run test, expect pass.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/detect/levenshtein.go internal/detect/levenshtein_test.go
 git commit -m "Add bounded Levenshtein distance"
@@ -110,7 +112,7 @@ git commit -m "Add bounded Levenshtein distance"
 
   Impersonation vs. self: the detector is only ever called for a sender that is NOT an admin of this chat (spec §4 immunity — caller guarantees). Therefore ANY near-match to an admin identity is suspicious, including an exact copy. Do not try to exclude "the sender's own name" — a non-admin whose name exactly equals an admin's name is the textbook impersonation case.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package detect
@@ -155,13 +157,13 @@ func TestCheckFakeAdmin(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test, expect failure.**
+- [x] **Step 2: Run test, expect failure.**
 
-- [ ] **Step 3: Implement** `AdminIdentity`, `AdminSource`, `FakeAdminCfg`, and `CheckFakeAdmin` per the interface. Casefold with `strings.ToLower`; guard empty fields; check username/display against each admin field via `LevenshteinWithin`; check `SenderTag` against `SuspiciousTags` by casefold equality.
+- [x] **Step 3: Implement** `AdminIdentity`, `AdminSource`, `FakeAdminCfg`, and `CheckFakeAdmin` per the interface. Casefold with `strings.ToLower`; guard empty fields; check username/display against each admin field via `LevenshteinWithin`; check `SenderTag` against `SuspiciousTags` by casefold equality.
 
-- [ ] **Step 4: Run test, expect pass.**
+- [x] **Step 4: Run test, expect pass.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/detect/fakeadmin.go internal/detect/fakeadmin_test.go
 git commit -m "Add fake-admin pure detector"
@@ -179,7 +181,7 @@ git commit -m "Add fake-admin pure detector"
 - Consumes: `CheckFakeAdmin`, `AdminSource`, `FakeAdminCfg` (Task 2).
 - Produces: `Cascade` gains `Admins AdminSource`, `FakeAdmin FakeAdminCfg`. In `Decide`, add a stage that runs for NON-trusted senders, AFTER `Rules.Check` and BEFORE `CheckBehavior` (fake-admin is a hard, cheap identity signal — it should fire ahead of behavioral/Bayes): if `c.FakeAdmin.Enabled && !trusted`, call `admins := nil; if c.Admins != nil { admins = c.Admins.AdminIdentities(m.ChatID) }`, then `if sig, hit := CheckFakeAdmin(m, admins, c.FakeAdmin); hit { return c.actionable(sig), true }`. Trusted senders skip it (they have a track record). A nil `Admins` or empty list still lets the suspicious-tag check fire inside `CheckFakeAdmin`.
 
-- [ ] **Step 1: Write the failing test** — extend `cascade_test.go`: a `Cascade` with untrusted sender, empty Rules, a fake `AdminSource` returning one admin `{Username:"owner"}`, `FakeAdmin:{Enabled:true,MaxDistance:1}`, and a message from sender `{Username:"0wner"}` ⇒ `Decide` returns actionable with `Reason=="fake_admin"`. A TRUSTED sender with the same message ⇒ not actionable (skipped).
+- [x] **Step 1: Write the failing test** — extend `cascade_test.go`: a `Cascade` with untrusted sender, empty Rules, a fake `AdminSource` returning one admin `{Username:"owner"}`, `FakeAdmin:{Enabled:true,MaxDistance:1}`, and a message from sender `{Username:"0wner"}` ⇒ `Decide` returns actionable with `Reason=="fake_admin"`. A TRUSTED sender with the same message ⇒ not actionable (skipped).
 
 ```go
 type fakeAdminSrc struct{ a []AdminIdentity }
@@ -207,13 +209,13 @@ func TestCascadeDecide_FakeAdminUntrustedOnly(t *testing.T) {
 ```
 (Match the exact names/shape of the existing `fakeTrust`/`fakeHist` doubles already in `cascade_test.go`; adjust if they differ.)
 
-- [ ] **Step 2: Run test, expect failure.**
+- [x] **Step 2: Run test, expect failure.**
 
-- [ ] **Step 3: Implement** the stage in `Decide` in the specified order and add the two struct fields.
+- [x] **Step 3: Implement** the stage in `Decide` in the specified order and add the two struct fields.
 
-- [ ] **Step 4: Run tests + vet, expect pass** — confirm existing cascade tests (Bayes, rules, behavior) still pass; the new stage must not change their outcomes (they use `FakeAdmin.Enabled==false` zero value).
+- [x] **Step 4: Run tests + vet, expect pass** — confirm existing cascade tests (Bayes, rules, behavior) still pass; the new stage must not change their outcomes (they use `FakeAdmin.Enabled==false` zero value).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/detect/cascade.go internal/detect/cascade_test.go
 git commit -m "Run fake-admin stage in cascade"
@@ -243,15 +245,15 @@ git commit -m "Run fake-admin stage in cascade"
     ```
   - `func (db *DB) UpsertIdentity(chatID, userID int64, username, displayName string) (prevUsername, prevDisplay string, changed bool, err error)` — returns the PREVIOUS stored values (empty strings if the row is new) and `changed=true` when the row existed and either field differs from the incoming values; then upserts to the new values with `updated_at` bumped. One `db.Write` transaction: SELECT existing, then INSERT…ON CONFLICT DO UPDATE. A brand-new row returns `changed=false` (nothing to compare against).
 
-- [ ] **Step 1: Write the failing test** — open a temp DB, `Migrate`; first `UpsertIdentity(1,2,"a","A")` ⇒ `changed=false`, prev empty; second `UpsertIdentity(1,2,"a","A")` (same) ⇒ `changed=false`; third `UpsertIdentity(1,2,"owner","Owner")` ⇒ `changed=true`, `prevUsername=="a"`, `prevDisplay=="A"`.
+- [x] **Step 1: Write the failing test** — open a temp DB, `Migrate`; first `UpsertIdentity(1,2,"a","A")` ⇒ `changed=false`, prev empty; second `UpsertIdentity(1,2,"a","A")` (same) ⇒ `changed=false`; third `UpsertIdentity(1,2,"owner","Owner")` ⇒ `changed=true`, `prevUsername=="a"`, `prevDisplay=="A"`.
 
-- [ ] **Step 2: Run test, expect failure.**
+- [x] **Step 2: Run test, expect failure.**
 
-- [ ] **Step 3: Implement** the table + `UpsertIdentity` (SELECT-then-upsert in one `db.Write`).
+- [x] **Step 3: Implement** the table + `UpsertIdentity` (SELECT-then-upsert in one `db.Write`).
 
-- [ ] **Step 4: Run tests (incl. `-race`), expect pass.**
+- [x] **Step 4: Run tests (incl. `-race`), expect pass.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/store/migrate.go internal/store/identity.go internal/store/identity_test.go
 git commit -m "Add user identity store"
@@ -273,15 +275,15 @@ git commit -m "Add user identity store"
   - `type MemberWatcher struct { Store IdentityStore; Admins detect.AdminSource; AdminChatID int64; Port telegram.Port; MaxDistance int; Enabled bool }`.
   - `func (w *MemberWatcher) Observe(ctx context.Context, e MemberEvent) error` — records the identity via `UpsertIdentity`; if `w.Enabled`, the row CHANGED, and the NEW name is within `w.MaxDistance` of some admin identity (and the user is not themselves an admin — check by id against the admin list if ids are available; otherwise name-match alone), send a best-effort admin-chat notice via `w.Port.SendAdmin` (`AdminMessage{Text: "possible admin impersonation: user <id> renamed to <name> (matches admin <adminname>)", SourceChatID: e.ChatID}`, no buttons, no copied evidence). A `SendAdmin` error is logged by the caller, not returned as fatal — `Observe` returns the store error if any, else nil.
 
-- [ ] **Step 1: Write the failing test** — a fake `IdentityStore` scripted to return `changed=true` with a new name matching a fake `AdminSource`'s admin; a fake `telegram.Port` (reuse `internal/telegram/fake`) recording `SendAdmin`. `Observe` with an admin-like rename ⇒ exactly one `SendAdmin` call. A benign rename (no admin match) ⇒ zero `SendAdmin` calls. `Enabled:false` ⇒ zero calls even on a match.
+- [x] **Step 1: Write the failing test** — a fake `IdentityStore` scripted to return `changed=true` with a new name matching a fake `AdminSource`'s admin; a fake `telegram.Port` (reuse `internal/telegram/fake`) recording `SendAdmin`. `Observe` with an admin-like rename ⇒ exactly one `SendAdmin` call. A benign rename (no admin match) ⇒ zero `SendAdmin` calls. `Enabled:false` ⇒ zero calls even on a match.
 
-- [ ] **Step 2: Run test, expect failure.**
+- [x] **Step 2: Run test, expect failure.**
 
-- [ ] **Step 3: Implement** `MemberWatcher.Observe` per interface. Casefold before Levenshtein; guard empty names.
+- [x] **Step 3: Implement** `MemberWatcher.Observe` per interface. Casefold before Levenshtein; guard empty names.
 
-- [ ] **Step 4: Run tests, expect pass.**
+- [x] **Step 4: Run tests, expect pass.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/watch/member.go internal/watch/member_test.go
 git commit -m "Add member impersonation watcher"
@@ -300,15 +302,15 @@ git commit -m "Add member impersonation watcher"
 **Interfaces:**
 - Produces: `Port` gains `DeleteMessageReaction(ctx context.Context, chat int64, messageID int, userID int64) error`. `LivePort` implements it via `submitSyncErr(ctx, p.disp, chat, p.prio("DeleteMessageReaction"), func(ctx) error { _, err := p.b.DeleteMessageReaction(ctx, &bot.DeleteMessageReactionParams{ChatID: chat, MessageID: messageID, UserID: userID}); return mapRetry(err) })` (see library facts §1 for the exact param struct). The `fake` port records `(chat,messageID,userID)` tuples for assertions.
 
-- [ ] **Step 1: Write the failing test** — extend the fake-port test (or add one) asserting the fake records a `DeleteMessageReaction` call; and add `var _ telegram.Port = (*fake.Port)(nil)` / `(*LivePort)(nil)` still compiles with the new method.
+- [x] **Step 1: Write the failing test** — extend the fake-port test (or add one) asserting the fake records a `DeleteMessageReaction` call; and add `var _ telegram.Port = (*fake.Port)(nil)` / `(*LivePort)(nil)` still compiles with the new method.
 
-- [ ] **Step 2: Run test, expect failure** (interface not satisfied / method undefined).
+- [x] **Step 2: Run test, expect failure** (interface not satisfied / method undefined).
 
-- [ ] **Step 3: Implement** the interface method, the `LivePort` wrapper, and the `fake` recorder. Add `"DeleteMessageReaction"` to whatever priority map `p.prio` reads (mirror an existing low-priority entry).
+- [x] **Step 3: Implement** the interface method, the `LivePort` wrapper, and the `fake` recorder. Add `"DeleteMessageReaction"` to whatever priority map `p.prio` reads (mirror an existing low-priority entry).
 
-- [ ] **Step 4: Run tests + build, expect pass.**
+- [x] **Step 4: Run tests + build, expect pass.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/telegram
 git commit -m "Add DeleteMessageReaction port method"
@@ -325,15 +327,15 @@ git commit -m "Add DeleteMessageReaction port method"
 **Interfaces:**
 - Produces: `func (db *DB) HasSpamIncident(chatID, userID int64) (bool, error)` — true when there is at least one `incidents` row for `(chat_id, user_id)` that is NOT a dry-run (`dry_run = 0`) and whose `state` reflects an applied action (`state IN ('acted','cleaned','done')`). Read-only (`db.Read`). This is the M5 "known spammer" signal; a blocklist source can be OR-ed in later without changing callers.
 
-- [ ] **Step 1: Write the failing test** — insert (via existing incident-insert path or a direct helper) a non-dry-run acted incident for `(1,2)`; `HasSpamIncident(1,2)` ⇒ true; `HasSpamIncident(1,3)` ⇒ false; a dry-run incident for `(1,4)` ⇒ false.
+- [x] **Step 1: Write the failing test** — insert (via existing incident-insert path or a direct helper) a non-dry-run acted incident for `(1,2)`; `HasSpamIncident(1,2)` ⇒ true; `HasSpamIncident(1,3)` ⇒ false; a dry-run incident for `(1,4)` ⇒ false.
 
-- [ ] **Step 2: Run test, expect failure.**
+- [x] **Step 2: Run test, expect failure.**
 
-- [ ] **Step 3: Implement** the query. If the exact insert helper isn't available in tests, insert rows with a raw `db.Write` in the test's arrange step.
+- [x] **Step 3: Implement** the query. If the exact insert helper isn't available in tests, insert rows with a raw `db.Write` in the test's arrange step.
 
-- [ ] **Step 4: Run tests, expect pass.**
+- [x] **Step 4: Run tests, expect pass.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/store/spammer.go internal/store/spammer_test.go
 git commit -m "Add known-spammer incident query"
@@ -355,15 +357,15 @@ git commit -m "Add known-spammer incident query"
   - `type ReactionCleaner struct { Spammers SpammerSource; Port telegram.Port; Enabled bool }`.
   - `func (r *ReactionCleaner) Observe(ctx context.Context, e ReactionEvent) error` — no-op unless `r.Enabled && e.Added && e.UserID != 0`. Then `known, err := r.Spammers.HasSpamIncident(e.ChatID, e.UserID)`; on `err` return it (caller logs, fail-open — the update is dropped, chat not blocked); if `known`, call `r.Port.DeleteMessageReaction(ctx, e.ChatID, e.MessageID, e.UserID)` and return its error (caller logs). A non-spammer reaction is left untouched.
 
-- [ ] **Step 1: Write the failing test** — fake `SpammerSource` (returns true for user 2), fake port recording `DeleteMessageReaction`. `Observe` with `{ChatID:1,MessageID:9,UserID:2,Added:true}` ⇒ one delete call for `(1,9,2)`. Same event for user 3 (not a spammer) ⇒ zero deletes. `Added:false` (reaction removed) ⇒ zero deletes. `Enabled:false` ⇒ zero deletes.
+- [x] **Step 1: Write the failing test** — fake `SpammerSource` (returns true for user 2), fake port recording `DeleteMessageReaction`. `Observe` with `{ChatID:1,MessageID:9,UserID:2,Added:true}` ⇒ one delete call for `(1,9,2)`. Same event for user 3 (not a spammer) ⇒ zero deletes. `Added:false` (reaction removed) ⇒ zero deletes. `Enabled:false` ⇒ zero deletes.
 
-- [ ] **Step 2: Run test, expect failure.**
+- [x] **Step 2: Run test, expect failure.**
 
-- [ ] **Step 3: Implement** `ReactionCleaner.Observe` per interface.
+- [x] **Step 3: Implement** `ReactionCleaner.Observe` per interface.
 
-- [ ] **Step 4: Run tests, expect pass.**
+- [x] **Step 4: Run tests, expect pass.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/watch/reaction.go internal/watch/reaction_test.go
 git commit -m "Add spammer reaction cleanup handler"
@@ -382,15 +384,15 @@ git commit -m "Add spammer reaction cleanup handler"
 **Interfaces:**
 - Produces: `Port` gains `SendEphemeral(ctx context.Context, chat, userID int64, text string) (int, error)` — returns the library's `EphemeralMessageID` (spec §12 / library facts §2). `LivePort` implements via `submitSync[int](ctx, p.disp, chat, p.prio("SendEphemeral"), func(ctx) (int, error) { msg, err := p.b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chat, ReceiverUserID: userID, Text: text}); if err != nil { return 0, mapRetry(err) }; return msg.EphemeralMessageID, nil })` (adapt to the actual `submitSync` signature/generics in `livept.go`). The `fake` port records `(chat,userID,text)` and returns a canned id.
 
-- [ ] **Step 1: Write the failing test** — fake port records a `SendEphemeral` call and returns a fixed id; interface assertions still compile.
+- [x] **Step 1: Write the failing test** — fake port records a `SendEphemeral` call and returns a fixed id; interface assertions still compile.
 
-- [ ] **Step 2: Run test, expect failure.**
+- [x] **Step 2: Run test, expect failure.**
 
-- [ ] **Step 3: Implement** interface method + `LivePort` wrapper + `fake` recorder + `p.prio` entry.
+- [x] **Step 3: Implement** interface method + `LivePort` wrapper + `fake` recorder + `p.prio` entry.
 
-- [ ] **Step 4: Run tests + build, expect pass.**
+- [x] **Step 4: Run tests + build, expect pass.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/telegram
 git commit -m "Add SendEphemeral port method"
@@ -408,15 +410,15 @@ git commit -m "Add SendEphemeral port method"
 - Consumes: `telegram.Port.SendEphemeral` (Task 9).
 - Produces: `Machine` gains `EphemeralNotice bool` and `EphemeralText string` (installed by the wiring; defaults off/empty). After `applyAction` runs for an actionable, NON-dry-run incident whose action restricts/removes the user (`ActionMute`, `ActionDeleteMute`, `ActionBan`, `ActionDeleteOnly`, `ActionQuarantine`), if `m.EphemeralNotice && m.EphemeralText != "" && inc.Sender.UserID != 0`, call `m.port.SendEphemeral(ctx, inc.ChatID, inc.Sender.UserID, m.EphemeralText)` **best-effort**: an error is logged (or, since the machine has no logger, swallowed with a `_ =`) and never fails `Handle`. It runs AFTER the sanction and evidence steps so a delivery hiccup can't delay moderation, and only in live (non-dry-run) mode.
 
-- [ ] **Step 1: Write the failing test** — a `Machine` with a fake port, `EphemeralNotice:true`, `EphemeralText:"removed pending review"`, handling a non-dry-run `ActionDeleteMute` incident for user 5 ⇒ exactly one `SendEphemeral(chat,5,"removed pending review")` after the restrict+delete. A dry-run incident ⇒ zero `SendEphemeral`. `EphemeralNotice:false` ⇒ zero. A `SendEphemeral` error ⇒ `Handle` still returns nil (best-effort).
+- [x] **Step 1: Write the failing test** — a `Machine` with a fake port, `EphemeralNotice:true`, `EphemeralText:"removed pending review"`, handling a non-dry-run `ActionDeleteMute` incident for user 5 ⇒ exactly one `SendEphemeral(chat,5,"removed pending review")` after the restrict+delete. A dry-run incident ⇒ zero `SendEphemeral`. `EphemeralNotice:false` ⇒ zero. A `SendEphemeral` error ⇒ `Handle` still returns nil (best-effort).
 
-- [ ] **Step 2: Run test, expect failure.**
+- [x] **Step 2: Run test, expect failure.**
 
-- [ ] **Step 3: Implement** the hook per interface; ensure ordering (after existing action/delete) and the dry-run + enable + non-empty-text + non-zero-user guards.
+- [x] **Step 3: Implement** the hook per interface; ensure ordering (after existing action/delete) and the dry-run + enable + non-empty-text + non-zero-user guards.
 
-- [ ] **Step 4: Run tests, expect pass** — confirm existing machine tests (evidence-before-action, reprocess guard) are unaffected.
+- [x] **Step 4: Run tests, expect pass** — confirm existing machine tests (evidence-before-action, reprocess guard) are unaffected.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/incident/machine.go internal/incident/machine_test.go
 git commit -m "Send ephemeral notice on sanction"
@@ -438,15 +440,15 @@ git commit -m "Send ephemeral notice on sanction"
   - `EphemeralNoticeEnabled *bool` (yaml `ephemeral_notice_enabled`, default false — off by default since delivery isn't guaranteed and text is chat-specific), `EphemeralNoticeText string` (yaml `ephemeral_notice_text`, default `""`).
   - All applied in `applyDetectionDefaults` (or a sibling `applyFeatureDefaults` called from `Parse`) honoring nil-vs-set for pointers and nil-vs-empty for `FakeAdminSuspiciousTags`. Document each key in `config.example.yaml`.
 
-- [ ] **Step 1: Write the failing test** — parse a minimal YAML that sets none of the new keys ⇒ defaults applied (`FakeAdminEnabled==true`, `FakeAdminMaxDistance==1`, suspicious tags == the 4 defaults, `AdminCacheTTLSeconds==300`, `ReactionCleanupEnabled==true`, `EphemeralNoticeEnabled==false`). Parse a YAML with `fake_admin_enabled: false` and `fake_admin_suspicious_tags: []` ⇒ both explicit values honored (enabled false, tags empty non-nil). Parse `ephemeral_notice_enabled: true` + text ⇒ honored.
+- [x] **Step 1: Write the failing test** — parse a minimal YAML that sets none of the new keys ⇒ defaults applied (`FakeAdminEnabled==true`, `FakeAdminMaxDistance==1`, suspicious tags == the 4 defaults, `AdminCacheTTLSeconds==300`, `ReactionCleanupEnabled==true`, `EphemeralNoticeEnabled==false`). Parse a YAML with `fake_admin_enabled: false` and `fake_admin_suspicious_tags: []` ⇒ both explicit values honored (enabled false, tags empty non-nil). Parse `ephemeral_notice_enabled: true` + text ⇒ honored.
 
-- [ ] **Step 2: Run test, expect failure.**
+- [x] **Step 2: Run test, expect failure.**
 
-- [ ] **Step 3: Implement** the fields, defaults, and example.yaml docs.
+- [x] **Step 3: Implement** the fields, defaults, and example.yaml docs.
 
-- [ ] **Step 4: Run tests, expect pass.**
+- [x] **Step 4: Run tests, expect pass.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/config config.example.yaml
 git commit -m "Add M5 feature config"
@@ -473,15 +475,15 @@ git commit -m "Add M5 feature config"
       - `case update.MessageReaction != nil:` extract `watch.ReactionEvent` (ChatID, MessageID, UserID from `.User.ID` when non-nil, `Added: len(NewReaction)>len(OldReaction)`); `seq.Submit(...)` → `reactionCleaner.Observe`.
       - `update.MyChatMember` may be handled minimally (log/ignore) — the admin-cache refresh-on-`chat_member` is satisfied by the cache TTL for M5.
 
-- [ ] **Step 1: Write the failing test** — `admincache_test.go`: a fake `Port` returning two admins (one with a `CustomTitle`); `AdminIdentities(chat)` returns both mapped identities; a second call within TTL does NOT re-call the port (assert call count 1); after TTL expiry it refetches; a port error returns an empty (or last-good) slice without panicking. (main.go wiring is covered by `go build ./...` + the package tests; no separate unit test for the switch.)
+- [x] **Step 1: Write the failing test** — `admincache_test.go`: a fake `Port` returning two admins (one with a `CustomTitle`); `AdminIdentities(chat)` returns both mapped identities; a second call within TTL does NOT re-call the port (assert call count 1); after TTL expiry it refetches; a port error returns an empty (or last-good) slice without panicking. (main.go wiring is covered by `go build ./...` + the package tests; no separate unit test for the switch.)
 
-- [ ] **Step 2: Run test, expect failure.**
+- [x] **Step 2: Run test, expect failure.**
 
-- [ ] **Step 3: Implement** `AdminCache` (+ extend `Member`/`memberFromChatMember` with `CustomTitle`), then the main.go wiring and handler cases.
+- [x] **Step 3: Implement** `AdminCache` (+ extend `Member`/`memberFromChatMember` with `CustomTitle`), then the main.go wiring and handler cases.
 
-- [ ] **Step 4: Run full suite + vet + build** — `./scripts/dev.sh test ./...`, `vet ./...`, `build ./...` all green; `-race` on `./internal/watch/... ./internal/store/... ./internal/telegram/...`.
+- [x] **Step 4: Run full suite + vet + build** — `./scripts/dev.sh test ./...`, `vet ./...`, `build ./...` all green; `-race` on `./internal/watch/... ./internal/store/... ./internal/telegram/...`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add cmd internal/telegram
 git commit -m "Wire M5 features into main"
