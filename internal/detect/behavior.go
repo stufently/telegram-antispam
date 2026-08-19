@@ -59,9 +59,23 @@ func ObserveBehavior(h History, chatID, userID int64, n NormalizedMessage, cfg B
 	if cfg.DupThreshold > 0 && strings.TrimSpace(n.Text) != "" {
 		h.RecordAndCountDup(chatID, userID, DupHash(n), cfg.DupWindow)
 	}
-	if cfg.ShortFloodThreshold > 0 && n.RawLen <= cfg.ShortLen {
+	if shortFloodEligible(n, cfg) {
 		h.RecentShortCount(chatID, userID, cfg.ShortWindow)
 	}
+}
+
+// shortFloodEligible reports whether a message counts toward short-message
+// flood detection at all.
+//
+// Captionless media (photo, sticker, voice — RawLen 0 with empty text) is
+// excluded for the same reason duplicate detection excludes it: a normal
+// user posting a handful of photos one by one is indistinguishable, by
+// length alone, from a burst of empty spam, and the sanction for guessing
+// wrong is a mute or ban of a real participant. This is the identical trap
+// that "image without text" checks in other bots are known for; a length
+// heuristic cannot see the picture, so it must not judge it.
+func shortFloodEligible(n NormalizedMessage, cfg BehaviorCfg) bool {
+	return cfg.ShortFloodThreshold > 0 && n.RawLen <= cfg.ShortLen && strings.TrimSpace(n.Text) != ""
 }
 
 // CheckBehavior evaluates behavioral anomalies against the injected History and config.
@@ -69,12 +83,19 @@ func ObserveBehavior(h History, chatID, userID int64, n NormalizedMessage, cfg B
 // Decision order (first hit wins):
 //  1. Edited message (if FlagEdits && edited)
 //  2. Duplicate flood
-//  3. Short message flood
+//  3. Short message flood (newcomers only — see below)
+//
+// trusted marks a user who has cleared the trust threshold. It gates the
+// short-message flood check only: rapid-fire short replies ("ok", "+", "ага")
+// are ordinary conversation from a regular and a newcomer-spam signal from
+// someone who just arrived. Duplicate flood stays ungated — posting the same
+// text over and over is spam-shaped no matter how long you have been around.
 func CheckBehavior(
 	h History,
 	chatID, userID int64,
 	n NormalizedMessage,
 	edited bool,
+	trusted bool,
 	cfg BehaviorCfg,
 ) (domain.Signal, bool) {
 	// Check edited message first.
@@ -100,10 +121,13 @@ func CheckBehavior(
 		}
 	}
 
-	// Check short message flood.
-	if cfg.ShortFloodThreshold > 0 && n.RawLen <= cfg.ShortLen {
+	// Check short message flood. The window is recorded even for a trusted
+	// user, so the population behind it stays identical to ObserveBehavior's
+	// (and to what a later untrusted reader would expect); only the verdict
+	// is withheld.
+	if shortFloodEligible(n, cfg) {
 		count := h.RecentShortCount(chatID, userID, cfg.ShortWindow)
-		if count >= cfg.ShortFloodThreshold {
+		if !trusted && count >= cfg.ShortFloodThreshold {
 			return domain.Signal{Name: "short_flood"}, true
 		}
 	}

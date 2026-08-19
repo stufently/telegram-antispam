@@ -15,6 +15,45 @@ type ChatsPolicy struct {
 	Mode          string  `yaml:"mode"`
 	StartInDryRun *bool   `yaml:"start_in_dry_run"`
 	Allowlist     []int64 `yaml:"allowlist"`
+	// Enforce lists chats that moderate for real, overriding whatever
+	// dry-run value was stored when the chat first registered. It exists
+	// because start_in_dry_run only ever seeds a NEW chat row (see
+	// store.RegisterChat): without a config-side override the only way to
+	// take an observed chat live would be an UPDATE against the SQLite file,
+	// which a GitOps deploy cannot express and a distroless image cannot run.
+	Enforce []int64 `yaml:"enforce"`
+	// ForceDryRun lists chats pinned to dry-run no matter what is stored or
+	// listed in Enforce. It is the brake: one line takes a misbehaving chat
+	// out of enforcement without touching the database, and it deliberately
+	// wins every conflict.
+	ForceDryRun []int64 `yaml:"force_dry_run"`
+}
+
+// DryRunFor resolves the effective dry-run flag for chatID, given the value
+// stored for that chat (or the policy default when the chat has no row yet).
+//
+// Config is evaluated last and therefore wins over the stored row: the
+// database records where a chat STARTED, the config says where the operator
+// wants it NOW. ForceDryRun beats Enforce so that the safe direction always
+// has the final word, and a chat named in neither list keeps its stored
+// value — listing every chat is not required to keep existing behavior.
+func (p ChatsPolicy) DryRunFor(chatID int64, stored bool) bool {
+	if containsChat(p.ForceDryRun, chatID) {
+		return true
+	}
+	if containsChat(p.Enforce, chatID) {
+		return false
+	}
+	return stored
+}
+
+func containsChat(ids []int64, chatID int64) bool {
+	for _, id := range ids {
+		if id == chatID {
+			return true
+		}
+	}
+	return false
 }
 
 // DryRunDefault reports whether new chats start in dry-run. It is a *bool so an
@@ -267,6 +306,22 @@ type LLM struct {
 	// Providers lists the LLM backends (1 or 2). An empty list disables the
 	// stage regardless of Enabled.
 	Providers []LLMProvider `yaml:"providers"`
+	// Prompt overrides the built-in classifier system prompt. The built-in
+	// one is English and generic; a chat with its own norms (a marketplace
+	// where "selling my used X" is legitimate, a crypto chat where coin
+	// names are not automatically spam) needs its own wording, and hardcoding
+	// one prompt makes those chats unservable. Empty ⇒ built-in prompt.
+	Prompt string `yaml:"prompt"`
+	// Temperature is sent to the provider only when set. It is a *float64
+	// because "unset" and "0" must differ: reasoning models REJECT an
+	// explicit temperature, so sending 0 by default would break them, while
+	// 0 is exactly what a classic completion model wants.
+	Temperature *float64 `yaml:"temperature"`
+	// MaxTokens caps the reply length. Unset (or 0) means "do not send a
+	// cap" for providers that allow omitting it. A tiny cap is actively
+	// harmful with reasoning models, which spend the budget thinking and
+	// then return an empty answer — which the stage reads as "not spam".
+	MaxTokens int `yaml:"max_tokens"`
 }
 
 type Config struct {
@@ -302,6 +357,23 @@ func Parse(b []byte) (*Config, error) {
 	// config file entirely (12-factor). Env wins when both are set.
 	if v := os.Getenv("BOT_TOKEN"); v != "" {
 		c.BotToken = v
+	}
+	// Same reasoning for the LLM credentials: a Secret-supplied env var keeps
+	// them out of the config file, which in a Kubernetes deploy is a
+	// ConfigMap in version control. Env wins when both are set.
+	for i := range c.LLM.Providers {
+		var envKey string
+		switch c.LLM.Providers[i].Kind {
+		case "openai":
+			envKey = "OPENAI_API_KEY"
+		case "anthropic":
+			envKey = "ANTHROPIC_API_KEY"
+		default:
+			continue
+		}
+		if v := os.Getenv(envKey); v != "" {
+			c.LLM.Providers[i].APIKey = v
+		}
 	}
 	if err := c.Validate(); err != nil {
 		return nil, err
@@ -488,6 +560,17 @@ func (c *Config) Validate() error {
 	case "auto", "allowlist", "owners_only":
 	default:
 		return fmt.Errorf("chats.mode must be auto|allowlist|owners_only, got %q", c.Chats.Mode)
+	}
+	// An enforce entry outside the allowlist can never fire (the allowlist
+	// gate drops the update before moderation), so it is an operator typo
+	// with a silent, dangerous failure mode: the chat looks configured for
+	// enforcement and quietly moderates nothing. Reject it loudly instead.
+	if c.Chats.Mode == "allowlist" {
+		for _, id := range c.Chats.Enforce {
+			if !containsChat(c.Chats.Allowlist, id) {
+				return fmt.Errorf("chats.enforce contains %d, which is not in chats.allowlist", id)
+			}
+		}
 	}
 	switch c.Action {
 	case domain.ActionDeleteMute, domain.ActionMute, domain.ActionBan, domain.ActionDeleteOnly:

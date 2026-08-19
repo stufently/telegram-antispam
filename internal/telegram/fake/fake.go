@@ -47,6 +47,23 @@ type Fake struct {
 		Chat, UserID int64
 		Text         string
 	}
+
+	// LastUnban, LastRestrict, and LastDelete capture the most recent args
+	// of the calls the admin-chat undo path makes, so tests can assert that
+	// a button lifted the right sanction for the right user (the call log
+	// alone cannot tell "unmuted user 7" from "unmuted somebody").
+	LastUnban struct {
+		Chat, UserID int64
+	}
+	LastRestrict struct {
+		Chat, UserID int64
+		Perms        telegram.Perms
+		Until        int64
+	}
+	LastDelete struct {
+		Chat int64
+		IDs  []int
+	}
 }
 
 func New() *Fake { return &Fake{} }
@@ -78,7 +95,10 @@ func (f *Fake) CopyMessages(_ context.Context, _, _ int64, ids []int) ([]int, er
 	return out, nil
 }
 
-func (f *Fake) DeleteMessages(_ context.Context, _ int64, _ []int) error {
+func (f *Fake) DeleteMessages(_ context.Context, chat int64, ids []int) error {
+	f.mu.Lock()
+	f.LastDelete.Chat, f.LastDelete.IDs = chat, ids
+	f.mu.Unlock()
 	f.log("DeleteMessages")
 	return nil
 }
@@ -88,7 +108,19 @@ func (f *Fake) BanMember(_ context.Context, _, _ int64) error {
 	return nil
 }
 
-func (f *Fake) RestrictMember(_ context.Context, _, _ int64, _ telegram.Perms, _ int64) error {
+func (f *Fake) UnbanMember(_ context.Context, chat, user int64) error {
+	f.mu.Lock()
+	f.LastUnban.Chat, f.LastUnban.UserID = chat, user
+	f.mu.Unlock()
+	f.log("UnbanMember")
+	return nil
+}
+
+func (f *Fake) RestrictMember(_ context.Context, chat, user int64, perms telegram.Perms, until int64) error {
+	f.mu.Lock()
+	f.LastRestrict.Chat, f.LastRestrict.UserID = chat, user
+	f.LastRestrict.Perms, f.LastRestrict.Until = perms, until
+	f.mu.Unlock()
 	f.log("RestrictMember")
 	return nil
 }

@@ -32,6 +32,12 @@ CREATE TABLE IF NOT EXISTS evidence (
 	admin_message_id INTEGER NOT NULL,
 	FOREIGN KEY(incident_id) REFERENCES incidents(id)
 );
+CREATE TABLE IF NOT EXISTS incident_tokens (
+	incident_id INTEGER PRIMARY KEY,
+	tokens      TEXT    NOT NULL,
+	created_at  INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+	FOREIGN KEY(incident_id) REFERENCES incidents(id)
+);
 CREATE TABLE IF NOT EXISTS audit (
 	incident_id INTEGER NOT NULL,
 	action      TEXT    NOT NULL,

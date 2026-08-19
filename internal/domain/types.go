@@ -67,4 +67,9 @@ type Incident struct {
 	State           IncidentState
 	DryRun          bool
 	AdminMessageIDs []int
+	// Tokens is the normalized token list of the offending message, carried
+	// so the incident machine can persist it for admin-feedback training.
+	// It is not raw text: see store.SaveIncidentTokens for the privacy
+	// rationale and retention.
+	Tokens []string
 }

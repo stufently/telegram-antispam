@@ -107,6 +107,14 @@ func classifyReply(reply string) bool {
 	return strings.Trim(f[0], ".,:;!?\"'*") == "SPAM"
 }
 
+// promptOr returns the operator's prompt, falling back to the built-in one.
+func promptOr(prompt string) string {
+	if strings.TrimSpace(prompt) != "" {
+		return prompt
+	}
+	return classifyPrompt
+}
+
 const classifyPrompt = "You are a spam classifier for a Telegram group chat. " +
 	"Decide whether the following message is spam (scam, ad, flood, phishing, or unsolicited promotion). " +
 	"Reply with exactly one word: SPAM or HAM."

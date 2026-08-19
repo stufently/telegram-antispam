@@ -15,7 +15,21 @@ type Anthropic struct {
 	Model   string       // e.g. "claude-3-5-haiku-latest"
 	BaseURL string       // override for tests; defaults to the public endpoint
 	Client  *http.Client // override for tests; defaults to http.DefaultClient
+	// Prompt overrides the built-in system prompt; empty uses classifyPrompt.
+	Prompt string
+	// Temperature is sent only when non-nil (see OpenAI.Temperature).
+	Temperature *float64
+	// MaxTokens caps the reply. Unlike OpenAI, the Messages API REQUIRES
+	// max_tokens, so an unset value falls back to defaultAnthropicMaxTokens
+	// rather than being omitted.
+	MaxTokens int
 }
+
+// defaultAnthropicMaxTokens is the fallback cap for the Messages API, which
+// rejects a request without max_tokens. It is small because the expected
+// answer is one word, but not so small that a model prefixing a space or a
+// newline gets truncated to nothing.
+const defaultAnthropicMaxTokens = 16
 
 func (a Anthropic) Name() string { return "anthropic" }
 
@@ -24,15 +38,22 @@ func (a Anthropic) Classify(ctx context.Context, text string) (bool, error) {
 	if base == "" {
 		base = "https://api.anthropic.com"
 	}
-	body, _ := json.Marshal(map[string]any{
-		"model":       a.Model,
-		"max_tokens":  5,
-		"temperature": 0,
-		"system":      classifyPrompt,
+	maxTokens := a.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = defaultAnthropicMaxTokens
+	}
+	payload := map[string]any{
+		"model":      a.Model,
+		"max_tokens": maxTokens,
+		"system":     promptOr(a.Prompt),
 		"messages": []map[string]string{
 			{"role": "user", "content": text},
 		},
-	})
+	}
+	if a.Temperature != nil {
+		payload["temperature"] = *a.Temperature
+	}
+	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/messages", bytes.NewReader(body))
 	if err != nil {
 		return false, err

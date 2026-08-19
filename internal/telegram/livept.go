@@ -235,6 +235,22 @@ func (p *LivePort) BanMember(ctx context.Context, chat, user int64) error {
 	})
 }
 
+// UnbanMember lifts a ban with OnlyIfBanned set, which is what makes it a
+// safe undo: without that flag unbanChatMember also *removes* a member who is
+// currently in the chat (Telegram implements "unban" as kick-then-allow), so
+// a mistaken press of the admin-chat undo button would eject the very user it
+// is meant to rescue.
+func (p *LivePort) UnbanMember(ctx context.Context, chat, user int64) error {
+	return submitSyncErr(ctx, p.disp, chat, p.prio("UnbanMember"), func(ctx context.Context) error {
+		_, err := p.b.UnbanChatMember(ctx, &bot.UnbanChatMemberParams{
+			ChatID:       chat,
+			UserID:       user,
+			OnlyIfBanned: true,
+		})
+		return mapRetry(err)
+	})
+}
+
 // RestrictMember maps the single Perms.CanSend toggle onto every can_send_*
 // permission uniformly (full mute / full unmute); until==0 omits UntilDate
 // (permanent, by the field's own omitempty), otherwise the caller-supplied

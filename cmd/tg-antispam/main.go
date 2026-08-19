@@ -52,6 +52,12 @@ const (
 	globalRateBurst = 25
 	perChatRateRPS  = 1
 	perChatBurst    = 3
+
+	// incidentTokenRetention bounds how long an unreviewed incident's
+	// captured tokens are kept. Long enough that an admin can still act on
+	// a digest from weeks ago; short enough that the database is not a
+	// growing archive of message-derived content.
+	incidentTokenRetention = 30 * 24 * time.Hour
 )
 
 // priorityFor maps a Port method name to its queue priority: destructive
@@ -59,7 +65,7 @@ const (
 // bookkeeping.
 func priorityFor(method string) queue.Priority {
 	switch method {
-	case "DeleteMessages", "BanMember", "RestrictMember", "BanSenderChat":
+	case "DeleteMessages", "BanMember", "UnbanMember", "RestrictMember", "BanSenderChat":
 		return queue.PrioHigh
 	default:
 		return queue.PrioNormal
@@ -247,19 +253,23 @@ func main() {
 				// per-update context, so an accepted job remains live during the
 				// bounded drain after polling stops.
 				seq.Submit(cfgStore.Current().AdminChatID, func() {
-					// EvidenceText is intentionally left empty here: M2 does
-					// not persist the offending message's text/tokens (the
-					// admin notification carries only the verdict reason, and
-					// the evidence is copied as separate messages), so there
-					// is nothing to hand the best-effort Bayes trainer at
-					// callback time. Admin-feedback training therefore no-ops
-					// in production until a later milestone persists incident
-					// tokens (privacy-safe — Bayes stores only counts). The
-					// offline `tg-antispam import` path trains fully today.
+					// The offending message's tokens were persisted when the
+					// incident was created (store.SaveIncidentTokens), so the
+					// handler loads them itself — nothing message-shaped has
+					// to survive on the callback payload, which carries only
+					// where the button sits.
+					var adminChatID int64
+					var messageID int
+					if cb.Message.Message != nil {
+						adminChatID = cb.Message.Message.Chat.ID
+						messageID = cb.Message.Message.ID
+					}
 					err := adminHandler.Handle(workCtx, admin.Callback{
-						ID:        cb.ID,
-						Data:      cb.Data,
-						PresserID: cb.From.ID,
+						ID:          cb.ID,
+						Data:        cb.Data,
+						PresserID:   cb.From.ID,
+						AdminChatID: adminChatID,
+						MessageID:   messageID,
 					})
 					if err != nil {
 						log.Printf("admin callback: %v", err)
@@ -361,8 +371,8 @@ func main() {
 	handler = telegram.NewHandler(db, seq, cfgStore, machine)
 	handler.SetContext(workCtx)
 	adminHandler = admin.NewHandler(livePort, db, operatorSet(cfg))
-	adminHandler.SetTrainer(func(scope, label, text string) error {
-		_, err := train.ImportSample(db, scope, label, "user", text)
+	adminHandler.SetTrainer(func(scope, label string, tokens []string) error {
+		_, err := train.RecordTokens(db, scope, label, "user", tokens)
 		return err
 	})
 
@@ -449,9 +459,21 @@ func main() {
 		for _, pc := range cfg.LLM.Providers {
 			switch pc.Kind {
 			case "openai":
-				provs = append(provs, llm.OpenAI{APIKey: pc.APIKey, Model: pc.Model})
+				provs = append(provs, llm.OpenAI{
+					APIKey:      pc.APIKey,
+					Model:       pc.Model,
+					Prompt:      cfg.LLM.Prompt,
+					Temperature: cfg.LLM.Temperature,
+					MaxTokens:   cfg.LLM.MaxTokens,
+				})
 			case "anthropic":
-				provs = append(provs, llm.Anthropic{APIKey: pc.APIKey, Model: pc.Model})
+				provs = append(provs, llm.Anthropic{
+					APIKey:      pc.APIKey,
+					Model:       pc.Model,
+					Prompt:      cfg.LLM.Prompt,
+					Temperature: cfg.LLM.Temperature,
+					MaxTokens:   cfg.LLM.MaxTokens,
+				})
 			}
 		}
 		llmJudge = &llm.Judge{Providers: provs, Policy: llm.Policy(cfg.LLM.Policy)}
@@ -541,6 +563,33 @@ func main() {
 				hist.Sweep(sweepMaxAge)
 			case <-signalCtx.Done():
 				return
+			}
+		}
+	})
+
+	// Retention for captured incident tokens: incidents nobody ever pressed
+	// a button on would otherwise keep message-derived content forever. Runs
+	// once at startup and then daily; failures are logged, never fatal.
+	startBackground(func() {
+		prune := func() {
+			n, err := db.PruneIncidentTokens(incidentTokenRetention)
+			if err != nil {
+				log.Printf("prune incident tokens: %v", err)
+				return
+			}
+			if n > 0 {
+				log.Printf("pruned %d incident token row(s) older than %s", n, incidentTokenRetention)
+			}
+		}
+		prune()
+		t := time.NewTicker(24 * time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-signalCtx.Done():
+				return
+			case <-t.C:
+				prune()
 			}
 		}
 	})

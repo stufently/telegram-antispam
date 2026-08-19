@@ -433,3 +433,109 @@ func TestOnMessageAdminLookupUnavailableDoesNotBumpTrust(t *testing.T) {
 		t.Fatalf("deferred moderation must not grant trust, got %d", count)
 	}
 }
+
+// TestChatsEnforceTakesRegisteredChatLive covers the config-side flip that
+// replaces "edit the SQLite file to stop dry-running". A chat registers
+// under start_in_dry_run: true, is observed, and is then taken live by a
+// single line of config — the stored row never changes.
+func TestChatsEnforceTakesRegisteredChatLive(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+
+	// deliver runs one message through a fresh Handler/Sequencer against the
+	// SAME database — Sequencer.Wait closes the sequencer for good (it is the
+	// shutdown drain), so each phase needs its own. The shared db is the
+	// point: it carries the stored chat row across phases.
+	deliver := func(policy config.ChatsPolicy, updateID int64, messageID int) []string {
+		f := fake.New()
+		f.SendAdminID = 5
+		m := incident.New(f, db, 999)
+		cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: policy})
+		seq := telegram.NewSequencer()
+		h := telegram.NewHandler(db, seq, cfg, m)
+		h.SetDecide(func(domain.Message) (domain.Verdict, bool) {
+			return domain.Verdict{Action: domain.ActionBan, Confidence: 0.99}, true
+		})
+		h.OnMessage(context.Background(), updateID, domain.Message{
+			ChatID: -100123, MessageID: messageID,
+			Sender: domain.Sender{UserID: 7, Kind: domain.SenderUser},
+			Text:   "free casino bonus",
+		})
+		seq.Wait()
+		return f.Calls()
+	}
+	banned := func(calls []string) bool {
+		for _, c := range calls {
+			if c == "BanMember" {
+				return true
+			}
+		}
+		return false
+	}
+
+	observed := config.ChatsPolicy{Mode: "auto", StartInDryRun: boolPtr(true)}
+	if calls := deliver(observed, 1, 55); banned(calls) {
+		t.Fatalf("dry-run chat applied a sanction; calls=%v", calls)
+	}
+	if row, found, _ := db.GetChat(-100123); !found || !row.DryRun {
+		t.Fatalf("stored chat row = %+v, want a dry-run row", row)
+	}
+
+	// Same stored row, one config line added.
+	enforced := observed
+	enforced.Enforce = []int64{-100123}
+	if calls := deliver(enforced, 2, 56); !banned(calls) {
+		t.Fatalf("chats.enforce did not take the chat live; calls=%v", calls)
+	}
+	if row, _, _ := db.GetChat(-100123); !row.DryRun {
+		t.Fatal("config override wrote back to the stored row, which must stay the record of where the chat started")
+	}
+
+	// force_dry_run wins, so a chat can be pulled back without first
+	// removing its enforce entry.
+	braked := enforced
+	braked.ForceDryRun = []int64{-100123}
+	if calls := deliver(braked, 3, 57); banned(calls) {
+		t.Fatalf("force_dry_run did not override enforce; calls=%v", calls)
+	}
+}
+
+// TestIncidentCapturesTokensForAdminFeedback pins the other half of the
+// admin-button fix: the tokens an admin's later Confirm-spam press trains on
+// must be captured while the message still exists, because the incident
+// machine deletes the original at the end of Handle.
+func TestIncidentCapturesTokensForAdminFeedback(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	f := fake.New()
+	f.SendAdminID = 5
+	m := incident.New(f, db, 999)
+	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto", StartInDryRun: boolPtr(false)}})
+	seq := telegram.NewSequencer()
+	h := telegram.NewHandler(db, seq, cfg, m)
+	h.SetDecide(func(domain.Message) (domain.Verdict, bool) {
+		return domain.Verdict{Action: domain.ActionBan, Confidence: 0.99}, true
+	})
+	h.OnMessage(context.Background(), 1, domain.Message{ChatID: -100123, MessageID: 55, Sender: domain.Sender{UserID: 7, Kind: domain.SenderUser}, Text: "free casino bonus"})
+	seq.Wait()
+
+	tokens, ok, err := db.GetIncidentTokens(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || len(tokens) == 0 {
+		t.Fatalf("no tokens captured for the incident (ok=%v tokens=%v)", ok, tokens)
+	}
+}

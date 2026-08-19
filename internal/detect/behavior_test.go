@@ -31,7 +31,7 @@ func TestCheckBehavior_EditedMessage(t *testing.T) {
 	n := NormalizedMessage{Text: "hello", RawLen: 5}
 	cfg := BehaviorCfg{FlagEdits: true, DupThreshold: 0, ShortFloodThreshold: 0}
 
-	signal, hit := CheckBehavior(h, 123, 456, n, true, cfg)
+	signal, hit := CheckBehavior(h, 123, 456, n, true, false, cfg)
 
 	if !hit {
 		t.Errorf("expected hit=true for edited message with FlagEdits=true")
@@ -46,7 +46,7 @@ func TestCheckBehavior_EditedMessageIgnoredWhenDisabled(t *testing.T) {
 	n := NormalizedMessage{Text: "hello", RawLen: 5}
 	cfg := BehaviorCfg{FlagEdits: false, DupThreshold: 0, ShortFloodThreshold: 0}
 
-	signal, hit := CheckBehavior(h, 123, 456, n, true, cfg)
+	signal, hit := CheckBehavior(h, 123, 456, n, true, false, cfg)
 
 	if hit {
 		t.Errorf("expected hit=false for edited message with FlagEdits=false")
@@ -67,7 +67,7 @@ func TestCheckBehavior_DuplicateFlood(t *testing.T) {
 		ShortFloodThreshold: 0,
 	}
 
-	signal, hit := CheckBehavior(h, 123, 456, n, false, cfg)
+	signal, hit := CheckBehavior(h, 123, 456, n, false, false, cfg)
 
 	if !hit {
 		t.Errorf("expected hit=true for duplicate at threshold")
@@ -91,7 +91,7 @@ func TestCheckBehavior_DuplicateFloodDisabled(t *testing.T) {
 		ShortFloodThreshold: 0,
 	}
 
-	signal, hit := CheckBehavior(h, 123, 456, n, false, cfg)
+	signal, hit := CheckBehavior(h, 123, 456, n, false, false, cfg)
 
 	if hit {
 		t.Errorf("expected hit=false when DupThreshold=0 (disabled)")
@@ -112,7 +112,7 @@ func TestCheckBehavior_DuplicateBelowThreshold(t *testing.T) {
 		ShortFloodThreshold: 0,
 	}
 
-	signal, hit := CheckBehavior(h, 123, 456, n, false, cfg)
+	signal, hit := CheckBehavior(h, 123, 456, n, false, false, cfg)
 
 	if hit {
 		t.Errorf("expected hit=false when count below threshold")
@@ -133,7 +133,7 @@ func TestCheckBehavior_ShortFlood(t *testing.T) {
 		ShortWindow:         1 * time.Minute,
 	}
 
-	signal, hit := CheckBehavior(h, 123, 456, n, false, cfg)
+	signal, hit := CheckBehavior(h, 123, 456, n, false, false, cfg)
 
 	if !hit {
 		t.Errorf("expected hit=true for short flood at threshold")
@@ -154,7 +154,7 @@ func TestCheckBehavior_ShortFloodDisabled(t *testing.T) {
 		ShortWindow:         1 * time.Minute,
 	}
 
-	signal, hit := CheckBehavior(h, 123, 456, n, false, cfg)
+	signal, hit := CheckBehavior(h, 123, 456, n, false, false, cfg)
 
 	if hit {
 		t.Errorf("expected hit=false when ShortFloodThreshold=0 (disabled)")
@@ -175,7 +175,7 @@ func TestCheckBehavior_ShortFloodBelowThreshold(t *testing.T) {
 		ShortWindow:         1 * time.Minute,
 	}
 
-	signal, hit := CheckBehavior(h, 123, 456, n, false, cfg)
+	signal, hit := CheckBehavior(h, 123, 456, n, false, false, cfg)
 
 	if hit {
 		t.Errorf("expected hit=false when count below threshold")
@@ -196,7 +196,7 @@ func TestCheckBehavior_NotShort(t *testing.T) {
 		ShortWindow:         1 * time.Minute,
 	}
 
-	signal, hit := CheckBehavior(h, 123, 456, n, false, cfg)
+	signal, hit := CheckBehavior(h, 123, 456, n, false, false, cfg)
 
 	if hit {
 		t.Errorf("expected hit=false for non-short message")
@@ -218,7 +218,7 @@ func TestCheckBehavior_NoHit(t *testing.T) {
 		ShortWindow:         1 * time.Minute,
 	}
 
-	signal, hit := CheckBehavior(h, 123, 456, n, false, cfg)
+	signal, hit := CheckBehavior(h, 123, 456, n, false, false, cfg)
 
 	if hit {
 		t.Errorf("expected hit=false when no condition matches")
@@ -244,7 +244,7 @@ func TestCheckBehavior_CaptionlessMediaNoDupFlood(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		n := NormalizedMessage{Text: "", RawLen: 0}
-		signal, hit := CheckBehavior(h, 123, 456, n, false, cfg)
+		signal, hit := CheckBehavior(h, 123, 456, n, false, false, cfg)
 		if hit {
 			t.Errorf("message %d: expected hit=false for captionless media, got signal %q", i, signal.Name)
 		}
@@ -267,7 +267,7 @@ func TestCheckBehavior_RealDuplicateTextStillTriggers(t *testing.T) {
 		DupWindow:    1 * time.Minute,
 	}
 
-	signal, hit := CheckBehavior(h, 123, 456, n, false, cfg)
+	signal, hit := CheckBehavior(h, 123, 456, n, false, false, cfg)
 
 	if !hit {
 		t.Errorf("expected hit=true for real duplicate text at threshold")
@@ -300,5 +300,76 @@ func TestDupHash(t *testing.T) {
 
 	if hash1 == hash3 {
 		t.Errorf("expected different hashes for different texts")
+	}
+}
+
+// shortCounter counts how many times a short-message event was recorded, so
+// tests can tell "not counted" apart from "counted but not acted on".
+type shortCounter struct {
+	fakeHistory
+	shortCalls int
+}
+
+func (s *shortCounter) RecentShortCount(chatID, userID int64, window time.Duration) int {
+	s.shortCalls++
+	return s.shortCounts
+}
+
+func TestShortFloodIgnoresCaptionlessMedia(t *testing.T) {
+	// A photo/sticker with no caption normalizes to empty text and RawLen 0.
+	// Counting it would mean a member posting a handful of pictures one by
+	// one trips a flood rule that cannot see the pictures — the same trap
+	// "image without text" checks are notorious for.
+	h := &shortCounter{fakeHistory: fakeHistory{shortCounts: 99}}
+	n := NormalizedMessage{Text: "", RawLen: 0}
+	cfg := BehaviorCfg{ShortFloodThreshold: 5, ShortLen: 10, ShortWindow: 30 * time.Second}
+
+	if _, hit := CheckBehavior(h, 1, 2, n, false, false, cfg); hit {
+		t.Fatal("captionless media triggered short_flood")
+	}
+	if h.shortCalls != 0 {
+		t.Fatalf("captionless media was recorded into the short window (%d calls)", h.shortCalls)
+	}
+	// The observe-only path must agree, or the two would disagree about the
+	// population behind the window.
+	h.shortCalls = 0
+	ObserveBehavior(h, 1, 2, n, cfg)
+	if h.shortCalls != 0 {
+		t.Fatalf("ObserveBehavior recorded captionless media (%d calls)", h.shortCalls)
+	}
+}
+
+func TestShortFloodOnlyJudgesUntrustedUsers(t *testing.T) {
+	n := NormalizedMessage{Text: "ok", RawLen: 2}
+	cfg := BehaviorCfg{ShortFloodThreshold: 5, ShortLen: 10, ShortWindow: 30 * time.Second}
+
+	untrusted := &shortCounter{fakeHistory: fakeHistory{shortCounts: 5}}
+	sig, hit := CheckBehavior(untrusted, 1, 2, n, false, false, cfg)
+	if !hit || sig.Name != "short_flood" {
+		t.Fatalf("untrusted burst: hit=%v sig=%q, want short_flood", hit, sig.Name)
+	}
+
+	// A regular firing off "ok", "+", "ага" is conversation, not spam.
+	trusted := &shortCounter{fakeHistory: fakeHistory{shortCounts: 5}}
+	if _, hit := CheckBehavior(trusted, 1, 2, n, false, true, cfg); hit {
+		t.Fatal("trusted user flagged for short_flood")
+	}
+	// The window is still recorded for them, so the population stays the
+	// same as ObserveBehavior's; only the verdict is withheld.
+	if trusted.shortCalls != 1 {
+		t.Fatalf("trusted short message was not recorded (%d calls)", trusted.shortCalls)
+	}
+}
+
+func TestDuplicateFloodStaysUngatedByTrust(t *testing.T) {
+	// Posting the same text over and over is spam-shaped regardless of
+	// tenure, so trust must not buy immunity from it.
+	h := &fakeHistory{defaultDupCount: 3}
+	n := NormalizedMessage{Text: "buy now", RawLen: 7}
+	cfg := BehaviorCfg{DupThreshold: 3, DupWindow: time.Minute}
+
+	sig, hit := CheckBehavior(h, 1, 2, n, false, true, cfg)
+	if !hit || sig.Name != "duplicate_flood" {
+		t.Fatalf("trusted duplicate burst: hit=%v sig=%q, want duplicate_flood", hit, sig.Name)
 	}
 }

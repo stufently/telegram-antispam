@@ -42,6 +42,27 @@ func ImportSample(db *store.DB, scope, label, origin, text string) (bool, error)
 	return db.RecordSample(scope, label, origin, hash, tokens)
 }
 
+// TokenHash returns the sha256 hex digest of a token list joined by single
+// spaces. It is the dedup fingerprint for samples that arrive as tokens
+// rather than text (admin-chat feedback: the raw message is gone by then).
+// It is deliberately a different input space from SampleHash, so the same
+// message imported from a file and confirmed from a button can both count —
+// they are independent labelings, not a double-count of one sample.
+func TokenHash(tokens []string) string {
+	sum := sha256.Sum256([]byte(strings.Join(tokens, " ")))
+	return hex.EncodeToString(sum[:])
+}
+
+// RecordTokens records one labeled sample that is already tokenized, using
+// the same atomic samples+bayes write as ImportSample. Re-pressing an admin
+// button is a no-op: the hash is unique per (scope, label).
+func RecordTokens(db *store.DB, scope, label, origin string, tokens []string) (bool, error) {
+	if len(tokens) == 0 {
+		return false, nil
+	}
+	return db.RecordSample(scope, label, origin, TokenHash(tokens), tokens)
+}
+
 // ImportFile imports one sample per non-empty (trimmed) line of the file at
 // path, returning how many were newly added versus already-known (skipped).
 func ImportFile(db *store.DB, scope, label, origin, path string) (added, skipped int, err error) {

@@ -84,20 +84,13 @@ func TestClassifyReply(t *testing.T) {
 	}
 }
 
-func TestOpenAIClassify(t *testing.T) {
+func TestOpenAIClassifyOmitsTuningParamsByDefault(t *testing.T) {
+	var body map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer sk-test" {
 			t.Errorf("auth header = %q", got)
 		}
-		var req struct {
-			MaxTokens int `json:"max_tokens"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		// Guards the review fix: max_tokens must be large enough that the
-		// uppercase word "SPAM" (≥2 BPE tokens) is never truncated to "SP".
-		if req.MaxTokens < 5 {
-			t.Errorf("max_tokens = %d, want >= 5 (else SPAM truncates)", req.MaxTokens)
-		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"SPAM"}}]}`))
 	}))
 	defer srv.Close()
@@ -105,6 +98,47 @@ func TestOpenAIClassify(t *testing.T) {
 	spam, err := p.Classify(context.Background(), "buy now")
 	if err != nil || !spam {
 		t.Fatalf("spam=%v err=%v", spam, err)
+	}
+	// Neither key may be present unless the operator asked for it: reasoning
+	// models reject an explicit temperature outright, and spend a small
+	// max_tokens on hidden reasoning, returning an empty answer that reads
+	// as HAM — i.e. a silently disabled check.
+	if _, ok := body["temperature"]; ok {
+		t.Errorf("temperature sent by default: %v", body["temperature"])
+	}
+	if _, ok := body["max_tokens"]; ok {
+		t.Errorf("max_tokens sent by default: %v", body["max_tokens"])
+	}
+}
+
+func TestOpenAIClassifySendsConfiguredPromptAndParams(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"HAM"}}]}`))
+	}))
+	defer srv.Close()
+	temp := 0.0
+	p := OpenAI{
+		APIKey: "sk-test", Model: "m", BaseURL: srv.URL, Client: srv.Client(),
+		Prompt: "ru prompt", Temperature: &temp, MaxTokens: 8,
+	}
+	if _, err := p.Classify(context.Background(), "hi"); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := body["temperature"].(float64); !ok || v != 0 {
+		t.Errorf("temperature = %v (ok=%v), want explicit 0", body["temperature"], ok)
+	}
+	if v, ok := body["max_tokens"].(float64); !ok || v != 8 {
+		t.Errorf("max_tokens = %v, want 8", body["max_tokens"])
+	}
+	msgs, _ := body["messages"].([]any)
+	if len(msgs) == 0 {
+		t.Fatal("no messages sent")
+	}
+	first, _ := msgs[0].(map[string]any)
+	if first["content"] != "ru prompt" {
+		t.Errorf("system prompt = %v, want the configured one", first["content"])
 	}
 }
 

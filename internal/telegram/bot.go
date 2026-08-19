@@ -237,6 +237,11 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 		}
 		dryRun = row.DryRun
 	}
+	// Config has the last word: the stored row says where the chat started,
+	// chats.enforce / chats.force_dry_run say where the operator wants it
+	// now. Resolved after the fail-closed read above, so an unreadable gate
+	// still stops moderation rather than being overridden into acting.
+	dryRun = cfg.Chats.DryRunFor(first.ChatID, dryRun)
 
 	ids := make([]int, len(parts))
 	for i, m := range parts {
@@ -254,6 +259,11 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 		Sender:     first.Sender,
 		Verdict:    verdict,
 		DryRun:     dryRun,
+		// Tokens travel with the incident because the originals are deleted
+		// at the end of Handle: without capturing them here, an admin's
+		// later Confirm-spam / False-positive press would have nothing to
+		// train on (see store.SaveIncidentTokens for what is and is not kept).
+		Tokens: detect.Tokenize(detect.Normalize(first)),
 	}
 	if err := h.machine.Handle(ctx, inc); err != nil {
 		log.Printf("chat=%d incident: %v", first.ChatID, err)

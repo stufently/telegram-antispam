@@ -132,7 +132,7 @@ func (c Cascade) Decide(m domain.Message, edited bool) (domain.Verdict, bool) {
 		}
 	}
 
-	if sig, hit := CheckBehavior(c.Hist, m.ChatID, m.Sender.UserID, n, edited, c.Behavior); hit {
+	if sig, hit := CheckBehavior(c.Hist, m.ChatID, m.Sender.UserID, n, edited, trusted, c.Behavior); hit {
 		return c.actionable(sig), true
 	}
 

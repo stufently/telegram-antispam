@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/stufently/telegram-antispam/internal/domain"
 	"github.com/stufently/telegram-antispam/internal/store"
 	"github.com/stufently/telegram-antispam/internal/telegram"
 )
@@ -26,10 +27,14 @@ const (
 
 // Callback is a normalized incoming callback query.
 type Callback struct {
-	ID           string // Telegram callback query id, for AnswerCallback.
-	Data         string // "<act>:<incidentKey>".
-	PresserID    int64  // Telegram user id of whoever pressed the button.
-	EvidenceText string // optional; the incident's message text, for best-effort Bayes training. Empty ⇒ training skipped.
+	ID        string // Telegram callback query id, for AnswerCallback.
+	Data      string // "<act>:<incidentKey>".
+	PresserID int64  // Telegram user id of whoever pressed the button.
+	// AdminChatID and MessageID locate the admin-chat message the button
+	// sits on. They are informational for most actions; "Delete evidence"
+	// needs the chat id to remove the copies the bot posted there.
+	AdminChatID int64
+	MessageID   int
 }
 
 // Buttons lays out the 4 admin actions for one incident. Each button's Data
@@ -76,7 +81,7 @@ type Handler struct {
 	port      telegram.Port
 	db        *store.DB
 	operators map[int64]bool
-	trainer   func(scope, label, text string) error
+	trainer   func(scope, label string, tokens []string) error
 }
 
 // NewHandler builds a Handler. operators is the set of Telegram user ids
@@ -89,9 +94,12 @@ func NewHandler(port telegram.Port, db *store.DB, operators map[int64]bool) *Han
 	return &Handler{port: port, db: db, operators: operators}
 }
 
-// SetTrainer installs a best-effort Bayes trainer invoked on confirm-spam
-// / false-positive. A nil trainer (the default) disables training.
-func (h *Handler) SetTrainer(t func(scope, label, text string) error) { h.trainer = t }
+// SetTrainer installs a best-effort Bayes trainer invoked on confirm-spam /
+// false-positive. It takes tokens rather than text because that is all the
+// incident kept (see store.SaveIncidentTokens): the raw message is deleted
+// from the source chat before an admin ever sees the button. A nil trainer
+// (the default) disables training.
+func (h *Handler) SetTrainer(t func(scope, label string, tokens []string) error) { h.trainer = t }
 
 // Authorized reports whether presserID may act on incidents whose source
 // chat is sourceChatID. It checks the cheap, network-free global-operator
@@ -132,12 +140,12 @@ func (h *Handler) Handle(ctx context.Context, cb Callback) error {
 		return h.port.AnswerCallback(ctx, cb.ID, "invalid incident")
 	}
 
-	sourceChatID, err := h.db.GetIncidentChat(incidentID)
+	inc, err := h.db.GetIncident(incidentID)
 	if err != nil {
-		return fmt.Errorf("lookup incident %d source chat: %w", incidentID, err)
+		return fmt.Errorf("lookup incident %d: %w", incidentID, err)
 	}
 
-	authorized, err := h.Authorized(ctx, sourceChatID, cb.PresserID)
+	authorized, err := h.Authorized(ctx, inc.ChatID, cb.PresserID)
 	if err != nil {
 		return fmt.Errorf("authorize presser %d: %w", cb.PresserID, err)
 	}
@@ -147,43 +155,161 @@ func (h *Handler) Handle(ctx context.Context, cb Callback) error {
 		return h.port.AnswerCallback(ctx, cb.ID, "not authorized")
 	}
 
-	text, err := h.dispatch(act, key, cb.EvidenceText)
+	text, err := h.dispatch(ctx, act, inc, cb)
 	if err != nil {
 		return fmt.Errorf("dispatch %s: %w", act, err)
 	}
 	return h.port.AnswerCallback(ctx, cb.ID, text)
 }
 
-// dispatch applies the per-action effect. For M2 these are minimal: the
-// store-side sample writes are stubs (origin "user"), and full moderation
-// actions (unban/unrestrict) land in a later milestone. Every call here is
-// only reached once Handle has confirmed Authorized == true.
-func (h *Handler) dispatch(act Action, incidentKey, evidenceText string) (string, error) {
+// dispatch applies the per-action effect. Every call here is only reached
+// once Handle has confirmed Authorized == true.
+//
+// Two properties are deliberate. First, the undo actions really call
+// Telegram (unban / full unmute) instead of only recording a row: a live
+// sanction that no button can lift is worse than no button at all. Second,
+// what undo CANNOT do is restore deleted messages — Telegram offers no such
+// call — so the reply text says so rather than implying a full rollback.
+func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRow, cb Callback) (string, error) {
+	key := strconv.FormatInt(inc.ID, 10)
 	switch act {
 	case ActFalsePositive:
-		if _, err := h.db.InsertSample("incident", string(act), "user", incidentKey); err != nil {
+		// The decision row is written first: it is the audit trail, and it
+		// must survive even if the Telegram undo below fails.
+		if _, err := h.db.InsertSample(decisionScope, string(act), "user", key); err != nil {
 			return "", err
 		}
-		if h.trainer != nil && strings.TrimSpace(evidenceText) != "" {
-			// best-effort: training failure must not break the admin action
-			_ = h.trainer("global", "ham", evidenceText)
+		lifted, err := h.undo(ctx, inc)
+		if err != nil {
+			return "", err
 		}
-		return "marked false positive", nil
+		trained := h.train(inc.ID, "ham")
+		return joinReply("marked false positive", lifted, trained), nil
+
 	case ActConfirmSpam:
-		if _, err := h.db.InsertSample("incident", string(act), "user", incidentKey); err != nil {
+		if _, err := h.db.InsertSample(decisionScope, string(act), "user", key); err != nil {
 			return "", err
 		}
-		if h.trainer != nil && strings.TrimSpace(evidenceText) != "" {
-			// best-effort: training failure must not break the admin action
-			_ = h.trainer("global", "spam", evidenceText)
-		}
-		return "confirmed spam", nil
+		trained := h.train(inc.ID, "spam")
+		return joinReply("confirmed spam", "", trained), nil
+
 	case ActLiftNoLearn:
-		// Explicitly not a learning signal: no sample write.
-		return "lifted (not learned)", nil
+		// Explicitly not a learning signal: no sample write, and the
+		// captured tokens are dropped rather than fed to Bayes.
+		lifted, err := h.undo(ctx, inc)
+		if err != nil {
+			return "", err
+		}
+		h.dropTokens(inc.ID)
+		return joinReply("lifted (not learned)", lifted, ""), nil
+
 	case ActDeleteEvidence:
-		return "evidence marked for deletion", nil
+		n, err := h.deleteEvidence(ctx, inc.ID)
+		if err != nil {
+			return "", err
+		}
+		if n == 0 {
+			return "no evidence to delete", nil
+		}
+		return fmt.Sprintf("deleted %d evidence message(s)", n), nil
+
 	default:
 		return "unknown action", nil
 	}
+}
+
+// decisionScope is the samples-table scope used for admin decision records.
+// It is intentionally NOT a Bayes scope: nothing reads counts under it, so
+// these rows are an audit of who decided what, never training data. Bayes
+// learning goes through train (below) under the real corpus scope.
+const decisionScope = "incident"
+
+// undo lifts the sanction this incident applied, returning a short phrase
+// describing what was reverted (empty when there was nothing to revert).
+//
+// A dry-run incident, an incident that never reached StateActed, or a
+// delete-only action all yield "" without touching Telegram: issuing an
+// unban for a sanction that was never applied would be a lie in the audit
+// trail and a wasted API call under the queue's rate limit.
+func (h *Handler) undo(ctx context.Context, inc store.IncidentRow) (string, error) {
+	if !inc.Sanctioned() || inc.UserID == 0 {
+		return "", nil
+	}
+	switch inc.Action {
+	case domain.ActionBan:
+		if err := h.port.UnbanMember(ctx, inc.ChatID, inc.UserID); err != nil {
+			return "", fmt.Errorf("unban user %d in chat %d: %w", inc.UserID, inc.ChatID, err)
+		}
+		return "unbanned", nil
+	case domain.ActionMute, domain.ActionDeleteMute:
+		// Full permissions restore the member; Perms.CanSend maps onto every
+		// can_send_* flag (see LivePort.RestrictMember).
+		if err := h.port.RestrictMember(ctx, inc.ChatID, inc.UserID, telegram.Perms{CanSend: true}, 0); err != nil {
+			return "", fmt.Errorf("unmute user %d in chat %d: %w", inc.UserID, inc.ChatID, err)
+		}
+		return "unmuted", nil
+	default:
+		return "", nil
+	}
+}
+
+// train feeds the incident's captured tokens to the Bayes trainer under the
+// given label and reports a short phrase for the reply. Best-effort by
+// design: a missing token row (incident predating capture, captionless
+// media, or an already-reviewed incident) and a trainer error both degrade
+// to "not trained" rather than failing the admin's action.
+func (h *Handler) train(incidentID int64, label string) string {
+	if h.trainer == nil {
+		return ""
+	}
+	tokens, ok, err := h.db.GetIncidentTokens(incidentID)
+	if err != nil || !ok {
+		return "not trained"
+	}
+	if err := h.trainer(string(domain.ScopeGlobal), label, tokens); err != nil {
+		return "not trained"
+	}
+	h.dropTokens(incidentID)
+	return "trained " + label
+}
+
+// dropTokens deletes the incident's captured tokens once it has been
+// reviewed. Errors are ignored: the periodic prune is the backstop, and
+// failing an admin action over bookkeeping would be worse than a stale row.
+func (h *Handler) dropTokens(incidentID int64) {
+	_ = h.db.DeleteIncidentTokens(incidentID)
+}
+
+// deleteEvidence removes the copies the bot posted to the admin chat and
+// forgets them, returning how many messages were deleted. The bookkeeping
+// rows are dropped only after Telegram accepted the delete, so a failed
+// call leaves the evidence discoverable instead of silently orphaned.
+func (h *Handler) deleteEvidence(ctx context.Context, incidentID int64) (int, error) {
+	adminChatID, ids, err := h.db.ListEvidence(incidentID)
+	if err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	if err := h.port.DeleteMessages(ctx, adminChatID, ids); err != nil {
+		return 0, fmt.Errorf("delete evidence in chat %d: %w", adminChatID, err)
+	}
+	if err := h.db.DeleteEvidenceRows(incidentID); err != nil {
+		return 0, err
+	}
+	return len(ids), nil
+}
+
+// joinReply assembles the callback toast from the decision and any optional
+// side effects, keeping it short enough for Telegram's callback answer.
+func joinReply(decision, lifted, trained string) string {
+	parts := []string{decision}
+	if lifted != "" {
+		parts = append(parts, lifted+" (deleted messages cannot be restored)")
+	}
+	if trained != "" {
+		parts = append(parts, trained)
+	}
+	return strings.Join(parts, "; ")
 }

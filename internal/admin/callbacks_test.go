@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stufently/telegram-antispam/internal/domain"
@@ -13,8 +14,8 @@ import (
 )
 
 // newMigrated builds a fresh, migrated store.DB backed by a temp file, for
-// tests that need a real incident row (Handle looks up the incident's
-// source chat via GetIncidentChat).
+// tests that need a real incident row (Handle looks up the incident via
+// GetIncident to resolve RBAC scope and what there is to undo).
 func newMigrated(t *testing.T) *store.DB {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
@@ -60,29 +61,45 @@ func TestParseCallbackRoundTrip(t *testing.T) {
 	}
 }
 
-func TestHandleConfirmSpamTrainsBayesWhenAuthorized(t *testing.T) {
-	db := newMigrated(t)
-	defer db.Close()
-
-	incidentID, _, err := db.InsertPending(-100123, 55, 7, true, domain.Verdict{})
+// actedIncident inserts an incident that really applied action, at
+// StateDone, and stores tokens for it — the state an admin sees when the
+// evidence message shows up with buttons.
+func actedIncident(t *testing.T, db *store.DB, chatID int64, msgID int, userID int64, action domain.Action, tokens []string) int64 {
+	t.Helper()
+	id, _, err := db.InsertPending(chatID, msgID, userID, false, domain.Verdict{Action: action})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := db.SetIncidentState(id, domain.StateDone); err != nil {
+		t.Fatal(err)
+	}
+	if len(tokens) > 0 {
+		if err := db.SaveIncidentTokens(id, tokens); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return id
+}
+
+func TestHandleConfirmSpamTrainsFromStoredTokens(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+
+	incidentID := actedIncident(t, db, -100123, 55, 7, domain.ActionDeleteMute, []string{"casino", "bonus"})
 
 	f := fake.New()
 	h := NewHandler(f, db, map[int64]bool{7: true}) // presser 7 is a global operator
 
 	var calls []trainerCall
-	h.SetTrainer(func(scope, label, text string) error {
-		calls = append(calls, trainerCall{scope, label, text})
+	h.SetTrainer(func(scope, label string, tokens []string) error {
+		calls = append(calls, trainerCall{scope, label, strings.Join(tokens, " ")})
 		return nil
 	})
 
 	cb := Callback{
-		ID:           "cbid1",
-		Data:         encode(ActConfirmSpam, strconv.FormatInt(incidentID, 10)),
-		PresserID:    7,
-		EvidenceText: "win a free casino bonus",
+		ID:        "cbid1",
+		Data:      encode(ActConfirmSpam, strconv.FormatInt(incidentID, 10)),
+		PresserID: 7,
 	}
 	if err := h.Handle(context.Background(), cb); err != nil {
 		t.Fatal(err)
@@ -91,9 +108,19 @@ func TestHandleConfirmSpamTrainsBayesWhenAuthorized(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("trainer calls = %d, want 1 (calls=%v)", len(calls), calls)
 	}
-	want := trainerCall{"global", "spam", "win a free casino bonus"}
+	want := trainerCall{"global", "spam", "casino bonus"}
 	if calls[0] != want {
 		t.Fatalf("trainer call = %+v, want %+v", calls[0], want)
+	}
+	// Reviewed incidents must not keep message-derived content around.
+	if _, ok, err := db.GetIncidentTokens(incidentID); err != nil || ok {
+		t.Fatalf("tokens after review: ok=%v err=%v, want dropped", ok, err)
+	}
+	// Confirming spam is not an undo: no sanction call may be issued.
+	for _, c := range f.Calls() {
+		if c == "UnbanMember" || c == "RestrictMember" {
+			t.Fatalf("confirm spam issued %s, want no sanction change", c)
+		}
 	}
 }
 
@@ -101,26 +128,22 @@ func TestHandleConfirmSpamUnauthorizedDoesNotTrain(t *testing.T) {
 	db := newMigrated(t)
 	defer db.Close()
 
-	incidentID, _, err := db.InsertPending(-100123, 55, 7, true, domain.Verdict{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	incidentID := actedIncident(t, db, -100123, 55, 7, domain.ActionDeleteMute, []string{"casino", "bonus"})
 
 	f := fake.New()
 	f.Admins = nil                           // no chat admins, and presser is not a global operator
 	h := NewHandler(f, db, map[int64]bool{}) // no global operators
 
 	var calls []trainerCall
-	h.SetTrainer(func(scope, label, text string) error {
-		calls = append(calls, trainerCall{scope, label, text})
+	h.SetTrainer(func(scope, label string, tokens []string) error {
+		calls = append(calls, trainerCall{scope, label, strings.Join(tokens, " ")})
 		return nil
 	})
 
 	cb := Callback{
-		ID:           "cbid2",
-		Data:         encode(ActConfirmSpam, strconv.FormatInt(incidentID, 10)),
-		PresserID:    99, // unauthorized
-		EvidenceText: "win a free casino bonus",
+		ID:        "cbid2",
+		Data:      encode(ActConfirmSpam, strconv.FormatInt(incidentID, 10)),
+		PresserID: 99, // unauthorized
 	}
 	if err := h.Handle(context.Background(), cb); err != nil {
 		t.Fatal(err)
@@ -128,5 +151,142 @@ func TestHandleConfirmSpamUnauthorizedDoesNotTrain(t *testing.T) {
 
 	if len(calls) != 0 {
 		t.Fatalf("trainer calls = %d, want 0 for unauthorized presser (calls=%v)", len(calls), calls)
+	}
+	if _, ok, _ := db.GetIncidentTokens(incidentID); !ok {
+		t.Fatal("unauthorized press dropped the incident tokens")
+	}
+}
+
+func TestHandleFalsePositiveUnmutesAndTrainsHam(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+
+	incidentID := actedIncident(t, db, -100123, 55, 7, domain.ActionDeleteMute, []string{"hello", "everyone"})
+
+	f := fake.New()
+	h := NewHandler(f, db, map[int64]bool{9: true})
+
+	var calls []trainerCall
+	h.SetTrainer(func(scope, label string, tokens []string) error {
+		calls = append(calls, trainerCall{scope, label, strings.Join(tokens, " ")})
+		return nil
+	})
+
+	cb := Callback{ID: "cb", Data: encode(ActFalsePositive, strconv.FormatInt(incidentID, 10)), PresserID: 9}
+	if err := h.Handle(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+
+	if f.LastRestrict.UserID != 7 || f.LastRestrict.Chat != -100123 {
+		t.Fatalf("unmute targeted chat=%d user=%d, want chat=-100123 user=7", f.LastRestrict.Chat, f.LastRestrict.UserID)
+	}
+	if !f.LastRestrict.Perms.CanSend {
+		t.Fatal("false positive restored permissions with CanSend=false — the user stays muted")
+	}
+	if len(calls) != 1 || calls[0].label != "ham" {
+		t.Fatalf("trainer calls = %v, want one ham call", calls)
+	}
+}
+
+func TestHandleFalsePositiveUnbansWhenActionWasBan(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+
+	incidentID := actedIncident(t, db, -100123, 55, 7, domain.ActionBan, nil)
+
+	f := fake.New()
+	h := NewHandler(f, db, map[int64]bool{9: true})
+
+	cb := Callback{ID: "cb", Data: encode(ActFalsePositive, strconv.FormatInt(incidentID, 10)), PresserID: 9}
+	if err := h.Handle(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+	if f.LastUnban.UserID != 7 || f.LastUnban.Chat != -100123 {
+		t.Fatalf("unban targeted chat=%d user=%d, want chat=-100123 user=7", f.LastUnban.Chat, f.LastUnban.UserID)
+	}
+}
+
+func TestHandleUndoSkippedForDryRunIncident(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+
+	// dry_run=true: nothing was ever applied, so there is nothing to lift.
+	incidentID, _, err := db.InsertPending(-100123, 55, 7, true, domain.Verdict{Action: domain.ActionBan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetIncidentState(incidentID, domain.StateDone); err != nil {
+		t.Fatal(err)
+	}
+
+	f := fake.New()
+	h := NewHandler(f, db, map[int64]bool{9: true})
+
+	cb := Callback{ID: "cb", Data: encode(ActLiftNoLearn, strconv.FormatInt(incidentID, 10)), PresserID: 9}
+	if err := h.Handle(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range f.Calls() {
+		if c == "UnbanMember" || c == "RestrictMember" {
+			t.Fatalf("dry-run incident issued %s, want no Telegram sanction call", c)
+		}
+	}
+}
+
+func TestHandleLiftDoesNotTrain(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+
+	incidentID := actedIncident(t, db, -100123, 55, 7, domain.ActionMute, []string{"borderline", "text"})
+
+	f := fake.New()
+	h := NewHandler(f, db, map[int64]bool{9: true})
+	var calls []trainerCall
+	h.SetTrainer(func(scope, label string, tokens []string) error {
+		calls = append(calls, trainerCall{scope, label, strings.Join(tokens, " ")})
+		return nil
+	})
+
+	cb := Callback{ID: "cb", Data: encode(ActLiftNoLearn, strconv.FormatInt(incidentID, 10)), PresserID: 9}
+	if err := h.Handle(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("lift trained %v, want no training", calls)
+	}
+	if !f.LastRestrict.Perms.CanSend {
+		t.Fatal("lift did not restore permissions")
+	}
+	if _, ok, _ := db.GetIncidentTokens(incidentID); ok {
+		t.Fatal("lift kept the captured tokens")
+	}
+}
+
+func TestHandleDeleteEvidenceRemovesCopies(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+
+	incidentID := actedIncident(t, db, -100123, 55, 7, domain.ActionDeleteMute, nil)
+	if err := db.AddEvidence(incidentID, -100999, []int{11, 12}); err != nil {
+		t.Fatal(err)
+	}
+
+	f := fake.New()
+	h := NewHandler(f, db, map[int64]bool{9: true})
+
+	cb := Callback{ID: "cb", Data: encode(ActDeleteEvidence, strconv.FormatInt(incidentID, 10)), PresserID: 9}
+	if err := h.Handle(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+	if f.LastDelete.Chat != -100999 || len(f.LastDelete.IDs) != 2 {
+		t.Fatalf("deleted chat=%d ids=%v, want chat=-100999 ids=[11 12]", f.LastDelete.Chat, f.LastDelete.IDs)
+	}
+	// A second press must not re-issue deletes for ids Telegram forgot.
+	f.LastDelete.Chat, f.LastDelete.IDs = 0, nil
+	if err := h.Handle(context.Background(), Callback{ID: "cb2", Data: cb.Data, PresserID: 9}); err != nil {
+		t.Fatal(err)
+	}
+	if f.LastDelete.IDs != nil {
+		t.Fatalf("second press deleted %v, want nothing", f.LastDelete.IDs)
 	}
 }

@@ -6,6 +6,7 @@ package incident
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/stufently/telegram-antispam/internal/domain"
 	"github.com/stufently/telegram-antispam/internal/telegram"
@@ -16,6 +17,7 @@ type Repo interface {
 	InsertPending(chatID int64, messageID int, userID int64, dryRun bool, verdict domain.Verdict) (int64, bool, error)
 	SetIncidentState(id int64, s domain.IncidentState) error
 	AddEvidence(id int64, adminChatID int64, adminMessageIDs []int) error
+	SaveIncidentTokens(id int64, tokens []string) error
 }
 
 // hardConfidence is the floor above which we still act even if evidence copy
@@ -65,6 +67,16 @@ func (m *Machine) Handle(ctx context.Context, inc domain.Incident) error {
 		// reprocess guard: this incident was already recorded, so evidence
 		// was already copied and any action already taken. Skip entirely.
 		return nil
+	}
+
+	// Capture the normalized tokens before anything destructive: they are
+	// what an admin's later Confirm-spam / False-positive press trains on,
+	// and after the originals are deleted there is no way to recover them.
+	// Best-effort — a failure here must not block moderation.
+	if len(inc.Tokens) > 0 {
+		if err := m.repo.SaveIncidentTokens(id, inc.Tokens); err != nil {
+			log.Printf("save incident %d tokens: %v", id, err)
+		}
 	}
 
 	// 1. evidence BEFORE any destructive action.
