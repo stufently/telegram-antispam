@@ -1,0 +1,24 @@
+{{- if .Values.service.enabled }}
+# The bot serves no user traffic — this Service exists so a cluster-internal
+# scraper (Prometheus, vmagent, …) has a stable name for /metrics and
+# /healthz. Without it the only address is a pod IP that changes on every
+# restart, which is not something a static scrape config can hold onto.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app: {{ .Release.Name }}
+  {{- with .Values.service.annotations }}
+  annotations: {{ toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ .Release.Name }}
+  ports:
+    - name: metrics
+      port: {{ .Values.metricsPort }}
+      targetPort: metrics
+      protocol: TCP
+{{- end }}

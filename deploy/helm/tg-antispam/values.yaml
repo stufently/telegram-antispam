@@ -1,6 +1,11 @@
 image:
   repository: ghcr.io/stufently/telegram-antispam
-  tag: latest
+  # tag is intentionally empty: it defaults to Chart.appVersion, so the chart
+  # version and the image it deploys can never drift apart. Set it only to
+  # pin something other than the chart's own app version (a hotfix build, a
+  # digest). Do NOT put "latest" here — it makes rollbacks unrepeatable and
+  # hides which build is actually running.
+  tag: ""
   pullPolicy: IfNotPresent
 
 replicaCount: 1 # single writer (SQLite) — do NOT scale beyond 1
@@ -14,9 +19,22 @@ resources:
 
 metricsPort: 9090
 
+service:
+  # A ClusterIP Service for /metrics and /healthz. Enabled by default: the
+  # chart already exposes a metrics port, and without a Service nothing in
+  # the cluster can scrape it at a stable address.
+  enabled: true
+  annotations: {}
+
 persistence:
-  # SQLite lives on a PVC. size is small; the blocklist mirror is in-memory.
-  size: 1Gi
+  # SQLite lives on a PVC. The database itself is small (the blocklist mirror
+  # is in-memory), but many cloud CSI drivers refuse to provision below their
+  # own minimum — Hetzner's is 10Gi, and a 1Gi request there fails outright
+  # rather than being rounded up. 10Gi is the smallest portable default.
+  size: 10Gi
+  # Empty means "the cluster default StorageClass". Naming it explicitly is
+  # better practice in a cluster with more than one class, or where the
+  # default may be changed later.
   storageClass: ""
 
 # --- Bot token (SECRET) -----------------------------------------------------
@@ -26,16 +44,35 @@ persistence:
 # Option A (chart-managed): set botToken here and the chart renders a Secret.
 #   Fine for quick installs; the value sits in your Helm values/release.
 # Option B (external, recommended for prod): pre-create a Secret and reference
-#   it — leave botToken empty and set existingSecret (+ existingSecretKey).
+# it — leave botToken empty and set existingSecret (+ existingSecretKey).
 botToken: ""
 existingSecret: "" # name of a pre-existing Secret holding the bot token
 existingSecretKey: bot_token # key within existingSecret
 
-# The bot config.yaml, rendered into a ConfigMap. Do NOT put bot_token here —
-# it comes from the Secret above. Provide the rest of your config.
+# --- LLM credentials (SECRET, optional) -------------------------------------
+# The optional borderline LLM stage needs an API key, and the config below is
+# rendered into a ConfigMap — i.e. into version control in a GitOps setup.
+# So the keys come from a Secret as env vars instead (OPENAI_API_KEY /
+# ANTHROPIC_API_KEY override llm.providers[].api_key exactly like BOT_TOKEN
+# overrides bot_token). Leave empty when the LLM stage is off.
+llmSecret:
+  name: "" # name of a pre-existing Secret holding the API key(s)
+  openaiKey: "" # key within that Secret holding the OpenAI API key
+  anthropicKey: "" # key within that Secret holding the Anthropic API key
+
+# The bot config.yaml, rendered into a ConfigMap. Do NOT put bot_token or LLM
+# api_key here — those come from Secrets above. Provide the rest of your
+# config; see config.example.yaml in the repository for every key.
 config: |
   admin_chat_id: 0
   action: delete_mute
   chats:
     mode: auto
     start_in_dry_run: true
+    # Chats listed here moderate for real, regardless of the dry-run value
+    # stored when they first registered. This is how an observed chat goes
+    # live — editing start_in_dry_run alone does not affect a chat that has
+    # already registered.
+    enforce: []
+    # Chats pinned to dry-run no matter what; wins over enforce.
+    force_dry_run: []

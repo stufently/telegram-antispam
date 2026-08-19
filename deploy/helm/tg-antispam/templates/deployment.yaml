@@ -15,16 +15,32 @@ spec:
     metadata:
       labels:
         app: {{ .Release.Name }}
+      annotations:
+        # Roll the pod whenever the config changes. This is not a nicety: the
+        # bot's own file watcher cannot see a ConfigMap update, because
+        # kubelet swaps the mounted ..data directory rather than writing the
+        # file, so no write/create event ever arrives for config.yaml. Without
+        # this annotation a config change would be applied to the ConfigMap
+        # and silently never reach the running process.
+        checksum/config: {{ .Values.config | sha256sum }}
     spec:
+      automountServiceAccountToken: false # the bot never talks to the API server
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
         fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: tg-antispam
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true # everything writable lives on /data
+            capabilities:
+              drop: ["ALL"]
           env:
             - name: CONFIG_PATH
               value: /config/config.yaml
@@ -36,6 +52,20 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.existingSecret | default (printf "%s-bot-token" .Release.Name) }}
                   key: {{ if .Values.existingSecret }}{{ .Values.existingSecretKey }}{{ else }}bot_token{{ end }}
+            {{- end }}
+            {{- if and .Values.llmSecret.name .Values.llmSecret.openaiKey }}
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.llmSecret.name }}
+                  key: {{ .Values.llmSecret.openaiKey }}
+            {{- end }}
+            {{- if and .Values.llmSecret.name .Values.llmSecret.anthropicKey }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.llmSecret.name }}
+                  key: {{ .Values.llmSecret.anthropicKey }}
             {{- end }}
           ports:
             - name: metrics
@@ -59,6 +89,12 @@ spec:
             - name: config
               mountPath: /config
               readOnly: true
+            # readOnlyRootFilesystem leaves the process with nowhere to put a
+            # temporary file; SQLite falls back to disk for large sorts and
+            # for VACUUM, so give it a real (pod-local, non-persistent) /tmp
+            # rather than discovering the limit under load.
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -66,3 +102,5 @@ spec:
         - name: config
           configMap:
             name: {{ .Release.Name }}-config
+        - name: tmp
+          emptyDir: {}
