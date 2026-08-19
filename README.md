@@ -151,6 +151,21 @@ tg-antispam import --label spam --scope global spam-samples.txt
 tg-antispam import --label ham  --scope global ham-samples.txt
 ```
 
+In Kubernetes, put the two files in a ConfigMap and set
+`training.existingConfigMap`: the chart then runs the same import as init
+containers before every start. That is the supported path because the image is
+distroless (no shell to exec into) and the database has a single writer on a
+ReadWriteOnce volume, so a separate Job would have to fight the running pod for
+the volume.
+
+**Keep the two classes roughly balanced.** The score includes the class priors,
+so a mostly-spam corpus shifts *every* message upward — at 80% spam the prior
+alone contributes about +1.5, which clears a threshold of 1.0 on its own and
+turns ordinary chat into spam verdicts. Calibrate on a holdout with
+`detect.Evaluate` rather than trusting the default threshold: on a real 187/447
+corpus, raising `bayes_threshold` from 1.0 to 2.0 removed every false positive
+at identical recall.
+
 ## Enable the optional LLM stage
 
 Opt-in only — it sends borderline message text to a paid, official API. The system prompt is

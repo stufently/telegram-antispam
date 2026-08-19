@@ -160,6 +160,10 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
 
 ## Change patterns
 
+- The Bayes score includes class priors, so corpus BALANCE is part of the
+  configuration, not a detail: a mostly-spam corpus lifts every message toward
+  spam regardless of its words. Anything that imports samples in bulk (the
+  chart's init containers, `import`) must say so where an operator will read it.
 - Every exported metric name starts with `tg_antispam_`. These land in a shared
   Prometheus/VictoriaMetrics instance where a bare `updates_total` would collide
   with someone else's series, and renaming after dashboards and alerts exist is

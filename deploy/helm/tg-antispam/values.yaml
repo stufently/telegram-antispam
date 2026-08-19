@@ -68,6 +68,24 @@ llmSecret:
   openaiKey: "" # key within that Secret holding the OpenAI API key
   anthropicKey: "" # key within that Secret holding the Anthropic API key
 
+# --- Bayes corpus seeding (optional) ----------------------------------------
+# Point this at a ConfigMap holding labeled samples (one per line) and the
+# chart runs `tg-antispam import` as init containers before the bot starts.
+# The import is idempotent — samples are deduplicated by content hash — so it
+# is safe on every restart, and it is the only way to seed the corpus on a
+# distroless image with a single-writer database: there is no shell to exec
+# into, and a separate Job would have to fight the running pod for the RWO
+# volume.
+#
+# ⚠️ Keep the classes roughly balanced. The score includes the class priors,
+# so a corpus of mostly-spam shifts every message upward: with 80% spam the
+# prior alone contributes about +1.5, which on its own clears a threshold of
+# 1.0 and turns ordinary messages into spam verdicts.
+training:
+  existingConfigMap: "" # name of a ConfigMap with the corpus files
+  spamKey: spam.txt
+  hamKey: ham.txt
+
 # The bot config.yaml, rendered into a ConfigMap. Do NOT put bot_token or LLM
 # api_key here — those come from Secrets above. Provide the rest of your
 # config; see config.example.yaml in the repository for every key.

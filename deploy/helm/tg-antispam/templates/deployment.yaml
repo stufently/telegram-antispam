@@ -32,6 +32,49 @@ spec:
         fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
+      {{- if .Values.training.existingConfigMap }}
+      initContainers:
+        # Two containers rather than one: the runtime image is distroless, so
+        # there is no shell to chain two commands in, and the import command
+        # takes exactly one file and one label. They run in order, before the
+        # bot, against the same database file on the same volume.
+        - name: import-spam
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["import", "--label", "spam", "--scope", "global", "--origin", "preset", "/corpus/{{ .Values.training.spamKey }}"]
+          env:
+            - name: DB_PATH
+              value: /data/antispam.db
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: corpus
+              mountPath: /corpus
+              readOnly: true
+        - name: import-ham
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["import", "--label", "ham", "--scope", "global", "--origin", "preset", "/corpus/{{ .Values.training.hamKey }}"]
+          env:
+            - name: DB_PATH
+              value: /data/antispam.db
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: corpus
+              mountPath: /corpus
+              readOnly: true
+      {{- end }}
       containers:
         - name: tg-antispam
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -106,3 +149,8 @@ spec:
             name: {{ .Release.Name }}-config
         - name: tmp
           emptyDir: {}
+        {{- if .Values.training.existingConfigMap }}
+        - name: corpus
+          configMap:
+            name: {{ .Values.training.existingConfigMap }}
+        {{- end }}
