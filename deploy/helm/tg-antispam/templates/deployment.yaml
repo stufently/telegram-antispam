@@ -30,6 +30,13 @@ spec:
               value: /config/config.yaml
             - name: DB_PATH
               value: /data/antispam.db
+            {{- if or .Values.botToken .Values.existingSecret }}
+            - name: BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret | default (printf "%s-bot-token" .Release.Name) }}
+                  key: {{ if .Values.existingSecret }}{{ .Values.existingSecretKey }}{{ else }}bot_token{{ end }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.metricsPort }}

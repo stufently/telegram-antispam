@@ -19,9 +19,23 @@ persistence:
   size: 1Gi
   storageClass: ""
 
-# The bot config.yaml, rendered into a ConfigMap. Provide your real values here
-# (or via a separate Secret for bot_token in production).
+# --- Bot token (SECRET) -----------------------------------------------------
+# The token is injected into the container as the BOT_TOKEN env var (env wins
+# over any bot_token in the config file), so it never lands in the ConfigMap.
+#
+# Option A (chart-managed): set botToken here and the chart renders a Secret.
+#   Fine for quick installs; the value sits in your Helm values/release.
+# Option B (external, recommended for prod): pre-create a Secret and reference
+#   it — leave botToken empty and set existingSecret (+ existingSecretKey).
+botToken: ""
+existingSecret: "" # name of a pre-existing Secret holding the bot token
+existingSecretKey: bot_token # key within existingSecret
+
+# The bot config.yaml, rendered into a ConfigMap. Do NOT put bot_token here —
+# it comes from the Secret above. Provide the rest of your config.
 config: |
-  bot_token: ""
   admin_chat_id: 0
   action: delete_mute
+  chats:
+    mode: auto
+    start_in_dry_run: true

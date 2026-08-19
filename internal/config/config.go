@@ -123,6 +123,12 @@ type Detection struct {
 	// distinction here), so the zero value doubles as "unset" and gets
 	// the default. Default: 1.
 	FakeAdminMaxDistance int `yaml:"fake_admin_max_distance"`
+	// FakeAdminMinFuzzyLen is the minimum rune length (of the shorter of the
+	// two compared names) before fuzzy edit-distance matching is allowed;
+	// below it, only an exact match flags. Prevents distance-1 false
+	// positives on short names (e.g. "CEO" vs "CFO"). Plain int: 0 doubles as
+	// "unset" and gets the default. Default: 5.
+	FakeAdminMinFuzzyLen int `yaml:"fake_admin_min_fuzzy_len"`
 	// FakeAdminSuspiciousTags is the list of substrings in a display
 	// name (e.g. "admin", "support") that the fake-admin detector treats
 	// as suspicious. nil (key absent from YAML) means "unset" and gets
@@ -278,6 +284,12 @@ func Parse(b []byte) (*Config, error) {
 	c.applyBlocklistDefaults()
 	c.applyOpsDefaults()
 	c.applyLLMDefaults()
+	// BOT_TOKEN env overrides bot_token from the file, so the token can be
+	// supplied by a Kubernetes Secret / Docker secret and kept out of the
+	// config file entirely (12-factor). Env wins when both are set.
+	if v := os.Getenv("BOT_TOKEN"); v != "" {
+		c.BotToken = v
+	}
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -347,6 +359,9 @@ func (c *Config) applyDetectionDefaults() {
 	}
 	if c.Detection.FakeAdminMaxDistance == 0 {
 		c.Detection.FakeAdminMaxDistance = 1
+	}
+	if c.Detection.FakeAdminMinFuzzyLen == 0 {
+		c.Detection.FakeAdminMinFuzzyLen = 5
 	}
 	if c.Detection.FakeAdminSuspiciousTags == nil {
 		c.Detection.FakeAdminSuspiciousTags = []string{"admin", "support", "verified", "moderator"}

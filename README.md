@@ -101,14 +101,19 @@ docker run -d --name tg-antispam \
 ## Deploy to Kubernetes (Helm)
 
 ```bash
+# Production: keep the token in a Kubernetes Secret (never in the ConfigMap).
+kubectl create secret generic tg-antispam-token --from-literal=bot_token=123456:ABC...
+
 helm install tg-antispam ./deploy/helm/tg-antispam \
-  --set image.tag=latest \
-  --set-file config=./config.yaml
+  --set existingSecret=tg-antispam-token \
+  --set-file config=./config.yaml   # config.yaml WITHOUT bot_token
 ```
 
-The chart runs as a non-root user on a PVC-backed `/data` volume with a `Recreate` strategy
-and `replicaCount: 1` (SQLite is a single writer), and wires `/healthz` liveness/readiness
-probes. Prefer a Kubernetes `Secret` for `bot_token` in production.
+The bot token is injected as the `BOT_TOKEN` env var from a Secret, so it never lands in the
+ConfigMap. Use `--set existingSecret=<name>` to reference a pre-created Secret (recommended),
+or `--set botToken=<token>` to let the chart manage one. The chart runs as a non-root user on
+a PVC-backed `/data` volume with a `Recreate` strategy and `replicaCount: 1` (SQLite is a
+single writer), and wires `/healthz` liveness/readiness probes.
 
 ## Train the Bayesian filter
 

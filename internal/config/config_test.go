@@ -426,3 +426,28 @@ func TestLLMDisabledSkipsValidation(t *testing.T) {
 		t.Fatalf("disabled LLM should skip validation, got %v", err)
 	}
 }
+
+func TestBotTokenEnvOverride(t *testing.T) {
+	t.Setenv("BOT_TOKEN", "env-token-123")
+	// baseValidYAML sets a bot_token; env must win over it.
+	c, err := Parse([]byte(baseValidYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BotToken != "env-token-123" {
+		t.Fatalf("BOT_TOKEN env should win, got %q", c.BotToken)
+	}
+}
+
+func TestBotTokenFromEnvWhenFileEmpty(t *testing.T) {
+	t.Setenv("BOT_TOKEN", "env-only-token")
+	// A config with no bot_token must still validate when BOT_TOKEN is set.
+	yaml := "admin_chat_id: -100123\naction: delete_mute\nchats:\n  mode: auto\n"
+	c, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("expected valid config from env token, got %v", err)
+	}
+	if c.BotToken != "env-only-token" {
+		t.Fatalf("got %q", c.BotToken)
+	}
+}

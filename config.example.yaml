@@ -1,3 +1,5 @@
+# bot_token can also be supplied via the BOT_TOKEN env var (env wins), so it
+# can come from a Kubernetes Secret / Docker secret and stay out of this file.
 bot_token: "REPLACE_WITH_BOTFATHER_TOKEN"
 admin_chat_id: -1000000000000
 action: delete_mute
@@ -70,6 +72,11 @@ detection:
   # value (it would only match identical strings), so it is always
   # treated as "unset". Default: 1.
   fake_admin_max_distance: 1
+  # Minimum name length (in characters, shorter of the two compared) before
+  # fuzzy edit-distance matching applies; below it only an exact match flags.
+  # Prevents distance-1 false positives on short names (e.g. CEO vs CFO).
+  # Default: 5.
+  fake_admin_min_fuzzy_len: 5
   # Substrings in a display name treated as suspicious admin-impersonation
   # signals, case-insensitive. An explicit empty list ([]) disables this
   # check. Default: [admin, support, verified, moderator].

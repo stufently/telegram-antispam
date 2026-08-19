@@ -16,6 +16,9 @@ services:
     environment:
       CONFIG_PATH: /config/config.yaml
       DB_PATH: /data/antispam.db
+      # Prefer supplying the token here (or via an .env file / secret) instead
+      # of putting bot_token in config.yaml. BOT_TOKEN wins over the file.
+      # BOT_TOKEN: ${BOT_TOKEN:-}
     volumes:
       - ./data:/data
       - ./config.yaml:/config/config.yaml:ro
