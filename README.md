@@ -218,8 +218,10 @@ Or run the test suite in Docker (no local toolchain needed):
 writable volume.
 
 **Will it ban people by accident?** Every action is evidence-backed, administrator lookups
-fail safely, and you can run any chat in dry-run first. Admin feedback is recorded, but the
-current `Lift` button does not yet unmute or unban automatically.
+fail safely, and you can run any chat in dry-run first. If one slips through, `False positive`
+and `Lift` unban or fully unmute the user from the admin chat — though the deleted messages
+themselves cannot be brought back, and each incident accepts one decision only (an old button
+must not lift a newer, unrelated sanction).
 
 **Does it send my users' messages to a third party?** Only if you explicitly enable the LLM
 stage. By default nothing leaves the process.

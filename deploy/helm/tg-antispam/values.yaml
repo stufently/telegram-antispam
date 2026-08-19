@@ -26,6 +26,14 @@ service:
   enabled: true
   annotations: {}
 
+probes:
+  # Liveness/readiness both hit /healthz on the metrics port. If you set
+  # `ops.metrics_enabled: false` in the config below, that port does not
+  # exist and the probes fail forever — a CrashLoopBackOff caused purely by
+  # turning off metrics. Set this to false together with that option (and
+  # with service.enabled), or, better, leave metrics on.
+  enabled: true
+
 persistence:
   # SQLite lives on a PVC. The database itself is small (the blocklist mirror
   # is in-memory), but many cloud CSI drivers refuse to provision below their

@@ -1,12 +1,14 @@
 # syntax=docker/dockerfile:1
 
 # --- build stage -----------------------------------------------------------
-# golang:1.26 matches scripts/dev.sh; CGO_ENABLED=0 is safe because the only
+# golang:1.26.6 matches the toolchain pinned in go.mod; CGO_ENABLED=0 is safe because the only
 # sqlite driver (modernc.org/sqlite) is pure Go — the resulting binary is
 # fully static and runs on distroless/static with no libc.
-FROM golang:1.26 AS build
+FROM golang:1.26.6 AS build
 WORKDIR /src
-ENV CGO_ENABLED=0 GOSUMDB=off GOFLAGS=-mod=readonly
+# GOSUMDB stays ON: go.sum is committed, so the checksum database is the
+# check that catches a tampered module the lockfile does not already pin.
+ENV CGO_ENABLED=0 GOFLAGS=-mod=readonly
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .

@@ -70,6 +70,7 @@ spec:
           ports:
             - name: metrics
               containerPort: {{ .Values.metricsPort }}
+          {{- if .Values.probes.enabled }}
           livenessProbe:
             httpGet:
               path: /healthz
@@ -82,6 +83,7 @@ spec:
               port: metrics
             initialDelaySeconds: 3
             periodSeconds: 10
+          {{- end }}
           resources: {{ toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - name: data

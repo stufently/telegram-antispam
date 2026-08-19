@@ -51,6 +51,7 @@ type Port interface {
 	DeleteMessages(ctx context.Context, chat int64, ids []int) error
 	BanMember(ctx context.Context, chat, user int64) error
 	UnbanMember(ctx context.Context, chat, user int64) error
+	UnrestrictMember(ctx context.Context, chat, user int64) error
 	RestrictMember(ctx context.Context, chat, user int64, perms Perms, until int64) error
 	SendAdmin(ctx context.Context, adminChat int64, msg AdminMessage) (int, error)
 	BanSenderChat(ctx context.Context, chat, senderChat int64) error

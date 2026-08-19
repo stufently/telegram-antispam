@@ -18,6 +18,10 @@ jobs:
           cache: true
       - run: go vet ./...
       - run: go test -race ./...
+      # Reachability-based CVE check over the standard library and deps. Kept
+      # in the test job so a vulnerable toolchain or module fails the build
+      # rather than being noticed at deploy time.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
   lint:
     runs-on: ubuntu-latest
     steps:

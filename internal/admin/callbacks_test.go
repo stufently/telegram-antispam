@@ -118,7 +118,7 @@ func TestHandleConfirmSpamTrainsFromStoredTokens(t *testing.T) {
 	}
 	// Confirming spam is not an undo: no sanction call may be issued.
 	for _, c := range f.Calls() {
-		if c == "UnbanMember" || c == "RestrictMember" {
+		if c == "UnbanMember" || c == "UnrestrictMember" {
 			t.Fatalf("confirm spam issued %s, want no sanction change", c)
 		}
 	}
@@ -177,11 +177,15 @@ func TestHandleFalsePositiveUnmutesAndTrainsHam(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if f.LastRestrict.UserID != 7 || f.LastRestrict.Chat != -100123 {
-		t.Fatalf("unmute targeted chat=%d user=%d, want chat=-100123 user=7", f.LastRestrict.Chat, f.LastRestrict.UserID)
+	if f.LastUnrestrict.UserID != 7 || f.LastUnrestrict.Chat != -100123 {
+		t.Fatalf("unmute targeted chat=%d user=%d, want chat=-100123 user=7", f.LastUnrestrict.Chat, f.LastUnrestrict.UserID)
 	}
-	if !f.LastRestrict.Perms.CanSend {
-		t.Fatal("false positive restored permissions with CanSend=false — the user stays muted")
+	// Must be UnrestrictMember, not a permissive RestrictMember: the latter
+	// cannot express invite/pin/react rights, so it would half-lift the mute.
+	for _, c := range f.Calls() {
+		if c == "RestrictMember" {
+			t.Fatal("undo used RestrictMember, which leaves non-send permissions revoked")
+		}
 	}
 	if len(calls) != 1 || calls[0].label != "ham" {
 		t.Fatalf("trainer calls = %v, want one ham call", calls)
@@ -227,7 +231,7 @@ func TestHandleUndoSkippedForDryRunIncident(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range f.Calls() {
-		if c == "UnbanMember" || c == "RestrictMember" {
+		if c == "UnbanMember" || c == "UnrestrictMember" {
 			t.Fatalf("dry-run incident issued %s, want no Telegram sanction call", c)
 		}
 	}
@@ -254,7 +258,7 @@ func TestHandleLiftDoesNotTrain(t *testing.T) {
 	if len(calls) != 0 {
 		t.Fatalf("lift trained %v, want no training", calls)
 	}
-	if !f.LastRestrict.Perms.CanSend {
+	if f.LastUnrestrict.UserID != 7 {
 		t.Fatal("lift did not restore permissions")
 	}
 	if _, ok, _ := db.GetIncidentTokens(incidentID); ok {
@@ -288,5 +292,63 @@ func TestHandleDeleteEvidenceRemovesCopies(t *testing.T) {
 	}
 	if f.LastDelete.IDs != nil {
 		t.Fatalf("second press deleted %v, want nothing", f.LastDelete.IDs)
+	}
+}
+
+func TestHandleSecondDecisionIsRefused(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+
+	incidentID := actedIncident(t, db, -100123, 55, 7, domain.ActionBan, []string{"casino"})
+
+	f := fake.New()
+	h := NewHandler(f, db, map[int64]bool{9: true})
+	var trained int
+	h.SetTrainer(func(string, string, []string) error { trained++; return nil })
+
+	key := strconv.FormatInt(incidentID, 10)
+	if err := h.Handle(context.Background(), Callback{ID: "a", Data: encode(ActConfirmSpam, key), PresserID: 9}); err != nil {
+		t.Fatal(err)
+	}
+	before := len(f.Calls())
+
+	// The buttons live in the admin chat forever. A later press — the same
+	// one again, or the opposite verdict — must not act: it could otherwise
+	// lift a newer, unrelated sanction against the same user.
+	if err := h.Handle(context.Background(), Callback{ID: "b", Data: encode(ActFalsePositive, key), PresserID: 9}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range f.Calls()[before:] {
+		if c == "UnbanMember" || c == "UnrestrictMember" {
+			t.Fatalf("second decision issued %s", c)
+		}
+	}
+	if trained != 1 {
+		t.Fatalf("trainer ran %d times, want 1 (the claimed decision only)", trained)
+	}
+}
+
+func TestHandleDeleteEvidenceStillWorksAfterADecision(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+
+	incidentID := actedIncident(t, db, -100123, 55, 7, domain.ActionDeleteMute, nil)
+	if err := db.AddEvidence(incidentID, -100999, []int{11}); err != nil {
+		t.Fatal(err)
+	}
+
+	f := fake.New()
+	h := NewHandler(f, db, map[int64]bool{9: true})
+	key := strconv.FormatInt(incidentID, 10)
+	if err := h.Handle(context.Background(), Callback{ID: "a", Data: encode(ActConfirmSpam, key), PresserID: 9}); err != nil {
+		t.Fatal(err)
+	}
+	// Cleaning up copied evidence is housekeeping, not a verdict, so the
+	// one-decision guard must not block it.
+	if err := h.Handle(context.Background(), Callback{ID: "b", Data: encode(ActDeleteEvidence, key), PresserID: 9}); err != nil {
+		t.Fatal(err)
+	}
+	if f.LastDelete.Chat != -100999 {
+		t.Fatalf("evidence not deleted after a decision (chat=%d)", f.LastDelete.Chat)
 	}
 }

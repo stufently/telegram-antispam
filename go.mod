@@ -2,6 +2,13 @@ module github.com/stufently/telegram-antispam
 
 go 1.26.0
 
+// The go directive is the MINIMUM this module builds with; this line pins the
+// toolchain actually used. It matters for security, not style: CI resolves its
+// Go from this file (setup-go's go-version-file), so without it every build
+// would run on exactly 1.26.0 and miss the standard-library fixes shipped in
+// the patch releases since.
+toolchain go1.26.6
+
 require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-telegram/bot v1.23.0

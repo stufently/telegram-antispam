@@ -65,7 +65,7 @@ const (
 // bookkeeping.
 func priorityFor(method string) queue.Priority {
 	switch method {
-	case "DeleteMessages", "BanMember", "UnbanMember", "RestrictMember", "BanSenderChat":
+	case "DeleteMessages", "BanMember", "UnbanMember", "RestrictMember", "UnrestrictMember", "BanSenderChat":
 		return queue.PrioHigh
 	default:
 		return queue.PrioNormal

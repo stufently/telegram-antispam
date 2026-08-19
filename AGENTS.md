@@ -88,13 +88,21 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   confirm/false-positive train Bayes from the incident's stored tokens. Undo is
   skipped for a dry-run incident or one that never reached `StateActed`, since
   nothing was applied. Deleted messages are unrecoverable — do not imply otherwise
-  in reply text.
+  in reply text. Unmuting goes through `UnrestrictMember` (every permission true),
+  never `RestrictMember` with a permissive `Perms`, which cannot express
+  invite/pin/react rights and would half-lift the sanction.
+- An incident accepts exactly ONE decision (`store.RecordDecision`, a conditional
+  UPDATE). The buttons live in the admin chat forever, so a late press would
+  otherwise lift a newer, unrelated sanction on the same user — Telegram gives no
+  way to scope an unban to the incident that caused it. "Delete evidence" is
+  housekeeping, not a decision, and stays available afterwards.
 - Incidents persist the offending message's normalized TOKENS
   (`store.SaveIncidentTokens`), never its raw text. This is the documented
   exception to "do not store message text": tokens are what the Bayes feature
   store already counts, rows are deleted the moment an admin reviews the
   incident, and a periodic prune bounds unreviewed ones. Do not widen this to
-  raw text, links, or media ids.
+  raw text, links, or media ids. A FAILED training attempt deliberately keeps
+  the row so a retry can still learn; the prune is what bounds that case.
 - The stored `chats` row records where a chat STARTED; `chats.enforce` /
   `chats.force_dry_run` in config decide where it runs NOW, resolved after the
   fail-closed database read (`ChatsPolicy.DryRunFor`). `force_dry_run` wins every

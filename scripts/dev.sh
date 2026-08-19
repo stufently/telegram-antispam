@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs `go` inside golang:1.26 as the calling user, with caches under the
+# Runs `go` inside golang:1.26.6 (the toolchain pinned in go.mod) as the calling user, with caches under the
 # repo so produced files stay owned by deploy. No host Go is used.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -10,4 +10,4 @@ exec docker run --rm --network host \
   -e GOPATH=/src/.gopath -e GOCACHE=/src/.gopath/cache \
   -v "$PWD":/src -w /src \
   --user "$(id -u):$(id -g)" \
-  golang:1.26 go "$@"
+  golang:1.26.6 go "$@"

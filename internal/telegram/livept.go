@@ -251,6 +251,41 @@ func (p *LivePort) UnbanMember(ctx context.Context, chat, user int64) error {
 	})
 }
 
+// UnrestrictMember lifts a mute by granting EVERY chat permission, which is
+// what Telegram requires to actually clear a restriction: restrictChatMember
+// replaces the user's permission set wholesale, so a call that only sets the
+// can_send_* flags leaves the user unable to invite, pin, react, or change
+// info — a half-lifted sanction that looks lifted in the chat member list.
+// That is why this is its own method rather than RestrictMember with a
+// "true" Perms: Perms exists to describe a mute, and a mute never needs
+// those fields.
+func (p *LivePort) UnrestrictMember(ctx context.Context, chat, user int64) error {
+	return submitSyncErr(ctx, p.disp, chat, p.prio("UnrestrictMember"), func(ctx context.Context) error {
+		_, err := p.b.RestrictChatMember(ctx, &bot.RestrictChatMemberParams{
+			ChatID: chat,
+			UserID: user,
+			Permissions: &models.ChatPermissions{
+				CanSendMessages:       true,
+				CanSendAudios:         true,
+				CanSendDocuments:      true,
+				CanSendPhotos:         true,
+				CanSendVideos:         true,
+				CanSendVideoNotes:     true,
+				CanSendVoiceNotes:     true,
+				CanSendPolls:          true,
+				CanSendOtherMessages:  true,
+				CanAddWebPagePreviews: true,
+				CanChangeInfo:         true,
+				CanInviteUsers:        true,
+				CanPinMessages:        true,
+				CanManageTopics:       true,
+				CanReactToMessages:    true,
+			},
+		})
+		return mapRetry(err)
+	})
+}
+
 // RestrictMember maps the single Perms.CanSend toggle onto every can_send_*
 // permission uniformly (full mute / full unmute); until==0 omits UntilDate
 // (permanent, by the field's own omitempty), otherwise the caller-supplied

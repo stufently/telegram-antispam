@@ -172,6 +172,22 @@ func (h *Handler) Handle(ctx context.Context, cb Callback) error {
 // call — so the reply text says so rather than implying a full rollback.
 func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRow, cb Callback) (string, error) {
 	key := strconv.FormatInt(inc.ID, 10)
+
+	// One decision per incident. The buttons stay in the admin chat forever,
+	// so without this claim a press on an old evidence message would issue a
+	// fresh unban today — possibly lifting a LATER, unrelated sanction on the
+	// same user, which Telegram gives us no way to distinguish. It also stops
+	// an incident being marked both spam and false-positive.
+	if act != ActDeleteEvidence {
+		claimed, existing, err := h.db.RecordDecision(inc.ID, string(act))
+		if err != nil {
+			return "", err
+		}
+		if !claimed {
+			return "already decided: " + decisionLabel(existing), nil
+		}
+	}
+
 	switch act {
 	case ActFalsePositive:
 		// The decision row is written first: it is the audit trail, and it
@@ -218,6 +234,23 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 	}
 }
 
+// decisionLabel renders a stored decision for the callback toast.
+func decisionLabel(decision string) string {
+	switch Action(decision) {
+	case ActFalsePositive:
+		return "false positive"
+	case ActConfirmSpam:
+		return "confirmed spam"
+	case ActLiftNoLearn:
+		return "lifted"
+	case "":
+		// Only reachable if the row vanished between the claim and the read.
+		return "unknown"
+	default:
+		return decision
+	}
+}
+
 // decisionScope is the samples-table scope used for admin decision records.
 // It is intentionally NOT a Bayes scope: nothing reads counts under it, so
 // these rows are an audit of who decided what, never training data. Bayes
@@ -242,9 +275,11 @@ func (h *Handler) undo(ctx context.Context, inc store.IncidentRow) (string, erro
 		}
 		return "unbanned", nil
 	case domain.ActionMute, domain.ActionDeleteMute:
-		// Full permissions restore the member; Perms.CanSend maps onto every
-		// can_send_* flag (see LivePort.RestrictMember).
-		if err := h.port.RestrictMember(ctx, inc.ChatID, inc.UserID, telegram.Perms{CanSend: true}, 0); err != nil {
+		// UnrestrictMember, not RestrictMember with a permissive Perms:
+		// restrictChatMember replaces the whole permission set, so anything
+		// Perms cannot express (invite, pin, react, change info) would stay
+		// revoked and the "lifted" user would still be half-muted.
+		if err := h.port.UnrestrictMember(ctx, inc.ChatID, inc.UserID); err != nil {
 			return "", fmt.Errorf("unmute user %d in chat %d: %w", inc.UserID, inc.ChatID, err)
 		}
 		return "unmuted", nil

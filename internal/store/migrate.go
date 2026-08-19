@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS incidents (
 	user_id      INTEGER NOT NULL DEFAULT 0,
 	state        TEXT    NOT NULL,
 	dry_run      INTEGER NOT NULL DEFAULT 1,
+	decision     TEXT    NOT NULL DEFAULT '',
 	created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
 	UNIQUE(chat_id, message_id)
 );
@@ -90,8 +91,12 @@ func (db *DB) Migrate() error {
 		if _, err := tx.Exec(schema); err != nil {
 			return err
 		}
-		return addColumnIfMissing(tx, "users", "meaningful_count",
-			"INTEGER NOT NULL DEFAULT 0")
+		if err := addColumnIfMissing(tx, "users", "meaningful_count",
+			"INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return err
+		}
+		return addColumnIfMissing(tx, "incidents", "decision",
+			"TEXT NOT NULL DEFAULT ''")
 	})
 }
 

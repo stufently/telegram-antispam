@@ -55,6 +55,9 @@ type Fake struct {
 	LastUnban struct {
 		Chat, UserID int64
 	}
+	LastUnrestrict struct {
+		Chat, UserID int64
+	}
 	LastRestrict struct {
 		Chat, UserID int64
 		Perms        telegram.Perms
@@ -113,6 +116,14 @@ func (f *Fake) UnbanMember(_ context.Context, chat, user int64) error {
 	f.LastUnban.Chat, f.LastUnban.UserID = chat, user
 	f.mu.Unlock()
 	f.log("UnbanMember")
+	return nil
+}
+
+func (f *Fake) UnrestrictMember(_ context.Context, chat, user int64) error {
+	f.mu.Lock()
+	f.LastUnrestrict.Chat, f.LastUnrestrict.UserID = chat, user
+	f.mu.Unlock()
+	f.log("UnrestrictMember")
 	return nil
 }
 

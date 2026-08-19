@@ -42,6 +42,39 @@ func (r IncidentRow) Sanctioned() bool {
 	}
 }
 
+// RecordDecision claims an incident's one-and-only moderator decision,
+// reporting whether this call is the one that claimed it (and, if not, which
+// decision already stands).
+//
+// The guard exists because the admin-chat buttons live forever in the chat
+// history: without it, pressing "False positive" on a months-old evidence
+// message would issue a fresh unban today — potentially lifting a LATER,
+// unrelated sanction against the same user, since Telegram has no way to
+// scope an unban to the incident that caused it. One decision per incident
+// bounds that to a single press. The conditional UPDATE is the whole
+// mechanism, so two admins pressing at once cannot both win.
+func (db *DB) RecordDecision(incidentID int64, decision string) (claimed bool, existing string, err error) {
+	err = db.Write(func(tx *sql.Tx) error {
+		res, execErr := tx.Exec(
+			"UPDATE incidents SET decision=? WHERE id=? AND decision=''",
+			decision, incidentID,
+		)
+		if execErr != nil {
+			return execErr
+		}
+		n, execErr := res.RowsAffected()
+		if execErr != nil {
+			return execErr
+		}
+		if n == 1 {
+			claimed = true
+			return nil
+		}
+		return tx.QueryRow("SELECT decision FROM incidents WHERE id=?", incidentID).Scan(&existing)
+	})
+	return claimed, existing, err
+}
+
 // GetIncident reads one incident joined with its audit action. The audit row
 // is written in the same transaction as the incident, so a missing action is
 // a corrupted row rather than a normal state; it is surfaced as an empty
