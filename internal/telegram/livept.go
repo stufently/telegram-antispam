@@ -74,6 +74,26 @@ func (p *LivePort) Self(ctx context.Context) (int64, error) {
 	return p.me(ctx, 0)
 }
 
+// GroupPrivacy reports whether Telegram's Group Privacy mode is ON for this
+// bot, i.e. whether it is BLIND to ordinary group messages.
+//
+// This is the single most consequential setting the bot cannot change from
+// code: with privacy on it receives only commands aimed at it, replies to
+// its own messages and service messages — so every detector sees nothing and
+// the process looks perfectly healthy while moderating an empty stream.
+// It is checked at startup because the failure has no other symptom: no
+// error, no restart, just silence that reads like a quiet chat.
+func (p *LivePort) GroupPrivacy(ctx context.Context) (bool, error) {
+	u, err := submitSync(ctx, p.disp, 0, p.prio("GetMe"), func(ctx context.Context) (*models.User, error) {
+		u, err := p.b.GetMe(ctx)
+		return u, mapRetry(err)
+	})
+	if err != nil {
+		return false, err
+	}
+	return !u.CanReadAllGroupMessages, nil
+}
+
 // Ping performs a GetMe that deliberately BYPASSES the cached identity, so
 // it is a real round trip to Telegram and not a map lookup. It is the
 // liveness probe: it exercises the same rate limiter, dispatcher and HTTP

@@ -439,6 +439,24 @@ func main() {
 	}
 	log.Printf("bot identity resolved: id=%d", selfID)
 
+	// Group Privacy: the one setting that makes a perfectly healthy bot
+	// moderate nothing. With it on, Telegram delivers only commands aimed at
+	// the bot, replies to its own messages and service messages — no
+	// ordinary chat traffic at all — and nothing else in the system can tell
+	// that apart from ten quiet chats. Checked and reported at boot, and
+	// published as a gauge so it can be alerted on.
+	if privacy, err := livePort.GroupPrivacy(signalCtx); err != nil {
+		log.Printf("group privacy: check failed: %v", err)
+	} else if privacy {
+		reg.SetGauge("tg_antispam_group_privacy_enabled", 1)
+		log.Printf("WARNING: Group Privacy is ENABLED — the bot does NOT receive ordinary group messages " +
+			"and cannot moderate anything. Disable it in @BotFather (Bot Settings -> Group Privacy -> Turn off), " +
+			"then REMOVE and RE-ADD the bot to every chat: Telegram applies the change only on re-add.")
+	} else {
+		reg.SetGauge("tg_antispam_group_privacy_enabled", 0)
+		log.Printf("group privacy: disabled (the bot sees ordinary group messages)")
+	}
+
 	// Liveness probe: a periodic GetMe down the same path every other call
 	// takes (rate limiter, dispatcher, HTTP client). Update traffic cannot
 	// serve this purpose — a quiet night in every chat is normal — so the

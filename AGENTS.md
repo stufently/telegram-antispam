@@ -200,6 +200,12 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   A chat scope alone would be empty, so a non-layered implementation would
   disarm Bayes everywhere the moment the mode was switched. Moderator feedback
   trains the same scope the message was scored against.
+- Group Privacy is checked and reported at startup, and published as
+  `tg_antispam_group_privacy_enabled`. With it on the bot receives no ordinary
+  group messages at all, yet every other signal — pod healthy, self-check
+  green, no errors — looks perfect; it is indistinguishable from quiet chats.
+  Anything that can silently reduce the input stream to nothing belongs in the
+  startup report, not in a debugging session six hours later.
 - `/healthz` is about the PROCESS and backs readiness; `/livez` is about
   reaching Telegram and backs liveness. Never move readiness onto `/livez`: a
   not-ready pod leaves the Service, and its `/metrics` stops being scraped —
