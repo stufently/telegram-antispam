@@ -444,6 +444,11 @@ func main() {
 	// serve this purpose — a quiet night in every chat is normal — so the
 	// bot asks Telegram a question it always knows the answer to.
 	startBackground(func() {
+		// Publish before the first tick. A ticker-only gauge is absent from
+		// /metrics for the whole first interval, and an alert written
+		// against a series that does not exist yet is an alert that says
+		// nothing — the same trap the blocklist gauge fell into.
+		reg.SetGauge("tg_antispam_telegram_probe_age_seconds", health.Age(time.Now()).Seconds())
 		t := time.NewTicker(telegramProbeInterval)
 		defer t.Stop()
 		for {
