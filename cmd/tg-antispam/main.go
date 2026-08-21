@@ -136,6 +136,16 @@ func main() {
 	}
 	cfgStore := config.NewStore(cfg)
 
+	// Warn (never fail) about config keys this binary does not know: yaml.v3
+	// drops them silently, so a values file that runs ahead of the image looks
+	// like it applied and quietly does nothing. Logged here so the deploy
+	// pipeline can grep for it.
+	if raw, readErr := os.ReadFile(cfgPath); readErr == nil {
+		if unknown := config.UnknownKeys(raw); unknown != nil {
+			log.Printf("config: UNKNOWN KEYS IGNORED by this version — %v", unknown)
+		}
+	}
+
 	db, err := store.Open(os.Getenv("DB_PATH"))
 	if err != nil {
 		log.Fatalf("store: %v", err)

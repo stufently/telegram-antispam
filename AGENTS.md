@@ -173,6 +173,11 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   concurrently, so storing it on the provider would race with a wrong-prompt
   outcome. `llm.prompt_overrides` replaces the prompt for one chat, it does
   not extend it.
+- Unknown config keys are WARNED about at startup (`config.UnknownKeys`), never
+  fatal: yaml.v3 drops them silently, so a values file running ahead of its
+  image looks applied and does nothing. Refusing to start would turn a
+  rollback (older binary, newer config) into an outage, so the deploy pipeline
+  is the place that treats the warning as an error.
 - Every exported metric name starts with `tg_antispam_`. These land in a shared
   Prometheus/VictoriaMetrics instance where a bare `updates_total` would collide
   with someone else's series, and renaming after dashboards and alerts exist is
