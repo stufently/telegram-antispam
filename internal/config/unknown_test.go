@@ -5,13 +5,14 @@ import (
 	"testing"
 )
 
-func TestUnknownKeysSpotsATypo(t *testing.T) {
+func TestUnknownKeysSpotsAWrongKeyName(t *testing.T) {
 	// The trap: yaml.v3 accepts this happily and the setting never applies.
-	err := UnknownKeys([]byte("bot_token: t\nadmin_chat_id: -1\naction: ban\nchats:\n  mode: auto\n  enforse: [-100]\n"))
+	// "enforcement" is a plausible slip for the real key "enforce".
+	err := UnknownKeys([]byte("bot_token: t\nadmin_chat_id: -1\naction: ban\nchats:\n  mode: auto\n  enforcement: [-100]\n"))
 	if err == nil {
 		t.Fatal("a misspelled key must be reported, not silently dropped")
 	}
-	if !strings.Contains(err.Error(), "enforse") {
+	if !strings.Contains(err.Error(), "enforcement") {
 		t.Fatalf("error must name the offending key, got: %v", err)
 	}
 }
