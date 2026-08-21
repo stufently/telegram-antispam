@@ -435,6 +435,14 @@ func main() {
 		// internal/blocklist (see the M7 brief's "keep instrumentation
 		// minimal, don't thread the registry deep" guidance).
 		startBackground(func() {
+			// Sample once before the loop: a ticker-only gauge means /metrics
+			// carries no tg_antispam_* series at all for the first minute
+			// after boot, so an early scrape (or a deploy-time smoke check)
+			// sees an empty-looking service and cannot tell it from a broken
+			// one. The first sample may legitimately be 0 while the bootstrap
+			// fetch is still running; the alert on it waits 30m for exactly
+			// that reason.
+			reg.SetGauge("tg_antispam_blocklist_size", float64(bl.Len()))
 			t := time.NewTicker(time.Minute)
 			defer t.Stop()
 			for {
