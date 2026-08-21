@@ -55,8 +55,13 @@ For a new or edited message, `internal/telegram.Handler`:
    to the chat sequencer.
 4. Registers a previously unseen chat without overwriting stored lifecycle
    state.
-5. Runs the detection hook against the first album part.
-6. Bumps durable trust only for meaningful, non-actionable user messages.
+5. Runs the detection hook against the album part that carries text (the
+   first one whose text is non-empty, else the first part). Telegram allows an
+   album's caption on any of its items and delivers the parts unordered, so
+   judging `parts[0]` scored a captionless photo. Exactly one part is judged:
+   `Decide` feeds the duplicate/short-message windows as a side effect.
+6. Bumps durable trust only for meaningful, non-actionable user messages, and
+   never for an edit — otherwise re-editing one message earns trust.
 7. For an actionable verdict, resolves the stored enabled/dry-run state and
    sends one incident with sorted message IDs to the state machine.
 
@@ -67,15 +72,20 @@ orders side effects as:
 2. copy evidence messages to the admin chat;
 3. send the admin summary and inline buttons;
 4. save the copied message IDs and mark the incident `evidenced`;
-5. in live mode, apply the configured sanction;
-6. delete the original message or album;
+5. in live mode, apply the configured sanction (a channel sender is banned
+   with `banChatSenderChat`, which has no member to restrict);
+6. delete the original message or album — also when the sanction failed, so a
+   failed ban does not leave the spam standing;
 7. optionally send a best-effort ephemeral notice;
 8. mark the incident `done`.
 
-Dry-run stops after evidence and admin notification. If evidence copying fails,
-a verdict below confidence `0.9` stops without acting; a hard-confidence
-verdict may continue after sending an admin warning. The currently wired
-detectors emit confidence `1.0` for actionable hits.
+Dry-run stops after evidence and admin notification. If evidence copying
+fails, only an externally verifiable verdict — a CAS/LOLS blocklist hit — may
+still be enforced; everything probabilistic (rules, behavior, Bayes, LLM)
+stops without acting. Either way the admin chat is told what happened, because
+"detected but not acted on" must not be silent. The gate is the signal, not
+`Confidence`: every wired detector emits `1.0`, so a confidence threshold
+would let everything through.
 
 ## Detection order
 

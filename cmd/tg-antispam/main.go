@@ -58,6 +58,13 @@ const (
 	// a digest from weeks ago; short enough that the database is not a
 	// growing archive of message-derived content.
 	incidentTokenRetention = 30 * 24 * time.Hour
+
+	// updateDedupWindow is how many of the most recent update ids stay in
+	// the dedup table. Telegram only ever redelivers updates that were not
+	// acknowledged by the last getUpdates call — minutes of traffic at the
+	// very most — so this window is orders of magnitude wider than the
+	// duplicate it defends against, while keeping the table bounded.
+	updateDedupWindow int64 = 100_000
 )
 
 // priorityFor maps a Port method name to its queue priority: destructive
@@ -476,6 +483,31 @@ func main() {
 		})
 	}
 
+	// Sequencer health. Both counters are silent failures by construction:
+	// a dropped job is an update already marked seen in SQLite (so it is
+	// never reprocessed) that simply never got moderated, and a contained
+	// panic is a bug that no longer takes the process down — which is
+	// exactly what makes it easy to miss. Sampled on a ticker like the
+	// blocklist gauge, so internal/telegram keeps knowing nothing about the
+	// metrics registry.
+	startBackground(func() {
+		sample := func() {
+			reg.SetGauge("tg_antispam_jobs_dropped", float64(seq.Dropped()))
+			reg.SetGauge("tg_antispam_jobs_panicked", float64(seq.Panicked()))
+		}
+		sample()
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-signalCtx.Done():
+				return
+			case <-t.C:
+				sample()
+			}
+		}
+	})
+
 	// Optional borderline LLM stage (§5.4): built only when explicitly enabled
 	// in config (privacy: external calls are opt-in). When off, the judge is
 	// nil and the cascade's borderline band stays 0, so no message text ever
@@ -549,10 +581,32 @@ func main() {
 		v, ok := cascade.Decide(m, edited)
 		if !ok && llmJudge != nil && hasBorderline(v) {
 			cctx, cancel := context.WithTimeout(workCtx, llmTimeout)
-			spam := llmJudge.Adjudicate(cctx, m.Text, cfg.LLM.PromptFor(m.ChatID))
+			out := llmJudge.Adjudicate(cctx, m.Text, cfg.LLM.PromptFor(m.ChatID))
 			cancel()
-			reg.IncCounter("tg_antispam_llm_checks_total", 1, "result", boolLabel(spam))
-			if spam {
+			// A failed call is counted as "error", never as "ham". The stage
+			// is fail-open, so an expired key, an exhausted quota or a
+			// timing-out endpoint yields exactly the same verdict as a model
+			// answering HAM — and this is the only stage that catches spam
+			// the Bayes corpus has never seen (the crypto euphemisms tg-spam
+			// needed a custom prompt for). Without a distinct label, the paid
+			// detector could die and every dashboard would keep showing
+			// healthy "ham" checks.
+			// ONE sample per adjudication, never one per provider: with
+			// policy "any" and answers [spam, ham] a per-provider count
+			// recorded two spam checks for a single message, and the
+			// metric stopped meaning "messages the LLM judged".
+			// "error" is reserved for an adjudication that got no answer
+			// at all — that is the one with no verdict behind it.
+			if out.Failed > 0 {
+				log.Printf("llm: %d/%d provider(s) failed: %v", out.Failed, out.Total, out.Err)
+				reg.IncCounter("tg_antispam_llm_provider_failures_total", float64(out.Failed))
+			}
+			if out.Failed >= out.Total {
+				reg.IncCounter("tg_antispam_llm_checks_total", 1, "result", "error")
+			} else {
+				reg.IncCounter("tg_antispam_llm_checks_total", 1, "result", boolLabel(out.Spam))
+			}
+			if out.Spam {
 				v = domain.Verdict{
 					Action:     cfg.Action,
 					Scope:      domain.ScopeGlobal,
@@ -603,10 +657,16 @@ func main() {
 			n, err := db.PruneIncidentTokens(incidentTokenRetention)
 			if err != nil {
 				log.Printf("prune incident tokens: %v", err)
-				return
-			}
-			if n > 0 {
+			} else if n > 0 {
 				log.Printf("pruned %d incident token row(s) older than %s", n, incidentTokenRetention)
+			}
+			// Same ticker, same reason: the update dedup table grew by one
+			// row per update forever, on a volume that also holds the
+			// corpus and every incident.
+			if n, err := db.PruneUpdates(updateDedupWindow); err != nil {
+				log.Printf("prune updates: %v", err)
+			} else if n > 0 {
+				log.Printf("pruned %d dedup row(s) beyond the newest %d update ids", n, updateDedupWindow)
 			}
 		}
 		prune()
@@ -647,6 +707,23 @@ func main() {
 		if err != nil {
 			log.Printf("self-check: list chats: %v", err)
 			return
+		}
+		// The stored list only holds chats that have already produced an
+		// update, because that is when a chat is registered. A configured
+		// chat the bot was added to but where nobody has spoken yet was
+		// therefore never checked — and that is precisely the chat where
+		// missing delete/restrict rights go unnoticed, since there is no
+		// traffic to reveal them. In allowlist mode the full set is known
+		// up front, so check it.
+		seen := make(map[int64]bool, len(chats))
+		for _, chat := range chats {
+			seen[chat] = true
+		}
+		for _, chat := range cfg.Chats.Allowlist {
+			if !seen[chat] {
+				seen[chat] = true
+				chats = append(chats, chat)
+			}
 		}
 		for _, chat := range chats {
 			select {

@@ -24,7 +24,7 @@ func newUndoDB(t *testing.T) *DB {
 
 func TestGetIncidentCarriesAuditAction(t *testing.T) {
 	db := newUndoDB(t)
-	id, _, err := db.InsertPending(-100, 5, 7, false, domain.Verdict{Action: domain.ActionBan})
+	id, _, err := db.InsertPending(-100, 5, 7, 0, false, domain.Verdict{Action: domain.ActionBan})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestSanctionedRejectsNonAppliedIncidents(t *testing.T) {
 
 func TestIncidentTokensRoundTripAndDelete(t *testing.T) {
 	db := newUndoDB(t)
-	id, _, err := db.InsertPending(-100, 5, 7, false, domain.Verdict{})
+	id, _, err := db.InsertPending(-100, 5, 7, 0, false, domain.Verdict{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,11 +105,11 @@ func TestSaveIncidentTokensIgnoresEmptyAndMissingIsNotAnError(t *testing.T) {
 
 func TestPruneIncidentTokensDropsOnlyAgedRows(t *testing.T) {
 	db := newUndoDB(t)
-	fresh, _, err := db.InsertPending(-100, 1, 7, false, domain.Verdict{})
+	fresh, _, err := db.InsertPending(-100, 1, 7, 0, false, domain.Verdict{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	old, _, err := db.InsertPending(-100, 2, 7, false, domain.Verdict{})
+	old, _, err := db.InsertPending(-100, 2, 7, 0, false, domain.Verdict{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestPruneIncidentTokensDropsOnlyAgedRows(t *testing.T) {
 
 func TestListAndDeleteEvidence(t *testing.T) {
 	db := newUndoDB(t)
-	id, _, err := db.InsertPending(-100, 5, 7, false, domain.Verdict{})
+	id, _, err := db.InsertPending(-100, 5, 7, 0, false, domain.Verdict{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,5 +171,97 @@ func TestListAndDeleteEvidence(t *testing.T) {
 	}
 	if _, ids, _ := db.ListEvidence(id); len(ids) != 0 {
 		t.Fatalf("evidence rows survived delete: %v", ids)
+	}
+}
+
+// TestOverturnedIncidentIsNotAKnownSpammer: a moderator pressing "false
+// positive" only records a decision — the state stays 'done'. Without the
+// decision filter the reaction cleaner kept deleting the cleared user's
+// reactions forever: the sanction was undone, the label was not.
+func TestOverturnedIncidentIsNotAKnownSpammer(t *testing.T) {
+	db := newUndoDB(t)
+	id, _, err := db.InsertPending(-100, 5, 7, 0, false, domain.Verdict{Action: domain.ActionBan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetIncidentState(id, domain.StateDone); err != nil {
+		t.Fatal(err)
+	}
+	if known, err := db.HasSpamIncident(-100, 7); err != nil || !known {
+		t.Fatalf("before the decision: known=%v err=%v, want a known spammer", known, err)
+	}
+
+	for _, decision := range []string{"fp", "lift"} {
+		if _, _, err := db.RecordDecision(id, decision); err != nil {
+			t.Fatal(err)
+		}
+		known, err := db.HasSpamIncident(-100, 7)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if known {
+			t.Fatalf("decision %q: still a known spammer", decision)
+		}
+		if err := db.ReleaseDecision(id, decision); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// A confirmed one still counts.
+	if _, _, err := db.RecordDecision(id, "confirm"); err != nil {
+		t.Fatal(err)
+	}
+	if known, err := db.HasSpamIncident(-100, 7); err != nil || !known {
+		t.Fatalf("after confirm: known=%v err=%v, want a known spammer", known, err)
+	}
+}
+
+// TestReleaseDecisionOnlyGivesBackItsOwnClaim: releasing must not clear a
+// DIFFERENT decision, or a stale button press could quietly reopen an
+// incident someone else already ruled on.
+func TestReleaseDecisionOnlyGivesBackItsOwnClaim(t *testing.T) {
+	db := newUndoDB(t)
+	id, _, err := db.InsertPending(-100, 6, 7, 0, false, domain.Verdict{Action: domain.ActionBan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := db.RecordDecision(id, "confirm"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ReleaseDecision(id, "fp"); err != nil {
+		t.Fatal(err)
+	}
+	claimed, existing, err := db.RecordDecision(id, "fp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed || existing != "confirm" {
+		t.Fatalf("claimed=%v existing=%q, want the confirm decision to still stand", claimed, existing)
+	}
+}
+
+// TestPruneUpdatesKeepsTheRecentWindow: the dedup table used to grow by one
+// row per update forever, on the same volume as the corpus and the audit.
+func TestPruneUpdatesKeepsTheRecentWindow(t *testing.T) {
+	db := newUndoDB(t)
+	for _, id := range []int64{1, 2, 3, 1000, 1001} {
+		if _, err := db.MarkUpdateSeen(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := db.PruneUpdates(100) // keep ids > 1001-100
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Fatalf("pruned %d rows, want 3", n)
+	}
+	// The recent ids must still dedup...
+	if fresh, err := db.MarkUpdateSeen(1001); err != nil || fresh {
+		t.Fatalf("id 1001: fresh=%v err=%v, want it still remembered", fresh, err)
+	}
+	// ...and a keep of zero must be a no-op rather than wiping the window.
+	if n, err := db.PruneUpdates(0); err != nil || n != 0 {
+		t.Fatalf("PruneUpdates(0) = %d, %v; want a no-op", n, err)
 	}
 }

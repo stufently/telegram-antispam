@@ -7,6 +7,7 @@ package admin
 import (
 	"context"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 
@@ -190,13 +191,21 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 
 	switch act {
 	case ActFalsePositive:
-		// The decision row is written first: it is the audit trail, and it
-		// must survive even if the Telegram undo below fails.
-		if _, err := h.db.InsertSample(decisionScope, string(act), "user", key); err != nil {
-			return "", err
-		}
+		// Order matters, and it is the reverse of what it used to be. The
+		// audit sample used to be written first, "so it survives a failed
+		// undo" — but a failed undo now releases the claim so the button
+		// can be pressed again, and a surviving `fp` sample would then sit
+		// in the audit next to whatever the retry decided (possibly
+		// `confirm`), describing a decision that never took effect. The
+		// sanction is lifted first; only then is the decision recorded.
 		lifted, err := h.undo(ctx, inc)
 		if err != nil {
+			h.releaseClaim(inc.ID, act)
+			return "", err
+		}
+		if _, err := h.db.InsertSample(decisionScope, string(act), "user", key); err != nil {
+			// The sanction IS lifted at this point, so the claim stands:
+			// re-pressing would only issue a second, pointless unban.
 			return "", err
 		}
 		trained := h.train(inc.ID, "ham")
@@ -204,6 +213,10 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 
 	case ActConfirmSpam:
 		if _, err := h.db.InsertSample(decisionScope, string(act), "user", key); err != nil {
+			// Nothing happened in Telegram here — confirming spam only
+			// records and trains — so the claim must go back, or a failed
+			// write would answer "already decided" forever.
+			h.releaseClaim(inc.ID, act)
 			return "", err
 		}
 		trained := h.train(inc.ID, "spam")
@@ -214,6 +227,7 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 		// captured tokens are dropped rather than fed to Bayes.
 		lifted, err := h.undo(ctx, inc)
 		if err != nil {
+			h.releaseClaim(inc.ID, act)
 			return "", err
 		}
 		h.dropTokens(inc.ID)
@@ -231,6 +245,18 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 
 	default:
 		return "unknown action", nil
+	}
+}
+
+// releaseClaim hands back the one-decision claim after the Telegram call
+// that was supposed to act on it failed, so the moderator can press the
+// button again. Without it a transient API error was permanent: the
+// incident counted as decided and the sanction it was meant to lift stayed
+// in place. Failing to release is logged, not returned — the caller is
+// already reporting the original, more useful error.
+func (h *Handler) releaseClaim(incidentID int64, act Action) {
+	if err := h.db.ReleaseDecision(incidentID, string(act)); err != nil {
+		log.Printf("release decision claim on incident %d: %v", incidentID, err)
 	}
 }
 
@@ -265,7 +291,21 @@ const decisionScope = "incident"
 // unban for a sanction that was never applied would be a lie in the audit
 // trail and a wasted API call under the queue's rate limit.
 func (h *Handler) undo(ctx context.Context, inc store.IncidentRow) (string, error) {
-	if !inc.Sanctioned() || inc.UserID == 0 {
+	if !inc.Sanctioned() {
+		return "", nil
+	}
+	// A channel that posted into the group was sanctioned with
+	// banChatSenderChat, so it is lifted with the matching call and keyed on
+	// the CHANNEL id. Checked before the user branch: for such an incident
+	// UserID is 0 or a Telegram pseudo-user, which would make the ordinary
+	// unban either a no-op or an action against the wrong account.
+	if inc.SenderChatID != 0 {
+		if err := h.port.UnbanSenderChat(ctx, inc.ChatID, inc.SenderChatID); err != nil {
+			return "", fmt.Errorf("unban channel %d in chat %d: %w", inc.SenderChatID, inc.ChatID, err)
+		}
+		return "channel unbanned", nil
+	}
+	if inc.UserID == 0 {
 		return "", nil
 	}
 	switch inc.Action {

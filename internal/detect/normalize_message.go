@@ -54,7 +54,7 @@ func Normalize(m domain.Message) NormalizedMessage {
 
 	return NormalizedMessage{
 		Text:           Deobfuscate(raw),
-		Links:          collectLinks(m.Entities, raw),
+		Links:          collectLinks(m.Entities, m.Text, raw),
 		Mentions:       collectMentions(raw),
 		HasCustomEmoji: hasCustomEmoji,
 		SenderTagNorm:  Deobfuscate(m.SenderTag),
@@ -62,12 +62,23 @@ func Normalize(m domain.Message) NormalizedMessage {
 	}
 }
 
-// collectLinks gathers text_link URLs hidden behind entities (which would
-// not otherwise appear as a URL-looking token in the raw text) plus
-// URL-looking tokens scanned from the raw, pre-deobfuscation text (so
-// percent-encoding and casing in the URL survive). Order is first-seen;
-// duplicates are dropped.
-func collectLinks(entities []domain.Entity, raw string) []string {
+// collectLinks gathers, in order: text_link URLs hidden behind entities
+// (which would not otherwise appear as a URL-looking token in the raw
+// text), the text spans of plain "url" entities, and URL-looking tokens
+// scanned from the raw, pre-deobfuscation text (so percent-encoding and
+// casing in the URL survive). Order is first-seen; duplicates are dropped.
+//
+// The "url" entity branch is what covers a link written WITHOUT a scheme —
+// "bit.ly/x", "crypto-bot.org". Telegram marks those as Type "url" with an
+// empty URL field (that field is only populated for text_link) and leaves
+// the address in the message text, where neither urlRe (which requires
+// http[s]://) nor tMeRe finds it. Without this branch such a link was
+// invisible to block_links_for_untrusted and banned_domains — i.e. exactly
+// the shape a spammer types.
+//
+// entityText is the string the entities index into (the message text or
+// caption), NOT the joined blob: offsets are relative to that one field.
+func collectLinks(entities []domain.Entity, entityText, raw string) []string {
 	var out []string
 	seen := make(map[string]bool)
 	add := func(s string) {
@@ -79,8 +90,11 @@ func collectLinks(entities []domain.Entity, raw string) []string {
 		out = append(out, s)
 	}
 	for _, e := range entities {
-		if e.Type == "text_link" && e.URL != "" {
+		switch {
+		case e.Type == "text_link" && e.URL != "":
 			add(e.URL)
+		case e.Type == "url":
+			add(entitySpan(entityText, e.Offset, e.Length))
 		}
 	}
 	for _, s := range urlRe.FindAllString(raw, -1) {
@@ -105,4 +119,47 @@ func collectMentions(raw string) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// entitySpan returns the substring of s that a Telegram message entity
+// covers. Offsets and lengths in the Bot API are counted in UTF-16 code
+// units, not bytes and not runes, so they cannot index a Go string
+// directly: any emoji or non-BMP character earlier in the message shifts
+// every later offset by one unit per surrogate pair. Out-of-range values
+// yield an empty string rather than a panic — a malformed entity must not
+// take the process down.
+func entitySpan(s string, offset, length int) string {
+	if offset < 0 || length <= 0 {
+		return ""
+	}
+	units := 0
+	start, end := -1, -1
+	for i, r := range s {
+		if units == offset && start < 0 {
+			start = i
+		}
+		if units == offset+length && end < 0 {
+			end = i
+			break
+		}
+		if r > 0xFFFF {
+			units += 2
+		} else {
+			units++
+		}
+	}
+	if start < 0 {
+		if units == offset {
+			start = len(s)
+		} else {
+			return ""
+		}
+	}
+	if end < 0 {
+		if units != offset+length {
+			return ""
+		}
+		end = len(s)
+	}
+	return s[start:end]
 }

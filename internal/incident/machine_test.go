@@ -19,7 +19,7 @@ type stubRepo struct {
 	tokensErr error
 }
 
-func (r *stubRepo) InsertPending(_ int64, _ int, _ int64, _ bool, verdict domain.Verdict) (int64, bool, error) {
+func (r *stubRepo) InsertPending(_ int64, _ int, _, _ int64, _ bool, verdict domain.Verdict) (int64, bool, error) {
 	r.verdict = verdict
 	return 1, r.fresh, nil
 }
@@ -91,16 +91,21 @@ func TestEvidenceFailureStopsBeforeAction(t *testing.T) {
 	}
 }
 
-func TestEvidenceFailureHighConfidenceStillActs(t *testing.T) {
+// TestEvidenceFailureBlocklistStillActs pins which verdicts may be enforced
+// with no evidence in the admin chat: only the externally verifiable one.
+// A blocklist hit is a published CAS/LOLS ban an admin can check without the
+// copied message; a Bayes or LLM call is precisely what the buttons under
+// that copy exist to let a human overturn, so it must fail closed.
+func TestEvidenceFailureBlocklistStillActs(t *testing.T) {
 	f := fake.New()
 	f.CopyErr = errors.New("copy failed")
 	repo := &stubRepo{fresh: true}
 	m := New(f, repo, 999)
-	inc := liveIncident(false)    // Action ban, not dry-run
-	inc.Verdict.Confidence = 0.99 // hard deny, >= hardConfidence (0.9)
+	inc := liveIncident(false) // Action ban, not dry-run
+	inc.Verdict.Signals = []domain.Signal{{Name: "blocklist"}}
 
 	if err := m.Handle(context.Background(), inc); err != nil {
-		t.Fatalf("hard deny should proceed despite evidence failure, got err %v", err)
+		t.Fatalf("blocklist deny should proceed despite evidence failure, got err %v", err)
 	}
 	var banned, deleted bool
 	for _, c := range f.Calls() {
@@ -112,10 +117,36 @@ func TestEvidenceFailureHighConfidenceStillActs(t *testing.T) {
 		}
 	}
 	if !banned || !deleted {
-		t.Fatalf("hard deny must ban and delete despite evidence failure; calls=%v", f.Calls())
+		t.Fatalf("blocklist deny must ban and delete despite evidence failure; calls=%v", f.Calls())
 	}
 	if repo.state != domain.StateDone {
 		t.Fatalf("final state = %v, want done", repo.state)
+	}
+}
+
+// TestEvidenceFailureProbabilisticVerdictStopsRegardlessOfConfidence covers
+// the regression that made the guard meaningless: every detector stamps
+// Confidence 1.0, so a confidence-based gate always let the sanction
+// through and produced mutes with no evidence to review.
+func TestEvidenceFailureProbabilisticVerdictStopsRegardlessOfConfidence(t *testing.T) {
+	f := fake.New()
+	f.CopyErr = errors.New("copy failed")
+	repo := &stubRepo{fresh: true}
+	m := New(f, repo, 999)
+	inc := liveIncident(false)
+	inc.Verdict.Confidence = 1.0
+	inc.Verdict.Signals = []domain.Signal{{Name: "llm"}}
+
+	if err := m.Handle(context.Background(), inc); err == nil {
+		t.Fatal("an LLM verdict with no evidence must not be enforced")
+	}
+	for _, c := range f.Calls() {
+		if c == "BanMember" || c == "RestrictMember" || c == "DeleteMessages" {
+			t.Fatalf("must not act on a probabilistic verdict without evidence; calls=%v", f.Calls())
+		}
+	}
+	if repo.state != domain.StateEvidenceFailed {
+		t.Fatalf("state = %v, want evidence_failed", repo.state)
 	}
 }
 
@@ -153,23 +184,33 @@ func TestReprocessGuardSkipsDuplicate(t *testing.T) {
 	}
 }
 
-func TestHardDenyNotifiesAdminOnEvidenceFailure(t *testing.T) {
-	f := fake.New()
-	f.CopyErr = errors.New("copy failed")
-	m := New(f, &stubRepo{fresh: true}, 999)
-	inc := liveIncident(false)
-	inc.Verdict.Confidence = 0.99
-	if err := m.Handle(context.Background(), inc); err != nil {
-		t.Fatal(err)
-	}
-	var notified bool
-	for _, c := range f.Calls() {
-		if c == "SendAdmin" {
-			notified = true
-		}
-	}
-	if !notified {
-		t.Fatalf("hard-deny with failed evidence must still notify admin; calls=%v", f.Calls())
+func TestEvidenceFailureNotifiesAdminWhetherOrNotItActs(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		signal string
+	}{
+		{"blocklist deny acts", "blocklist"},
+		{"probabilistic verdict does not act", "bayes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := fake.New()
+			f.CopyErr = errors.New("copy failed")
+			m := New(f, &stubRepo{fresh: true}, 999)
+			inc := liveIncident(false)
+			inc.Verdict.Signals = []domain.Signal{{Name: tc.signal}}
+			_ = m.Handle(context.Background(), inc)
+			var notified bool
+			for _, c := range f.Calls() {
+				if c == "SendAdmin" {
+					notified = true
+				}
+			}
+			// Silence is the failure mode that matters: a detection nobody
+			// hears about is indistinguishable from no detection at all.
+			if !notified {
+				t.Fatalf("failed evidence must still notify admin; calls=%v", f.Calls())
+			}
+		})
 	}
 }
 

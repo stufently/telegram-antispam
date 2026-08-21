@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 type stub struct {
@@ -43,8 +44,8 @@ func TestAdjudicateConsensus(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Judge{Providers: tc.provs, Policy: tc.policy}.Adjudicate(context.Background(), "hi", "")
-			if got != tc.want {
-				t.Fatalf("Adjudicate = %v, want %v", got, tc.want)
+			if got.Spam != tc.want {
+				t.Fatalf("Adjudicate = %v, want %v", got.Spam, tc.want)
 			}
 		})
 	}
@@ -55,8 +56,13 @@ func TestAdjudicateContextCancelledFailOpen(t *testing.T) {
 	cancel()
 	// A provider that would say spam, but ctx is already done.
 	got := Judge{Providers: []Provider{blockingStub{}}, Policy: PolicyAny}.Adjudicate(ctx, "x", "")
-	if got {
+	if got.Spam {
 		t.Fatal("cancelled ctx must fail-open to not-spam")
+	}
+	// The caller must be able to tell this apart from a model answering HAM:
+	// fail-open makes an outage and a clean verdict the same boolean.
+	if got.Failed != 1 || got.Err == nil {
+		t.Fatalf("cancelled ctx: Failed=%d Err=%v, want 1 failure with an error", got.Failed, got.Err)
 	}
 }
 
@@ -198,5 +204,64 @@ func TestPromptOrFallbackOrder(t *testing.T) {
 	}
 	if got := promptOr("chat", "provider"); got != "chat" {
 		t.Errorf("per-call prompt must win, got %q", got)
+	}
+}
+
+// TestAdjudicateReportsProviderFailure pins the distinction the metric
+// depends on: a provider that errors must be counted as a failure, not
+// silently folded into the fail-open "not spam" answer.
+func TestAdjudicateReportsProviderFailure(t *testing.T) {
+	got := Judge{Providers: []Provider{stub{name: "boom", err: errors.New("quota exhausted")}}, Policy: PolicyAny}.Adjudicate(context.Background(), "x", "")
+	if got.Spam {
+		t.Fatal("an errored provider must not produce a spam verdict")
+	}
+	if got.Failed != 1 || got.Total != 1 || got.Err == nil {
+		t.Fatalf("Failed=%d Total=%d Err=%v, want one reported failure", got.Failed, got.Total, got.Err)
+	}
+}
+
+// slowStub answers only when ctx dies, standing in for a provider that is
+// still thinking when the deadline arrives.
+type slowStub struct{}
+
+func (slowStub) Name() string { return "slow" }
+func (slowStub) Classify(ctx context.Context, _, _ string) (bool, error) {
+	<-ctx.Done()
+	return false, ctx.Err()
+}
+
+// TestAdjudicateKeepsAnswersArrivedBeforeTheDeadline: under "any", a
+// provider that already answered spam decides the verdict — a second,
+// slower provider timing out must not retract it. And an error among the
+// answers must survive alongside the timed-out one in Failed, otherwise the
+// caller counts an outage as a clean ham check.
+func TestAdjudicateKeepsAnswersArrivedBeforeTheDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	j := Judge{Providers: []Provider{stub{name: "fast", spam: true}, slowStub{}}, Policy: PolicyAny}
+	got := j.Adjudicate(ctx, "куплю usdt", "")
+
+	if !got.Spam {
+		t.Fatal("a spam answer that arrived in time must stand despite the slow provider")
+	}
+	if got.Failed != 1 || got.Total != 2 {
+		t.Fatalf("Failed=%d Total=%d, want exactly the slow provider counted as failed", got.Failed, got.Total)
+	}
+}
+
+// TestAdjudicateCountsBothErroredAndTimedOutProviders pins the accounting
+// the metric depends on: a provider that errored and a provider that never
+// answered are two failures, not one.
+func TestAdjudicateCountsBothErroredAndTimedOutProviders(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	j := Judge{Providers: []Provider{stub{name: "boom", err: errors.New("quota")}, slowStub{}}, Policy: PolicyAny}
+	got := j.Adjudicate(ctx, "x", "")
+
+	if got.Failed != 2 {
+		t.Fatalf("Failed = %d, want 2 (one errored, one timed out)", got.Failed)
+	}
+	if got.Spam {
+		t.Fatal("two failures must not produce a spam verdict")
 	}
 }

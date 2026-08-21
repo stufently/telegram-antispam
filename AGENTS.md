@@ -162,6 +162,43 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   dispatcher remains live, then cancel the dispatcher and close SQLite. The
   drain has its own 30s bound, armed only after the producers have stopped.
 
+- Stopwords, banned domains and every other operator-supplied pattern must be
+  run through `Deobfuscate` before matching, because the message text already
+  has been. Lowercasing alone is not equivalent: the fold maps the twelve
+  Cyrillic letters that look Latin, so a plain-Cyrillic pattern matches nothing.
+- Signals are persisted (the audit row), so a signal Detail carries the least
+  identifying form that still explains the call — a link's host, never its path
+  or query string.
+- Fail-open stages must report FAILURE separately from the "no" they return.
+  `llm.Outcome.Failed` exists for this: a dead paid API and a model answering
+  HAM are the same boolean, and only the counter tells them apart.
+- An album is judged on the part that carries its text, not on `parts[0]`:
+  Telegram allows the caption on any item and delivers parts unordered. Exactly
+  one part is judged — `Decide` feeds the flood windows as a side effect.
+- Enforcement without evidence is limited to externally verifiable signals (a
+  CAS/LOLS blocklist hit). Everything probabilistic fails closed when the
+  evidence copy fails, because the buttons under that copy are the only way to
+  reverse the sanction. Either way the admin chat is told.
+- Trust counts participation, so edits never bump it: re-editing one message
+  was otherwise a free path past every untrusted-only check.
+- Sequencer jobs run under `recover`. One process serves every chat, so an
+  unhandled panic in one update is an outage for all of them.
+- A moderator decision claimed before a Telegram call must be RELEASED if that
+  call fails (`store.ReleaseDecision`), or "one decision per incident" turns a
+  transient API error into a permanent sanction. The audit sample is written
+  AFTER the call succeeds, so a released claim leaves no record of a decision
+  that never took effect.
+- Every sanction needs a matching undo wired to the admin buttons. A channel
+  sender is banned with `banChatSenderChat` and has no member behind it, so the
+  incident persists `sender_chat_id` and the undo dispatches on it — an unban
+  keyed on `user_id` (0 for a channel post) would silently do nothing.
+- `tg_antispam_llm_checks_total` counts ADJUDICATIONS, one per message, not
+  provider calls: under policy "any", answers [spam, ham] are one spam verdict.
+  Per-provider failures have their own counter.
+- Anything derived from a link and then persisted goes through `extractHost`,
+  which drops the path, the query, the fragment and the port. A bare
+  "host?query" form has no slash, so hand-splitting on "/" kept the query.
+
 ## Change patterns
 
 - The Bayes score includes class priors, so corpus BALANCE is part of the

@@ -29,7 +29,19 @@ func ClassifySender(in ClassifyInput) domain.SenderKind {
 		switch {
 		case in.SenderChatID == in.ChatID || in.FromID == AnonAdminBotID:
 			return domain.SenderAnonAdmin
-		case in.IsAutomaticForward && in.SenderChatID == in.LinkedChatID:
+		// is_automatic_forward is set by Telegram ONLY on a channel post the
+		// server itself copied into the discussion group linked to that
+		// channel — a user cannot forge it on an ordinary message. So it is
+		// sufficient evidence on its own, and the LinkedChatID comparison is
+		// applied only when the caller actually knows the linked chat.
+		//
+		// It must work without it: nothing populates LinkedChatID (the Bot
+		// API does not put it on a message; it takes a separate getChat), so
+		// requiring the match classified every routine auto-post of a chat's
+		// OWN channel as an external channel — stripping the immunity that
+		// ImmuneSender grants linked channels and raising incidents against
+		// the chat's own announcements.
+		case in.IsAutomaticForward && (in.LinkedChatID == 0 || in.SenderChatID == in.LinkedChatID):
 			return domain.SenderLinkedChannel
 		default:
 			return domain.SenderExternalChannel

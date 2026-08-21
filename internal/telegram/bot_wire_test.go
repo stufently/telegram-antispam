@@ -539,3 +539,89 @@ func TestIncidentCapturesTokensForAdminFeedback(t *testing.T) {
 		t.Fatalf("no tokens captured for the incident (ok=%v tokens=%v)", ok, tokens)
 	}
 }
+
+// TestAlbumJudgesTheCaptionBearingPart covers a spam album whose caption is
+// NOT on the first item. Telegram lets the sender attach it to any item and
+// delivers the parts as separate updates in no guaranteed order, so judging
+// parts[0] scored a captionless photo and let the text through unread.
+func TestAlbumJudgesTheCaptionBearingPart(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	f := fake.New()
+	f.SendAdminID = 5
+	m := incident.New(f, db, 999)
+	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto", StartInDryRun: boolPtr(false)}})
+	seq := telegram.NewSequencer()
+	h := telegram.NewHandler(db, seq, cfg, m)
+
+	var judged string
+	h.SetDecide(func(msg domain.Message) (domain.Verdict, bool) {
+		judged = msg.Text
+		if msg.Text == "" {
+			return domain.Verdict{}, false
+		}
+		return domain.Verdict{Action: domain.ActionBan, Confidence: 1, Signals: []domain.Signal{{Name: "bayes"}}}, true
+	})
+
+	sender := domain.Sender{UserID: 7, Kind: domain.SenderUser}
+	h.OnMessage(context.Background(), 1, domain.Message{ChatID: -100123, MessageID: 55, MediaGroupID: "album1", Sender: sender})
+	h.OnMessage(context.Background(), 2, domain.Message{ChatID: -100123, MessageID: 56, MediaGroupID: "album1", Sender: sender, Text: "куплю usdt, пишите в лс"})
+	h.Stop()
+	seq.Wait()
+
+	if judged != "куплю usdt, пишите в лс" {
+		t.Fatalf("judged %q, want the caption-bearing part", judged)
+	}
+	var banned bool
+	for _, c := range f.Calls() {
+		if c == "BanMember" {
+			banned = true
+		}
+	}
+	if !banned {
+		t.Fatalf("album with a spam caption on the second part must be acted on; calls=%v", f.Calls())
+	}
+}
+
+// TestEditsDoNotEarnTrust: editing one message repeatedly used to raise the
+// trust counter once per edit, which is a free path past every check that
+// only applies to untrusted senders.
+func TestEditsDoNotEarnTrust(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	f := fake.New()
+	m := incident.New(f, db, 999)
+	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto", StartInDryRun: boolPtr(false)}})
+	seq := telegram.NewSequencer()
+	h := telegram.NewHandler(db, seq, cfg, m)
+	clean := func(domain.Message) (domain.Verdict, bool) { return domain.Verdict{Action: domain.ActionNone}, false }
+	h.SetDecide(clean)
+	h.SetEditedDecide(clean)
+
+	msg := domain.Message{ChatID: -100123, MessageID: 55, Sender: domain.Sender{UserID: 7, Kind: domain.SenderUser}, Text: "вполне обычное сообщение в чате"}
+	h.OnMessage(context.Background(), 1, msg)
+	for i := 2; i <= 6; i++ {
+		h.OnEditedMessage(context.Background(), int64(i), msg)
+	}
+	seq.Wait()
+
+	n, err := db.TrustCount(-100123, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("trust = %d after one message and five edits, want 1", n)
+	}
+}

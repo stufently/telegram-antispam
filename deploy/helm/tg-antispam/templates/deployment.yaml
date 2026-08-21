@@ -61,6 +61,11 @@ spec:
             - name: corpus
               mountPath: /corpus
               readOnly: true
+            # Same reason as the main container: the root filesystem is
+            # read-only, and SQLite spills to /tmp for large sorts. An
+            # import is exactly the operation that sorts.
+            - name: tmp
+              mountPath: /tmp
         - name: import-ham
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -79,6 +84,11 @@ spec:
             - name: corpus
               mountPath: /corpus
               readOnly: true
+            # Same reason as the main container: the root filesystem is
+            # read-only, and SQLite spills to /tmp for large sorts. An
+            # import is exactly the operation that sorts.
+            - name: tmp
+              mountPath: /tmp
       {{- end }}
       containers:
         - name: tg-antispam

@@ -23,10 +23,13 @@ type Fake struct {
 	// interleave other cache operations with it.
 	BeforeGetAdmins func()
 	BanSenderErr    error
-	EphemeralID     int
-	EphemeralErr    error
-	Rights          telegram.BotRights
-	RightsErr       error
+	// UnbanErr makes the undo path fail, so tests can cover a transient
+	// Telegram error during a moderator's rollback press.
+	UnbanErr     error
+	EphemeralID  int
+	EphemeralErr error
+	Rights       telegram.BotRights
+	RightsErr    error
 
 	// LastAdmin captures the most recent AdminMessage passed to SendAdmin, so
 	// tests can assert on fields SendAdmin doesn't otherwise record.
@@ -116,7 +119,7 @@ func (f *Fake) UnbanMember(_ context.Context, chat, user int64) error {
 	f.LastUnban.Chat, f.LastUnban.UserID = chat, user
 	f.mu.Unlock()
 	f.log("UnbanMember")
-	return nil
+	return f.UnbanErr
 }
 
 func (f *Fake) UnrestrictMember(_ context.Context, chat, user int64) error {
@@ -147,6 +150,11 @@ func (f *Fake) SendAdmin(_ context.Context, _ int64, msg telegram.AdminMessage) 
 func (f *Fake) BanSenderChat(_ context.Context, _, _ int64) error {
 	f.log("BanSenderChat")
 	return f.BanSenderErr
+}
+
+func (f *Fake) UnbanSenderChat(_ context.Context, _, _ int64) error {
+	f.log("UnbanSenderChat")
+	return nil
 }
 
 func (f *Fake) GetChatAdministrators(ctx context.Context, _ int64) ([]telegram.Member, error) {

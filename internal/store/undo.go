@@ -16,9 +16,14 @@ type IncidentRow struct {
 	ID     int64
 	ChatID int64
 	UserID int64
-	DryRun bool
-	State  domain.IncidentState
-	Action domain.Action // from the audit row; "" when absent
+	// SenderChatID is set when the offender was a CHANNEL posting into the
+	// group. Such a sanction is banChatSenderChat, and lifting it needs the
+	// channel id — UserID is 0 (or a Telegram pseudo-user) in that case, so
+	// an unban keyed on it would target the wrong thing or nothing at all.
+	SenderChatID int64
+	DryRun       bool
+	State        domain.IncidentState
+	Action       domain.Action // from the audit row; "" when absent
 }
 
 // Sanctioned reports whether this incident actually applied a sanction that
@@ -27,6 +32,18 @@ type IncidentRow struct {
 // failed), so pressing undo must not issue a pointless Telegram call.
 func (r IncidentRow) Sanctioned() bool {
 	if r.DryRun {
+		return false
+	}
+	// A channel sanction has no member behind it; it is keyed on the sender
+	// chat and lifted with UnbanSenderChat.
+	if r.SenderChatID != 0 && r.UserID == 0 {
+		switch r.State {
+		case domain.StateActed, domain.StateCleaned, domain.StateDone:
+			switch r.Action {
+			case domain.ActionBan, domain.ActionMute, domain.ActionDeleteMute:
+				return true
+			}
+		}
 		return false
 	}
 	switch r.State {
@@ -40,6 +57,25 @@ func (r IncidentRow) Sanctioned() bool {
 	default:
 		return false
 	}
+}
+
+// ReleaseDecision gives back a claim taken by RecordDecision, but only if
+// the stored decision is still the one the caller claimed.
+//
+// It exists for the one case where "one decision per incident" turns into a
+// trap: the claim is taken BEFORE the Telegram call that actually lifts the
+// sanction, so a transient API error left the incident marked decided while
+// the user stayed banned or muted — and every retry answered "already
+// decided". Releasing on failure keeps the single-decision guarantee for
+// decisions that succeeded, and lets a failed one be pressed again.
+func (db *DB) ReleaseDecision(incidentID int64, decision string) error {
+	return db.Write(func(tx *sql.Tx) error {
+		_, err := tx.Exec(
+			"UPDATE incidents SET decision='' WHERE id=? AND decision=?",
+			incidentID, decision,
+		)
+		return err
+	})
 }
 
 // RecordDecision claims an incident's one-and-only moderator decision,
@@ -88,9 +124,9 @@ func (db *DB) GetIncident(id int64) (IncidentRow, error) {
 		action sql.NullString
 	)
 	err := db.Read().QueryRow(`
-SELECT i.id, i.chat_id, i.user_id, i.dry_run, i.state, a.action
+SELECT i.id, i.chat_id, i.user_id, i.sender_chat_id, i.dry_run, i.state, a.action
 FROM incidents i LEFT JOIN audit a ON a.incident_id = i.id
-WHERE i.id = ?`, id).Scan(&r.ID, &r.ChatID, &r.UserID, &dry, &state, &action)
+WHERE i.id = ?`, id).Scan(&r.ID, &r.ChatID, &r.UserID, &r.SenderChatID, &dry, &state, &action)
 	if err != nil {
 		return IncidentRow{}, err
 	}

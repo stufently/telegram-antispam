@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -66,7 +67,7 @@ func TestParseCallbackRoundTrip(t *testing.T) {
 // evidence message shows up with buttons.
 func actedIncident(t *testing.T, db *store.DB, chatID int64, msgID int, userID int64, action domain.Action, tokens []string) int64 {
 	t.Helper()
-	id, _, err := db.InsertPending(chatID, msgID, userID, false, domain.Verdict{Action: action})
+	id, _, err := db.InsertPending(chatID, msgID, userID, 0, false, domain.Verdict{Action: action})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +216,7 @@ func TestHandleUndoSkippedForDryRunIncident(t *testing.T) {
 	defer db.Close()
 
 	// dry_run=true: nothing was ever applied, so there is nothing to lift.
-	incidentID, _, err := db.InsertPending(-100123, 55, 7, true, domain.Verdict{Action: domain.ActionBan})
+	incidentID, _, err := db.InsertPending(-100123, 55, 7, 0, true, domain.Verdict{Action: domain.ActionBan})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,5 +351,75 @@ func TestHandleDeleteEvidenceStillWorksAfterADecision(t *testing.T) {
 	}
 	if f.LastDelete.Chat != -100999 {
 		t.Fatalf("evidence not deleted after a decision (chat=%d)", f.LastDelete.Chat)
+	}
+}
+
+// TestUndoLiftsAChannelBan covers the sanction that has no member behind it.
+// A channel posting into the group is banned with banChatSenderChat, and the
+// incident's user_id is 0 — so an undo keyed on the user would silently do
+// nothing and leave the channel banned with no way back through the buttons.
+func TestUndoLiftsAChannelBan(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+
+	id, _, err := db.InsertPending(-100123, 55, 0, -1009999, false, domain.Verdict{Action: domain.ActionBan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetIncidentState(id, domain.StateDone); err != nil {
+		t.Fatal(err)
+	}
+
+	f := fake.New()
+	h := NewHandler(f, db, map[int64]bool{7: true})
+	cb := Callback{ID: "cb", Data: encode(ActLiftNoLearn, strconv.FormatInt(id, 10)), PresserID: 7}
+	if err := h.Handle(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+
+	var lifted bool
+	for _, c := range f.Calls() {
+		if c == "UnbanSenderChat" {
+			lifted = true
+		}
+		if c == "UnbanMember" {
+			t.Fatalf("a channel ban must not be lifted with UnbanMember; calls=%v", f.Calls())
+		}
+	}
+	if !lifted {
+		t.Fatalf("channel ban was not lifted; calls=%v", f.Calls())
+	}
+}
+
+// TestFailedUndoCanBeRetried: the one-decision claim is taken before the
+// Telegram call, so a transient API error must not leave the incident marked
+// decided with the sanction still in place.
+func TestFailedUndoCanBeRetried(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+
+	id := actedIncident(t, db, -100123, 55, 7, domain.ActionBan, nil)
+
+	f := fake.New()
+	f.UnbanErr = errors.New("telegram is having a moment")
+	h := NewHandler(f, db, map[int64]bool{7: true})
+	cb := Callback{ID: "cb", Data: encode(ActLiftNoLearn, strconv.FormatInt(id, 10)), PresserID: 7}
+	if err := h.Handle(context.Background(), cb); err == nil {
+		t.Fatal("a failing unban must surface as an error")
+	}
+
+	// Second press, this time with Telegram cooperating.
+	f.UnbanErr = nil
+	if err := h.Handle(context.Background(), cb); err != nil {
+		t.Fatalf("retry after a failed undo: %v", err)
+	}
+	var unbanned int
+	for _, c := range f.Calls() {
+		if c == "UnbanMember" {
+			unbanned++
+		}
+	}
+	if unbanned != 2 {
+		t.Fatalf("UnbanMember called %d times, want 2 (one failed, one retried)", unbanned)
 	}
 }

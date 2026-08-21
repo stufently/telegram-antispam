@@ -114,3 +114,46 @@ func TestNormalizeDedupsLinksAndMentions(t *testing.T) {
 		t.Fatalf("expected @same once, got %d: %v", mcount, n.Mentions)
 	}
 }
+
+// TestCollectLinksBareDomainEntity covers the shape a spammer actually
+// types: a link with no scheme. Telegram marks it as a "url" entity with an
+// empty URL field and leaves the address in the text, where the http(s)
+// regex never sees it.
+func TestCollectLinksBareDomainEntity(t *testing.T) {
+	m := domain.Message{
+		Text: "пиши сюда bit.ly/abc быстро",
+		Entities: []domain.Entity{
+			{Type: "url", Offset: 10, Length: 10},
+		},
+	}
+	got := Normalize(m).Links
+	if len(got) != 1 || got[0] != "bit.ly/abc" {
+		t.Fatalf("links = %v, want [bit.ly/abc]", got)
+	}
+}
+
+// TestCollectLinksEntityOffsetsAreUTF16 pins the unit the Bot API counts in.
+// An emoji before the link is one rune in Go but TWO UTF-16 units, so a
+// rune- or byte-based slice would cut the address short.
+func TestCollectLinksEntityOffsetsAreUTF16(t *testing.T) {
+	m := domain.Message{
+		Text: "🔥 example.org",
+		Entities: []domain.Entity{
+			{Type: "url", Offset: 3, Length: 11},
+		},
+	}
+	got := Normalize(m).Links
+	if len(got) != 1 || got[0] != "example.org" {
+		t.Fatalf("links = %v, want [example.org]", got)
+	}
+}
+
+// TestEntitySpanOutOfRangeIsEmpty: a malformed entity must not panic the
+// process — one bad update would take all ten chats down with it.
+func TestEntitySpanOutOfRangeIsEmpty(t *testing.T) {
+	for _, tc := range []struct{ off, length int }{{100, 5}, {-1, 5}, {0, 0}, {2, 100}} {
+		if got := entitySpan("short", tc.off, tc.length); got != "" {
+			t.Errorf("entitySpan(%d,%d) = %q, want empty", tc.off, tc.length, got)
+		}
+	}
+}

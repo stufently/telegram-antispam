@@ -14,15 +14,11 @@ import (
 
 // Repo is the persistence surface the machine needs; *store.DB satisfies it.
 type Repo interface {
-	InsertPending(chatID int64, messageID int, userID int64, dryRun bool, verdict domain.Verdict) (int64, bool, error)
+	InsertPending(chatID int64, messageID int, userID, senderChatID int64, dryRun bool, verdict domain.Verdict) (int64, bool, error)
 	SetIncidentState(id int64, s domain.IncidentState) error
 	AddEvidence(id int64, adminChatID int64, adminMessageIDs []int) error
 	SaveIncidentTokens(id int64, tokens []string) error
 }
-
-// hardConfidence is the floor above which we still act even if evidence copy
-// fails (a hard deny keeps metadata and blocks); below it we stop.
-const hardConfidence = 0.9
 
 type Machine struct {
 	port        telegram.Port
@@ -59,7 +55,7 @@ func (m *Machine) Handle(ctx context.Context, inc domain.Incident) error {
 	if len(inc.MessageIDs) == 0 {
 		return fmt.Errorf("incident has no message ids")
 	}
-	id, fresh, err := m.repo.InsertPending(inc.ChatID, inc.MessageIDs[0], inc.Sender.UserID, inc.DryRun, inc.Verdict)
+	id, fresh, err := m.repo.InsertPending(inc.ChatID, inc.MessageIDs[0], inc.Sender.UserID, inc.Sender.SenderChatID, inc.DryRun, inc.Verdict)
 	if err != nil {
 		return fmt.Errorf("insert pending: %w", err)
 	}
@@ -82,25 +78,36 @@ func (m *Machine) Handle(ctx context.Context, inc domain.Incident) error {
 	// 1. evidence BEFORE any destructive action.
 	adminIDs, copyErr := m.port.CopyMessages(ctx, m.adminChatID, inc.ChatID, inc.MessageIDs)
 	if copyErr != nil {
-		_ = m.repo.SetIncidentState(id, domain.StateEvidenceFailed)
-		if inc.Verdict.Confidence < hardConfidence {
-			return fmt.Errorf("evidence copy failed, not acting on low confidence: %w", copyErr)
-		}
-		// hard deny: proceed without copied evidence but notify admins so
-		// they know an action was taken without a copied evidence trail.
+		m.setState(id, domain.StateEvidenceFailed)
+		acting := actsWithoutEvidence(inc.Verdict)
+		// Tell the admins either way, and BEFORE deciding whether to act:
+		// "detected but not acted on" is exactly the outcome that must not
+		// be silent, and the notification is the only trace left once the
+		// evidence copy is gone.
 		key := fmt.Sprintf("%d", id)
+		tail := "not acting without evidence — review manually"
+		if acting {
+			tail = "acting without a copied evidence trail"
+		}
 		msg := telegram.AdminMessage{
 			IncidentKey:      key,
 			SourceChatID:     inc.ChatID,
 			CopiedFromChatID: inc.ChatID,
 			CopyMessageIDs:   nil,
-			Text:             fmt.Sprintf("evidence copy failed: %v; %s", copyErr, inc.Verdict.Reason),
+			Text:             fmt.Sprintf("evidence copy failed: %v; %s; %s", copyErr, inc.Verdict.Reason, tail),
 		}
 		if m.buttonsFor != nil {
 			msg.Buttons = m.buttonsFor(key)
 		}
-		if _, err := m.port.SendAdmin(ctx, m.adminChatID, msg); err != nil {
-			return fmt.Errorf("send admin: %w", err)
+		_, sendErr := m.port.SendAdmin(ctx, m.adminChatID, msg)
+		if !acting {
+			if sendErr != nil {
+				return fmt.Errorf("evidence copy failed (%v), admins not notified either: %w", copyErr, sendErr)
+			}
+			return fmt.Errorf("evidence copy failed, not acting on a probabilistic verdict: %w", copyErr)
+		}
+		if sendErr != nil {
+			return fmt.Errorf("send admin: %w", sendErr)
 		}
 	} else {
 		key := fmt.Sprintf("%d", id)
@@ -120,7 +127,7 @@ func (m *Machine) Handle(ctx context.Context, inc domain.Incident) error {
 		if err := m.repo.AddEvidence(id, m.adminChatID, adminIDs); err != nil {
 			return fmt.Errorf("save evidence: %w", err)
 		}
-		_ = m.repo.SetIncidentState(id, domain.StateEvidenced)
+		m.setState(id, domain.StateEvidenced)
 	}
 
 	if inc.DryRun {
@@ -128,16 +135,26 @@ func (m *Machine) Handle(ctx context.Context, inc domain.Incident) error {
 	}
 
 	// 2. apply action.
-	if err := m.applyAction(ctx, inc); err != nil {
-		return fmt.Errorf("apply action: %w", err)
+	actErr := m.applyAction(ctx, inc)
+	if actErr == nil {
+		m.setState(id, domain.StateActed)
 	}
-	_ = m.repo.SetIncidentState(id, domain.StateActed)
 
-	// 3. delete originals last.
+	// 3. delete originals last — ALSO when the sanction failed. Returning
+	// early on a failed sanction (as this did) left the spam standing in the
+	// chat: the one half of moderation that always works was skipped because
+	// the other half errored. Deleting is independent of banning, so it runs
+	// either way and the sanction error is reported afterwards.
 	if err := m.port.DeleteMessages(ctx, inc.ChatID, inc.MessageIDs); err != nil {
+		if actErr != nil {
+			return fmt.Errorf("apply action: %w (originals also not deleted: %v)", actErr, err)
+		}
 		return fmt.Errorf("delete originals: %w", err)
 	}
-	_ = m.repo.SetIncidentState(id, domain.StateCleaned)
+	if actErr != nil {
+		return fmt.Errorf("apply action: %w (originals deleted)", actErr)
+	}
+	m.setState(id, domain.StateCleaned)
 
 	if m.EphemeralNotice && m.EphemeralText != "" && inc.Sender.UserID != 0 {
 		// Best-effort, per-user-visible notice. Delivery is not guaranteed
@@ -149,7 +166,59 @@ func (m *Machine) Handle(ctx context.Context, inc domain.Incident) error {
 	return m.repo.SetIncidentState(id, domain.StateDone)
 }
 
+// actsWithoutEvidence reports whether a verdict may be enforced when the
+// evidence copy into the admin chat failed.
+//
+// The gate used to be Confidence >= 0.9, which never actually
+// gated anything: every detector, and the LLM stage too, stamps exactly
+// 1.0, so the branch meant "always act". That is the wrong default here —
+// the sanction is reversible only through the buttons under the evidence
+// message, so acting with no evidence produces a mute nobody can review.
+//
+// Confidence is not the right axis either. What matters is whether the
+// verdict rests on OUR judgement or on an external fact: a CAS/LOLS
+// blocklist hit is a globally published ban that an admin can verify
+// without the copied message, while bayes / llm / behavior are exactly the
+// calls a human is supposed to double-check. So only the blocklist acts
+// blind; everything else fails closed and merely reports.
+func actsWithoutEvidence(v domain.Verdict) bool {
+	for _, s := range v.Signals {
+		if s.Name == "blocklist" {
+			return true
+		}
+	}
+	return false
+}
+
+// setState records how far the incident got, logging a write failure rather
+// than discarding it.
+//
+// The error is not returned: the sanction has already happened in Telegram
+// and unwinding it here would be worse than a stale row. But it must not be
+// invisible either — the undo buttons refuse to act on an incident whose
+// state never reached "acted" (see store.IncidentRow.Sanctioned), so a lost
+// write means a real, applied sanction that the admin chat believes never
+// happened. The log line is what turns that into something diagnosable.
+func (m *Machine) setState(id int64, st domain.IncidentState) {
+	if err := m.repo.SetIncidentState(id, st); err != nil {
+		log.Printf("incident %d: recording state %s failed: %v", id, st, err)
+	}
+}
+
 func (m *Machine) applyAction(ctx context.Context, inc domain.Incident) error {
+	// A message sent on behalf of a channel has no member to sanction: its
+	// author is the channel, and Telegram exposes banChatSenderChat for
+	// exactly this case. banChatMember/restrictChatMember against the
+	// pseudo-user behind such a message (id 136817688, or 0 when the API
+	// sends no `from` at all) fails with 400 — which used to abort the
+	// incident before the message was even deleted. Muting is meaningless
+	// for a channel, so both punitive actions map onto the same call.
+	if inc.Sender.Kind == domain.SenderExternalChannel && inc.Sender.SenderChatID != 0 {
+		switch inc.Verdict.Action {
+		case domain.ActionBan, domain.ActionMute, domain.ActionDeleteMute:
+			return m.port.BanSenderChat(ctx, inc.ChatID, inc.Sender.SenderChatID)
+		}
+	}
 	switch inc.Verdict.Action {
 	case domain.ActionBan:
 		return m.port.BanMember(ctx, inc.ChatID, inc.Sender.UserID)

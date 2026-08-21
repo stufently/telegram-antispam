@@ -130,6 +130,27 @@ func batchIDs(ids []int, size int) [][]int {
 // it returns this concrete type, unwrapped, with Parameters.RetryAfter). The
 // string-match branch below is a defensive fallback only, in case a future
 // library version wraps or renames that error.
+// ignoreAlreadyGone turns "the message is not there any more" into success.
+//
+// Deleting a message that no longer exists is the goal state, not a failure:
+// the author may have deleted it, another admin may have, or — for as long
+// as tg-spam runs beside this bot on the same chats — the other bot got
+// there first. Treating that as an error aborted the incident before it
+// reached its final state, so a perfectly moderated message was recorded as
+// half-processed and logged as broken.
+func ignoreAlreadyGone(err error) error {
+	if err == nil {
+		return nil
+	}
+	// Deliberately ONLY "not found". "message can't be deleted" is a
+	// different animal — revoked rights, or a message too old to delete —
+	// and swallowing it would hide the one failure an operator must act on.
+	if strings.Contains(strings.ToLower(err.Error()), "message to delete not found") {
+		return nil
+	}
+	return err
+}
+
 func mapRetry(err error) error {
 	if err == nil {
 		return nil
@@ -220,7 +241,7 @@ func (p *LivePort) DeleteMessages(ctx context.Context, chat int64, ids []int) er
 		batch := batch
 		if err := submitSyncErr(ctx, p.disp, chat, prio, func(ctx context.Context) error {
 			_, err := p.b.DeleteMessages(ctx, &bot.DeleteMessagesParams{ChatID: chat, MessageIDs: batch})
-			return mapRetry(err)
+			return ignoreAlreadyGone(mapRetry(err))
 		}); err != nil {
 			return err
 		}
@@ -333,6 +354,13 @@ func (p *LivePort) SendAdmin(ctx context.Context, adminChat int64, msg AdminMess
 func (p *LivePort) BanSenderChat(ctx context.Context, chat, senderChat int64) error {
 	return submitSyncErr(ctx, p.disp, chat, p.prio("BanSenderChat"), func(ctx context.Context) error {
 		_, err := p.b.BanChatSenderChat(ctx, &bot.BanChatSenderChatParams{ChatID: chat, SenderChatID: senderChat})
+		return mapRetry(err)
+	})
+}
+
+func (p *LivePort) UnbanSenderChat(ctx context.Context, chat, senderChat int64) error {
+	return submitSyncErr(ctx, p.disp, chat, p.prio("UnbanSenderChat"), func(ctx context.Context) error {
+		_, err := p.b.UnbanChatSenderChat(ctx, &bot.UnbanChatSenderChatParams{ChatID: chat, SenderChatID: senderChat})
 		return mapRetry(err)
 	})
 }

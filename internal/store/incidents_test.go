@@ -14,11 +14,11 @@ func TestInsertPendingDedupAndAdvance(t *testing.T) {
 		Action: domain.ActionBan, Scope: domain.ScopeGlobal, Reason: "blocklist",
 		Signals: []domain.Signal{{Name: "blocklist"}},
 	}
-	id, fresh, err := db.InsertPending(-100123, 55, 7, true, verdict)
+	id, fresh, err := db.InsertPending(-100123, 55, 7, 0, true, verdict)
 	if err != nil || !fresh || id == 0 {
 		t.Fatalf("insert: id=%d fresh=%v err=%v", id, fresh, err)
 	}
-	id2, fresh2, err := db.InsertPending(-100123, 55, 7, true, verdict)
+	id2, fresh2, err := db.InsertPending(-100123, 55, 7, 0, true, verdict)
 	if err != nil || fresh2 || id2 != id {
 		t.Fatalf("dup insert: id=%d fresh=%v err=%v (want same id, fresh=false)", id2, fresh2, err)
 	}

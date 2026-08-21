@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS incidents (
 	chat_id      INTEGER NOT NULL,
 	message_id   INTEGER NOT NULL,
 	user_id      INTEGER NOT NULL DEFAULT 0,
+	sender_chat_id INTEGER NOT NULL DEFAULT 0,
 	state        TEXT    NOT NULL,
 	dry_run      INTEGER NOT NULL DEFAULT 1,
 	decision     TEXT    NOT NULL DEFAULT '',
@@ -95,8 +96,17 @@ func (db *DB) Migrate() error {
 			"INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return err
 		}
-		return addColumnIfMissing(tx, "incidents", "decision",
-			"TEXT NOT NULL DEFAULT ''")
+		if err := addColumnIfMissing(tx, "incidents", "decision",
+			"TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
+		}
+		// Needed to undo a sanction against a CHANNEL: those are banned
+		// with banChatSenderChat, which takes the channel's id, and the
+		// incident otherwise records only a user id (0 for a channel post).
+		// Without this column the admin-chat undo button had nothing to
+		// pass and silently did nothing.
+		return addColumnIfMissing(tx, "incidents", "sender_chat_id",
+			"INTEGER NOT NULL DEFAULT 0")
 	})
 }
 

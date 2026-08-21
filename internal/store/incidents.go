@@ -16,14 +16,14 @@ import (
 // Readers must therefore not treat an audit row as proof that its action
 // happened; ActionCountsSince joins the incident's dry_run and state to tell
 // applied actions from simulated and incomplete ones.
-func (db *DB) InsertPending(chatID int64, messageID int, userID int64, dryRun bool, verdict domain.Verdict) (int64, bool, error) {
+func (db *DB) InsertPending(chatID int64, messageID int, userID, senderChatID int64, dryRun bool, verdict domain.Verdict) (int64, bool, error) {
 	var id int64
 	var fresh bool
 	err := db.Write(func(tx *sql.Tx) error {
 		res, err := tx.Exec(`
-INSERT OR IGNORE INTO incidents(chat_id, message_id, user_id, state, dry_run)
-VALUES(?,?,?,?,?)`,
-			chatID, messageID, userID, string(domain.StatePending), b2i(dryRun))
+INSERT OR IGNORE INTO incidents(chat_id, message_id, user_id, sender_chat_id, state, dry_run)
+VALUES(?,?,?,?,?,?)`,
+			chatID, messageID, userID, senderChatID, string(domain.StatePending), b2i(dryRun))
 		if err != nil {
 			return err
 		}

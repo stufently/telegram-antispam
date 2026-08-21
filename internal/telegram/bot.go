@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/stufently/telegram-antispam/internal/config"
@@ -191,6 +192,24 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 		return
 	}
 	first := parts[0]
+	// The part that carries the album's text. An album's caption belongs to
+	// exactly ONE of its items and NOT necessarily the first — Telegram lets
+	// the sender attach it to any of them, and the parts arrive as separate
+	// updates in no guaranteed order. Judging parts[0] unconditionally meant
+	// a spam album whose caption sat on the second photo was scored as a
+	// captionless one: empty text, nothing for the rules, Bayes or the LLM to
+	// see, verdict "clean".
+	//
+	// Deliberately ONE part is judged, not all of them: Decide feeds the
+	// duplicate/short-message windows as a side effect, so scoring every item
+	// would turn a single five-photo album into five flood events.
+	judged := first
+	for _, m := range parts {
+		if strings.TrimSpace(m.Text) != "" {
+			judged = m
+			break
+		}
+	}
 	cfg := h.cfg.Current()
 	if err := h.db.RegisterChat(first.ChatID, cfg.Chats.DryRunDefault()); err != nil {
 		log.Printf("register chat %d: %v", first.ChatID, err)
@@ -200,14 +219,19 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 	if edited && h.editedDecide != nil {
 		decide = h.editedDecide
 	}
-	verdict, ok := decide(first)
+	verdict, ok := decide(judged)
 	if !ok || !verdict.IsActionable() {
 		// A non-actionable, meaningful message from a real user counts
 		// toward that user's trust score (the M3 cascade's trust gate
 		// reads this back via detect.TrustSource). This is a wiring-level
 		// side effect, not part of the pure cascade: detect.Cascade.Decide
 		// never bumps trust itself.
-		if verdict.Reason != detect.ReasonAdminLookupUnavailable && first.Sender.Kind == domain.SenderUser && detect.IsMeaningful(detect.Normalize(first)) {
+		// Edits deliberately do not earn trust. The counter is meant to
+		// measure participation, and an edit is not a new message: editing
+		// one message five times used to raise trust to 5 and buy a brand
+		// new account its way past the link policy, the fake-admin check and
+		// Bayes — all of which only apply to the untrusted.
+		if !edited && verdict.Reason != detect.ReasonAdminLookupUnavailable && judged.Sender.Kind == domain.SenderUser && detect.IsMeaningful(detect.Normalize(judged)) {
 			if _, err := h.db.BumpTrust(first.ChatID, first.Sender.UserID); err != nil {
 				log.Printf("bump trust chat=%d user=%d: %v", first.ChatID, first.Sender.UserID, err)
 			}
@@ -263,7 +287,7 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 		// at the end of Handle: without capturing them here, an admin's
 		// later Confirm-spam / False-positive press would have nothing to
 		// train on (see store.SaveIncidentTokens for what is and is not kept).
-		Tokens: detect.Tokenize(detect.Normalize(first)),
+		Tokens: detect.Tokenize(detect.Normalize(judged)),
 	}
 	if err := h.machine.Handle(ctx, inc); err != nil {
 		log.Printf("chat=%d incident: %v", first.ChatID, err)

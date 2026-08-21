@@ -53,31 +53,87 @@ type result struct {
 	ok   bool
 }
 
-// Adjudicate returns true only when the consensus policy is satisfied. It is
-// fail-open: with no providers, or when errors prevent the policy from being
-// met, it returns false. Providers run concurrently; Adjudicate returns once
-// all have answered or ctx is done.
-func (j Judge) Adjudicate(ctx context.Context, text, prompt string) bool {
+// Outcome is the result of one adjudication: the verdict plus how the
+// providers actually behaved while producing it.
+//
+// Failed exists because fail-open makes an outage look exactly like a "not
+// spam" answer. With only a boolean returned, an expired API key, an
+// exhausted quota or a timing-out endpoint reads at the call site as "the
+// model said HAM" — and this stage is the only one that catches spam the
+// Bayes corpus has never seen. The caller is expected to surface Failed so
+// a dead paid stage is visible instead of silently degrading detection.
+type Outcome struct {
+	Spam   bool  // the consensus verdict (false when the policy is unmet)
+	Failed int   // providers that errored, or never answered before ctx died
+	Total  int   // providers asked
+	Err    error // one representative failure, for logging
+}
+
+// Adjudicate returns the consensus verdict together with how many providers
+// failed to answer. It is fail-open: with no providers, or when errors
+// prevent the policy from being met, Spam is false. Providers run
+// concurrently; Adjudicate returns once all have answered or ctx is done.
+func (j Judge) Adjudicate(ctx context.Context, text, prompt string) Outcome {
+	out := Outcome{Total: len(j.Providers)}
 	if len(j.Providers) == 0 {
-		return false
+		return out
+	}
+	type answer struct {
+		i   int
+		res result
+		err error
 	}
 	results := make([]result, len(j.Providers))
-	done := make(chan struct{}, len(j.Providers))
+	done := make(chan answer, len(j.Providers))
 	for i, p := range j.Providers {
 		go func(i int, p Provider) {
 			spam, err := p.Classify(ctx, text, prompt)
-			results[i] = result{spam: spam, ok: err == nil}
-			done <- struct{}{}
+			done <- answer{i: i, res: result{spam: spam, ok: err == nil}, err: err}
 		}(i, p)
 	}
-	for range j.Providers {
-		select {
-		case <-ctx.Done():
-			return false // fail-open: cancelled/timed out before consensus
-		case <-done:
+	answered := 0
+	record := func(a answer) {
+		answered++
+		results[a.i] = a.res
+		if a.err != nil {
+			out.Failed++
+			out.Err = a.err
 		}
 	}
-	return decide(j.Policy, results)
+	for answered < len(j.Providers) {
+		// Answers that have ALREADY arrived are taken first, before the
+		// deadline is honoured. A plain two-case select would pick at
+		// random when both are ready, so a provider that answered just
+		// before the timeout could be thrown away — turning a caught spam
+		// message into fail-open ham on nothing but scheduling luck.
+		select {
+		case a := <-done:
+			record(a)
+			continue
+		default:
+		}
+		select {
+		case a := <-done:
+			record(a)
+		case <-ctx.Done():
+			// Deadline reached with nothing further pending. Providers
+			// still outstanding count as failures — on top of, not
+			// instead of, the ones that already errored.
+			out.Failed += len(j.Providers) - answered
+			if out.Err == nil {
+				out.Err = ctx.Err()
+			}
+			// Still apply the policy to what DID arrive. Under "any", a
+			// provider that already answered spam is a spam verdict; the
+			// slow one cannot retract it. Under "all", the unanswered slot
+			// stays not-ok, so unanimity fails and the result is not-spam —
+			// fail-open, as before.
+			out.Spam = decide(j.Policy, results)
+			return out
+		}
+	}
+	out.Spam = decide(j.Policy, results)
+	return out
 }
 
 // decide applies the consensus policy to collected results. PolicyAll (the

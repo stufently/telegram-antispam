@@ -98,3 +98,22 @@ func TestSubmitAfterWaitIsNoop(t *testing.T) {
 		t.Fatal("job submitted after Wait should not run")
 	}
 }
+
+// TestPanicInOneJobDoesNotKillTheWorker: this is one process for every chat,
+// so an unhandled panic while handling a single update used to take down
+// polling, the admin buttons and the digest for all of them.
+func TestPanicInOneJobDoesNotKillTheWorker(t *testing.T) {
+	s := NewSequencer()
+	ran := make(chan struct{})
+	s.Submit(-1, func() { panic("boom") })
+	s.Submit(-1, func() { close(ran) })
+	select {
+	case <-ran:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the job after a panicking one never ran")
+	}
+	s.Wait()
+	if got := s.Panicked(); got != 1 {
+		t.Fatalf("Panicked() = %d, want 1", got)
+	}
+}

@@ -3,9 +3,9 @@
 package config
 
 import (
-	"strings"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/stufently/telegram-antispam/internal/domain"

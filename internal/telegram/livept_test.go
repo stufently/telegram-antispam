@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -120,4 +121,24 @@ func TestSubmitSyncCancelsAttemptWithCaller(t *testing.T) {
 	}
 	stopDispatcher()
 	<-done
+}
+
+// TestIgnoreAlreadyGone: deleting a message that is already gone is the goal
+// state, not a failure — tg-spam runs beside this bot on the same chats and
+// routinely gets there first. But a revoked right must still surface.
+func TestIgnoreAlreadyGone(t *testing.T) {
+	if err := ignoreAlreadyGone(nil); err != nil {
+		t.Fatalf("nil must stay nil, got %v", err)
+	}
+	if err := ignoreAlreadyGone(errors.New("Bad Request: message to delete not found")); err != nil {
+		t.Fatalf("already-deleted message must not be an error, got %v", err)
+	}
+	for _, msg := range []string{
+		"Bad Request: message can't be deleted",
+		"Forbidden: bot is not a member of the supergroup chat",
+	} {
+		if err := ignoreAlreadyGone(errors.New(msg)); err == nil {
+			t.Fatalf("%q must stay an error: it means the bot lost a right", msg)
+		}
+	}
 }

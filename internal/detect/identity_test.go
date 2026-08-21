@@ -26,3 +26,31 @@ func TestClassifySender(t *testing.T) {
 		})
 	}
 }
+
+// TestAutomaticForwardIsLinkedChannelWithoutLinkedChatID pins the immunity
+// that used to be unreachable. Nothing populates LinkedChatID (the Bot API
+// does not put it on a message), so requiring the id match classified every
+// routine auto-post of a chat's own channel as an external channel — and
+// external channels are moderated.
+func TestAutomaticForwardIsLinkedChannelWithoutLinkedChatID(t *testing.T) {
+	got := ClassifySender(ClassifyInput{
+		SenderChatID:       -1001111111111,
+		ChatID:             -1002222222222,
+		IsAutomaticForward: true,
+	})
+	if got != domain.SenderLinkedChannel {
+		t.Fatalf("got %v, want linked_channel", got)
+	}
+
+	// A known-but-different linked chat still wins: that is a forward from
+	// somewhere else, not the discussion group's own channel.
+	got = ClassifySender(ClassifyInput{
+		SenderChatID:       -1001111111111,
+		ChatID:             -1002222222222,
+		LinkedChatID:       -1003333333333,
+		IsAutomaticForward: true,
+	})
+	if got != domain.SenderExternalChannel {
+		t.Fatalf("got %v, want external_channel", got)
+	}
+}

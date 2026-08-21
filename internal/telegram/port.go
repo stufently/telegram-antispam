@@ -55,6 +55,10 @@ type Port interface {
 	RestrictMember(ctx context.Context, chat, user int64, perms Perms, until int64) error
 	SendAdmin(ctx context.Context, adminChat int64, msg AdminMessage) (int, error)
 	BanSenderChat(ctx context.Context, chat, senderChat int64) error
+	// UnbanSenderChat lifts a BanSenderChat. It exists for the same reason
+	// UnbanMember does: a sanction the admin-chat buttons cannot reverse is
+	// worse than no button at all.
+	UnbanSenderChat(ctx context.Context, chat, senderChat int64) error
 	GetChatAdministrators(ctx context.Context, chat int64) ([]Member, error)
 	AnswerCallback(ctx context.Context, callbackID, text string) error
 	EditAdminMarkup(ctx context.Context, adminChat int64, messageID int, buttons [][]Button) error

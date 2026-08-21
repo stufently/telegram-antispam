@@ -25,6 +25,7 @@ type Sequencer struct {
 	quit     chan struct{}
 	closed   bool
 	dropped  int64
+	panicked int64
 	dropOnce sync.Once
 }
 
@@ -85,19 +86,43 @@ func (s *Sequencer) worker(q chan func()) {
 	for {
 		select {
 		case j := <-q:
-			j()
+			s.run(j)
 		case <-s.quit:
 			// Shutdown: drain jobs already queued, then exit.
 			for {
 				select {
 				case j := <-q:
-					j()
+					s.run(j)
 				default:
 					return
 				}
 			}
 		}
 	}
+}
+
+// run executes one job, containing a panic to that job.
+//
+// This is one process for every chat: without the recover, a nil-pointer
+// dereference while handling a single malformed update in a single chat
+// takes the bot down for ALL of them — and, with the panic reaching main,
+// takes the polling loop, the admin buttons and the digest with it. A
+// panicking job is a bug either way; the difference is whether it costs one
+// message or the whole service. The counter makes such a bug visible instead
+// of leaving it as one line in a log nobody reads.
+func (s *Sequencer) run(j func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			atomic.AddInt64(&s.panicked, 1)
+			log.Printf("sequencer: job panicked: %v", r)
+		}
+	}()
+	j()
+}
+
+// Panicked returns the number of jobs that panicked and were contained.
+func (s *Sequencer) Panicked() int64 {
+	return atomic.LoadInt64(&s.panicked)
 }
 
 // Wait signals shutdown and waits for all workers to drain and exit. It is
