@@ -168,6 +168,11 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   configuration, not a detail: a mostly-spam corpus lifts every message toward
   spam regardless of its words. Anything that imports samples in bulk (the
   chart's init containers, `import`) must say so where an operator will read it.
+- The LLM system prompt is a per-CALL argument (`Provider.Classify`), never
+  provider state: chats need different wording and their calls run
+  concurrently, so storing it on the provider would race with a wrong-prompt
+  outcome. `llm.prompt_overrides` replaces the prompt for one chat, it does
+  not extend it.
 - Every exported metric name starts with `tg_antispam_`. These land in a shared
   Prometheus/VictoriaMetrics instance where a bare `updates_total` would collide
   with someone else's series, and renaming after dashboards and alerts exist is

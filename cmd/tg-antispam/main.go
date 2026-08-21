@@ -360,6 +360,16 @@ func main() {
 			log.Printf("self-check chat %d: %v", chat, err)
 			return
 		}
+		if len(warnings) == 0 {
+			// Log the clean result too, not just problems. Adding a bot to a
+			// chat produces two my_chat_member events — joined as a member,
+			// then promoted — so the log otherwise ends on "bot is not an
+			// administrator" and stays that way, with nothing to say the
+			// promotion landed. That reads as a broken deploy when everything
+			// is fine.
+			log.Printf("self-check chat %d: rights ok", chat)
+			return
+		}
 		for _, w := range warnings {
 			log.Printf("self-check chat %d: %s", chat, w)
 		}
@@ -529,7 +539,7 @@ func main() {
 		v, ok := cascade.Decide(m, edited)
 		if !ok && llmJudge != nil && hasBorderline(v) {
 			cctx, cancel := context.WithTimeout(workCtx, llmTimeout)
-			spam := llmJudge.Adjudicate(cctx, m.Text)
+			spam := llmJudge.Adjudicate(cctx, m.Text, cfg.LLM.PromptFor(m.ChatID))
 			cancel()
 			reg.IncCounter("tg_antispam_llm_checks_total", 1, "result", boolLabel(spam))
 			if spam {

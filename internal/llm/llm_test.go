@@ -16,7 +16,7 @@ type stub struct {
 }
 
 func (s stub) Name() string { return s.name }
-func (s stub) Classify(context.Context, string) (bool, error) {
+func (s stub) Classify(context.Context, string, string) (bool, error) {
 	return s.spam, s.err
 }
 
@@ -42,7 +42,7 @@ func TestAdjudicateConsensus(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Judge{Providers: tc.provs, Policy: tc.policy}.Adjudicate(context.Background(), "hi")
+			got := Judge{Providers: tc.provs, Policy: tc.policy}.Adjudicate(context.Background(), "hi", "")
 			if got != tc.want {
 				t.Fatalf("Adjudicate = %v, want %v", got, tc.want)
 			}
@@ -54,7 +54,7 @@ func TestAdjudicateContextCancelledFailOpen(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	// A provider that would say spam, but ctx is already done.
-	got := Judge{Providers: []Provider{blockingStub{}}, Policy: PolicyAny}.Adjudicate(ctx, "x")
+	got := Judge{Providers: []Provider{blockingStub{}}, Policy: PolicyAny}.Adjudicate(ctx, "x", "")
 	if got {
 		t.Fatal("cancelled ctx must fail-open to not-spam")
 	}
@@ -64,7 +64,7 @@ func TestAdjudicateContextCancelledFailOpen(t *testing.T) {
 type blockingStub struct{}
 
 func (blockingStub) Name() string { return "block" }
-func (blockingStub) Classify(ctx context.Context, _ string) (bool, error) {
+func (blockingStub) Classify(ctx context.Context, _, _ string) (bool, error) {
 	<-ctx.Done()
 	return true, ctx.Err()
 }
@@ -95,7 +95,7 @@ func TestOpenAIClassifyOmitsTuningParamsByDefault(t *testing.T) {
 	}))
 	defer srv.Close()
 	p := OpenAI{APIKey: "sk-test", Model: "gpt-4o-mini", BaseURL: srv.URL, Client: srv.Client()}
-	spam, err := p.Classify(context.Background(), "buy now")
+	spam, err := p.Classify(context.Background(), "buy now", "")
 	if err != nil || !spam {
 		t.Fatalf("spam=%v err=%v", spam, err)
 	}
@@ -123,7 +123,7 @@ func TestOpenAIClassifySendsConfiguredPromptAndParams(t *testing.T) {
 		APIKey: "sk-test", Model: "m", BaseURL: srv.URL, Client: srv.Client(),
 		Prompt: "ru prompt", Temperature: &temp, MaxTokens: 8,
 	}
-	if _, err := p.Classify(context.Background(), "hi"); err != nil {
+	if _, err := p.Classify(context.Background(), "hi", ""); err != nil {
 		t.Fatal(err)
 	}
 	if v, ok := body["temperature"].(float64); !ok || v != 0 {
@@ -149,7 +149,7 @@ func TestOpenAIClassifyErrorStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 	p := OpenAI{APIKey: "k", Model: "m", BaseURL: srv.URL, Client: srv.Client()}
-	if _, err := p.Classify(context.Background(), "x"); err == nil {
+	if _, err := p.Classify(context.Background(), "x", ""); err == nil {
 		t.Fatal("expected error on 429")
 	}
 }
@@ -166,8 +166,37 @@ func TestAnthropicClassify(t *testing.T) {
 	}))
 	defer srv.Close()
 	p := Anthropic{APIKey: "ak", Model: "claude-3-5-haiku-latest", BaseURL: srv.URL, Client: srv.Client()}
-	spam, err := p.Classify(context.Background(), "hello friends")
+	spam, err := p.Classify(context.Background(), "hello friends", "")
 	if err != nil || spam {
 		t.Fatalf("spam=%v err=%v", spam, err)
+	}
+}
+
+// promptCapture records the prompt a provider was called with.
+type promptCapture struct{ got string }
+
+func (p *promptCapture) Name() string { return "capture" }
+func (p *promptCapture) Classify(_ context.Context, _, prompt string) (bool, error) {
+	p.got = prompt
+	return false, nil
+}
+
+func TestPerCallPromptBeatsProviderAndBuiltIn(t *testing.T) {
+	cap := &promptCapture{}
+	Judge{Providers: []Provider{cap}, Policy: PolicyAny}.Adjudicate(context.Background(), "текст", "промпт чата")
+	if cap.got != "промпт чата" {
+		t.Fatalf("provider got prompt %q, want the per-call one", cap.got)
+	}
+}
+
+func TestPromptOrFallbackOrder(t *testing.T) {
+	if got := promptOr("  ", "provider"); got != "provider" {
+		t.Errorf("blank per-call prompt must fall through to the provider one, got %q", got)
+	}
+	if got := promptOr("", ""); got != classifyPrompt {
+		t.Errorf("with nothing configured the built-in prompt must be used, got %q", got)
+	}
+	if got := promptOr("chat", "provider"); got != "chat" {
+		t.Errorf("per-call prompt must win, got %q", got)
 	}
 }

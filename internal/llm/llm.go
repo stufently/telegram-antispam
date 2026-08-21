@@ -17,9 +17,15 @@ import (
 type Provider interface {
 	// Name identifies the provider for logs/metrics (e.g. "openai").
 	Name() string
-	// Classify reports whether text is spam. A non-nil error means the call
-	// failed and the result must be treated as "no opinion" by the Judge.
-	Classify(ctx context.Context, text string) (bool, error)
+	// Classify reports whether text is spam, using prompt as the system
+	// prompt when non-empty (the provider's own configured prompt, then the
+	// built-in one, are the fallbacks). The prompt is a per-CALL argument
+	// rather than provider state because different chats need different
+	// wording and calls for several chats run concurrently — storing it on
+	// the provider would be a data race with a wrong-prompt outcome.
+	// A non-nil error means the call failed and the result must be treated
+	// as "no opinion" by the Judge.
+	Classify(ctx context.Context, text, prompt string) (bool, error)
 }
 
 // Policy is how the Judge combines multiple providers' verdicts.
@@ -51,7 +57,7 @@ type result struct {
 // fail-open: with no providers, or when errors prevent the policy from being
 // met, it returns false. Providers run concurrently; Adjudicate returns once
 // all have answered or ctx is done.
-func (j Judge) Adjudicate(ctx context.Context, text string) bool {
+func (j Judge) Adjudicate(ctx context.Context, text, prompt string) bool {
 	if len(j.Providers) == 0 {
 		return false
 	}
@@ -59,7 +65,7 @@ func (j Judge) Adjudicate(ctx context.Context, text string) bool {
 	done := make(chan struct{}, len(j.Providers))
 	for i, p := range j.Providers {
 		go func(i int, p Provider) {
-			spam, err := p.Classify(ctx, text)
+			spam, err := p.Classify(ctx, text, prompt)
 			results[i] = result{spam: spam, ok: err == nil}
 			done <- struct{}{}
 		}(i, p)
@@ -107,10 +113,13 @@ func classifyReply(reply string) bool {
 	return strings.Trim(f[0], ".,:;!?\"'*") == "SPAM"
 }
 
-// promptOr returns the operator's prompt, falling back to the built-in one.
-func promptOr(prompt string) string {
-	if strings.TrimSpace(prompt) != "" {
-		return prompt
+// promptOr picks the first non-blank prompt: the per-call one (a chat
+// override), then the provider's configured one, then the built-in default.
+func promptOr(prompts ...string) string {
+	for _, p := range prompts {
+		if strings.TrimSpace(p) != "" {
+			return p
+		}
 	}
 	return classifyPrompt
 }

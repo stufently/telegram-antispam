@@ -190,6 +190,15 @@ llm:
   # "selling my used X" is legitimate, a crypto chat where coin names are
   # not automatically spam) needs its own wording. Empty ⇒ built-in prompt.
   prompt: ""
+  # Per-chat replacements for prompt, keyed by chat id. One prompt cannot
+  # serve chats with opposite norms — in a trading chat "buying USDT" is the
+  # topic, everywhere else it is the spam being filtered.
+  # ⚠️ An override REPLACES the whole prompt rather than extending it, so it
+  # must restate every category it still wants; edit the shared prompt and the
+  # overrides keep the old wording until you update them too.
+  prompt_overrides: {}
+  #   -1001234567890: |
+  #     ...prompt for this chat only...
   # Sent to the provider ONLY when set. Reasoning models reject an explicit
   # temperature, so it is unset by default; classic completion models
   # usually want an explicit 0, which is honored (unset differs from 0).

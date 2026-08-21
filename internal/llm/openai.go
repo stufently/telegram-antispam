@@ -30,7 +30,7 @@ type OpenAI struct {
 
 func (o OpenAI) Name() string { return "openai" }
 
-func (o OpenAI) Classify(ctx context.Context, text string) (bool, error) {
+func (o OpenAI) Classify(ctx context.Context, text, prompt string) (bool, error) {
 	base := o.BaseURL
 	if base == "" {
 		base = "https://api.openai.com"
@@ -38,7 +38,7 @@ func (o OpenAI) Classify(ctx context.Context, text string) (bool, error) {
 	payload := map[string]any{
 		"model": o.Model,
 		"messages": []map[string]string{
-			{"role": "system", "content": promptOr(o.Prompt)},
+			{"role": "system", "content": promptOr(prompt, o.Prompt)},
 			{"role": "user", "content": text},
 		},
 	}

@@ -33,7 +33,7 @@ const defaultAnthropicMaxTokens = 16
 
 func (a Anthropic) Name() string { return "anthropic" }
 
-func (a Anthropic) Classify(ctx context.Context, text string) (bool, error) {
+func (a Anthropic) Classify(ctx context.Context, text, prompt string) (bool, error) {
 	base := a.BaseURL
 	if base == "" {
 		base = "https://api.anthropic.com"
@@ -45,7 +45,7 @@ func (a Anthropic) Classify(ctx context.Context, text string) (bool, error) {
 	payload := map[string]any{
 		"model":      a.Model,
 		"max_tokens": maxTokens,
-		"system":     promptOr(a.Prompt),
+		"system":     promptOr(prompt, a.Prompt),
 		"messages": []map[string]string{
 			{"role": "user", "content": text},
 		},

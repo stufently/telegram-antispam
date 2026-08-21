@@ -3,6 +3,7 @@
 package config
 
 import (
+	"strings"
 	"fmt"
 	"os"
 	"time"
@@ -289,6 +290,15 @@ type LLMProvider struct {
 	Model  string `yaml:"model"`
 }
 
+// PromptFor returns the system prompt to use for chatID: its override when one
+// is configured, otherwise the shared prompt (empty means the built-in one).
+func (l LLM) PromptFor(chatID int64) string {
+	if p, ok := l.PromptOverrides[chatID]; ok && strings.TrimSpace(p) != "" {
+		return p
+	}
+	return l.Prompt
+}
+
 // LLM configures the optional, opt-in borderline LLM adjudication stage
 // (spec §5.4). It runs one or two paid official LLM APIs over a message whose
 // Bayes score sits within BorderlineBand of the threshold and combines their
@@ -313,6 +323,15 @@ type LLM struct {
 	// Providers lists the LLM backends (1 or 2). An empty list disables the
 	// stage regardless of Enabled.
 	Providers []LLMProvider `yaml:"providers"`
+	// PromptOverrides replaces Prompt for specific chats, keyed by chat id.
+	//
+	// It exists because one prompt cannot serve chats with opposite norms:
+	// in a trading chat "buying USDT" is the topic, while in the others it is
+	// the exact spam being filtered. An override REPLACES the whole prompt
+	// (it does not extend it), so it must restate every category it still
+	// wants — the same trap as any "custom prompt" setting: edit the shared
+	// list and the overrides silently keep the old one.
+	PromptOverrides map[int64]string `yaml:"prompt_overrides"`
 	// Prompt overrides the built-in classifier system prompt. The built-in
 	// one is English and generic; a chat with its own norms (a marketplace
 	// where "selling my used X" is legitimate, a crypto chat where coin

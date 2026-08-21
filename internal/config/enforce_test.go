@@ -109,3 +109,26 @@ func TestOperatorsParsed(t *testing.T) {
 		t.Fatalf("operators = %v, want [7 42]", c.Chats.Operators)
 	}
 }
+
+func TestLLMPromptOverridePerChat(t *testing.T) {
+	// The real case this exists for: buying USDT is the topic of one chat and
+	// the spam being filtered in all the others.
+	yaml := "bot_token: t\nadmin_chat_id: -1\naction: ban\nchats:\n  mode: auto\n" +
+		"llm:\n  enabled: true\n  prompt: \"общий\"\n  prompt_overrides:\n    -100777: \"крипто-чат\"\n" +
+		"  providers:\n    - kind: openai\n      model: m\n      api_key: k\n"
+	c, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.LLM.PromptFor(-100777); got != "крипто-чат" {
+		t.Errorf("override chat got %q, want the override", got)
+	}
+	if got := c.LLM.PromptFor(-100999); got != "общий" {
+		t.Errorf("other chat got %q, want the shared prompt", got)
+	}
+	// A blank override must not silently blank the prompt.
+	c.LLM.PromptOverrides[-100777] = "   "
+	if got := c.LLM.PromptFor(-100777); got != "общий" {
+		t.Errorf("blank override got %q, want the shared prompt", got)
+	}
+}
