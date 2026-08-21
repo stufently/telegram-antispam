@@ -12,7 +12,7 @@ import (
 
 func TestHealthzAndMetrics(t *testing.T) {
 	reg := NewRegistry()
-	srv := httptest.NewServer(handler(reg))
+	srv := httptest.NewServer(handler(reg, nil))
 	defer srv.Close()
 
 	resp, err := srv.Client().Get(srv.URL + "/healthz")
@@ -60,7 +60,7 @@ func TestHealthzAndMetrics(t *testing.T) {
 
 func TestServerRunStopsOnCancel(t *testing.T) {
 	reg := NewRegistry()
-	s := NewServer("127.0.0.1:0", reg)
+	s := NewServer("127.0.0.1:0", reg, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 

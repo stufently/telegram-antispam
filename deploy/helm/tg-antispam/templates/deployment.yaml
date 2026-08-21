@@ -129,12 +129,25 @@ spec:
             - name: metrics
               containerPort: {{ .Values.metricsPort }}
           {{- if .Values.probes.enabled }}
+          # Liveness hits /livez: it reports whether the bot has managed a
+          # round trip to Telegram recently, which /healthz (a static 200)
+          # never could — a revoked token or a wedged poller looked healthy.
+          # The thresholds are deliberately slack: the endpoint only turns
+          # 503 after 15 minutes without a successful call, and three more
+          # failed probes are needed after that. A restart fixes a stuck
+          # process, not a Telegram outage, and it costs a full re-fetch of
+          # the ~4.9M-entry blocklist.
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /livez
               port: metrics
-            initialDelaySeconds: 5
-            periodSeconds: 30
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            failureThreshold: 3
+          # Readiness stays on /healthz, i.e. on the process. It gates the
+          # Service, and a not-ready pod is also a pod nobody scrapes — so
+          # tying it to Telegram would blind the monitoring precisely when
+          # something is wrong.
           readinessProbe:
             httpGet:
               path: /healthz

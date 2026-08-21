@@ -87,6 +87,11 @@ stops without acting. Either way the admin chat is told what happened, because
 `Confidence`: every wired detector emits `1.0`, so a confidence threshold
 would let everything through.
 
+The ops server exposes `/healthz` (process liveness, used for readiness),
+`/livez` (time since the last successful Telegram round trip, used for
+liveness) and `/metrics`. A periodic GetMe feeds `/livez`, because update
+traffic cannot: a quiet night in every chat is normal.
+
 ## Detection order
 
 `internal/detect.Cascade` normalizes all message text surfaces once, then uses

@@ -136,7 +136,7 @@ func TestCascadeDecide_BayesSpamActionableForUntrustedOnly(t *testing.T) {
 		DefaultAction:   domain.ActionDeleteMute,
 		DefaultScope:    domain.ScopeChat,
 		Bayes:           bayes,
-		BayesScope:      "global",
+		BayesScope:      globalScope,
 		BayesThreshold:  0.0,
 		BayesVocabGuess: 1000,
 		BayesEnabled:    true,
@@ -396,7 +396,7 @@ func TestCascadeDecide_BayesBorderlineSignal(t *testing.T) {
 		DefaultAction:   domain.ActionDeleteMute,
 		DefaultScope:    domain.ScopeChat,
 		Bayes:           bayes,
-		BayesScope:      "global",
+		BayesScope:      globalScope,
 		BayesThreshold:  0.0,
 		BayesVocabGuess: 1000,
 		BayesEnabled:    true,
@@ -506,7 +506,7 @@ func TestUntrainedBayesStillReachesTheLLMStage(t *testing.T) {
 		Trust:           &fakeTrustSource{counts: map[[2]int64]int{}},
 		TrustThreshold:  5,
 		Bayes:           emptyBayes{},
-		BayesScope:      "global",
+		BayesScope:      globalScope,
 		BayesEnabled:    true,
 		BayesThreshold:  1.0,
 		BayesVocabGuess: 5000,
@@ -538,7 +538,7 @@ func TestUntrainedBayesStillReachesTheLLMStage(t *testing.T) {
 func TestUntrainedBayesSkipsEmptyTokenMessages(t *testing.T) {
 	c := Cascade{
 		Trust: &fakeTrustSource{counts: map[[2]int64]int{}}, TrustThreshold: 5,
-		Bayes: emptyBayes{}, BayesScope: "global", BayesEnabled: true,
+		Bayes: emptyBayes{}, BayesScope: globalScope, BayesEnabled: true,
 		BayesThreshold: 1.0, BayesVocabGuess: 5000, BayesBorderlineBand: 0.5,
 		DefaultAction: domain.ActionBan, Hist: &fakeHistory{},
 	}
@@ -565,7 +565,7 @@ func (failingBayes) Totals(string) (BayesCounts, error) {
 func TestBayesReadErrorDoesNotBecomeAnLLMCall(t *testing.T) {
 	c := Cascade{
 		Trust: &fakeTrustSource{counts: map[[2]int64]int{}}, TrustThreshold: 5,
-		Bayes: failingBayes{}, BayesScope: "global", BayesEnabled: true,
+		Bayes: failingBayes{}, BayesScope: globalScope, BayesEnabled: true,
 		BayesThreshold: 2.0, BayesVocabGuess: 5000, BayesBorderlineBand: 4.5,
 		DefaultAction: domain.ActionBan, Hist: &fakeHistory{},
 	}
@@ -582,3 +582,7 @@ func TestBayesReadErrorDoesNotBecomeAnLLMCall(t *testing.T) {
 		t.Fatalf("signals = %+v, want none (no borderline signal on a read error)", v.Signals)
 	}
 }
+
+// globalScope is the resolver every cascade test uses: these tests are about
+// detection, not about which corpus a deployment picks.
+func globalScope(int64) string { return "global" }

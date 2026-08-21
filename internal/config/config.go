@@ -142,6 +142,12 @@ type DetectionBehavior struct {
 // meaningful explicit value (everyone is immediately trusted) and must not
 // be silently promoted to the default.
 //
+// Values for Detection.BayesScope.
+const (
+	BayesScopeGlobal  = "global"
+	BayesScopePerChat = "per_chat"
+)
+
 // BayesThreshold is a *float64 for the same nil-vs-zero reason: 0.0 is
 // this field's own documented default (a non-negative log-ratio is
 // spam-leaning, so threshold 0.0 flags any message the scorer favors
@@ -168,6 +174,16 @@ type Detection struct {
 	// BayesVocabGuess is the estimated vocabulary size used for Laplace
 	// smoothing (see detect.BayesLogRatio's vocabGuess param). Default: 5000.
 	BayesVocabGuess int `yaml:"bayes_vocab_guess"`
+	// BayesScope selects whose corpus a message is scored against:
+	// "global" (default) — one shared corpus for every chat, or "per_chat"
+	// — the shared corpus PLUS what moderators trained in that chat.
+	//
+	// per_chat exists because the chats disagree about what spam is: buying
+	// USDT is the topic of one and the spam being filtered in the others.
+	// It is additive, never exclusive — a chat with no training of its own
+	// scores exactly as it does under "global", so turning it on cannot
+	// silently disarm detection in a quiet chat.
+	BayesScope string `yaml:"bayes_scope"`
 
 	// FakeAdminEnabled turns the M5 fake-admin detector on or off. *bool
 	// for the usual nil-vs-false reason: an explicit "false" must not be
@@ -464,6 +480,9 @@ func (c *Config) applyDetectionDefaults() {
 		def := 1.0
 		c.Detection.BayesThreshold = &def
 	}
+	if c.Detection.BayesScope == "" {
+		c.Detection.BayesScope = BayesScopeGlobal
+	}
 	if c.Detection.BayesVocabGuess == 0 {
 		c.Detection.BayesVocabGuess = 5000
 	}
@@ -586,6 +605,12 @@ func (c *Config) Validate() error {
 	case "auto", "allowlist", "owners_only":
 	default:
 		return fmt.Errorf("chats.mode must be auto|allowlist|owners_only, got %q", c.Chats.Mode)
+	}
+	switch c.Detection.BayesScope {
+	case "", BayesScopeGlobal, BayesScopePerChat:
+	default:
+		return fmt.Errorf("detection.bayes_scope must be %s|%s, got %q",
+			BayesScopeGlobal, BayesScopePerChat, c.Detection.BayesScope)
 	}
 	// An enforce entry outside the allowlist can never fire (the allowlist
 	// gate drops the update before moderation), so it is an operator typo

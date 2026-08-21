@@ -132,3 +132,32 @@ func TestLLMPromptOverridePerChat(t *testing.T) {
 		t.Errorf("blank override got %q, want the shared prompt", got)
 	}
 }
+
+func TestBayesScopeDefaultsAndValidates(t *testing.T) {
+	base := "bot_token: t\nadmin_chat_id: -1\naction: ban\nchats:\n  mode: auto\n"
+
+	c, err := Parse([]byte(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Default must stay "global": per_chat is opt-in, because it changes
+	// where moderator feedback lands.
+	if c.Detection.BayesScope != BayesScopeGlobal {
+		t.Errorf("default bayes_scope = %q, want %q", c.Detection.BayesScope, BayesScopeGlobal)
+	}
+
+	c, err = Parse([]byte(base + "detection:\n  bayes_scope: per_chat\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Detection.BayesScope != BayesScopePerChat {
+		t.Errorf("bayes_scope = %q, want per_chat", c.Detection.BayesScope)
+	}
+
+	// A typo must fail loudly rather than silently score against a corpus
+	// that does not exist.
+	if _, err := Parse([]byte(base + "detection:\n  bayes_scope: per-chat\n")); err == nil ||
+		!strings.Contains(err.Error(), "bayes_scope") {
+		t.Fatalf("err = %v, want a bayes_scope validation error", err)
+	}
+}

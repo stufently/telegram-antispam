@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -59,6 +60,19 @@ const (
 	// growing archive of message-derived content.
 	incidentTokenRetention = 30 * 24 * time.Hour
 
+	// telegramProbeInterval is how often the bot proves it can still reach
+	// Telegram; telegramLivenessWindow is how long that may keep failing
+	// before /livez reports unhealthy and the kubelet restarts the pod.
+	//
+	// The window is many probes wide ON PURPOSE. A restart fixes a wedged
+	// process, not a Telegram outage, and it costs a full re-fetch of the
+	// ~4.9M-entry blocklist — so a short window would turn somebody else's
+	// downtime into our crash loop. Short outages are meant to be caught by
+	// the metric (tg_antispam_telegram_probe_age_seconds), which alerts
+	// long before this threshold.
+	telegramProbeInterval  = 2 * time.Minute
+	telegramLivenessWindow = 15 * time.Minute
+
 	// updateDedupWindow is how many of the most recent update ids stay in
 	// the dedup table. Telegram only ever redelivers updates that were not
 	// acknowledged by the last getUpdates call — minutes of traffic at the
@@ -106,8 +120,34 @@ func (c *chatLimiters) get(chat int64) *rate.Limiter {
 // cascade's Bayes stage expects.
 type bayesAdapter struct{ db *store.DB }
 
+// chatScope is the per-chat Bayes corpus name. Prefixed so it can never
+// collide with the shared "global" scope or with a future named one.
+func chatScope(chatID int64) string { return fmt.Sprintf("chat:%d", chatID) }
+
+// TokenCounts reads a scope's token counts, LAYERED on the shared corpus
+// when the scope is a per-chat one.
+//
+// The layering is the whole design: the seeded corpus is imported under
+// "global", so a chat scope on its own would be empty and every message in
+// it unscoreable. Summing the two makes per-chat training a refinement of
+// the shared corpus rather than a replacement for it — a chat starts out
+// identical to global and diverges only as far as moderators push it.
 func (a bayesAdapter) TokenCounts(scope string, tokens []string) (map[string]int, map[string]int, error) {
-	return a.db.TokenCounts(scope, tokens)
+	spam, ham, err := a.db.TokenCounts(scope, tokens)
+	if err != nil || scope == string(domain.ScopeGlobal) {
+		return spam, ham, err
+	}
+	gSpam, gHam, err := a.db.TokenCounts(string(domain.ScopeGlobal), tokens)
+	if err != nil {
+		return nil, nil, err
+	}
+	for tok, n := range gSpam {
+		spam[tok] += n
+	}
+	for tok, n := range gHam {
+		ham[tok] += n
+	}
+	return spam, ham, nil
 }
 
 func (a bayesAdapter) Totals(scope string) (detect.BayesCounts, error) {
@@ -115,7 +155,21 @@ func (a bayesAdapter) Totals(scope string) (detect.BayesCounts, error) {
 	if err != nil {
 		return detect.BayesCounts{}, err
 	}
-	return detect.BayesCounts{SpamDocs: sd, HamDocs: hd, SpamTokenTotal: st, HamTokenTotal: ht}, nil
+	counts := detect.BayesCounts{SpamDocs: sd, HamDocs: hd, SpamTokenTotal: st, HamTokenTotal: ht}
+	if scope == string(domain.ScopeGlobal) {
+		return counts, nil
+	}
+	// Same layering as TokenCounts: the class priors must describe the same
+	// corpus the token counts came from, or the score is nonsense.
+	gsd, ghd, gst, ght, err := a.db.BayesTotals(string(domain.ScopeGlobal))
+	if err != nil {
+		return detect.BayesCounts{}, err
+	}
+	counts.SpamDocs += gsd
+	counts.HamDocs += ghd
+	counts.SpamTokenTotal += gst
+	counts.HamTokenTotal += ght
+	return counts, nil
 }
 
 func main() {
@@ -128,6 +182,18 @@ func main() {
 			log.Fatalf("import: %v", err)
 		}
 		log.Printf("imported: added=%d skipped=%d", added, skipped)
+		os.Exit(0)
+	}
+
+	// Handle backup subcommand if present. Kept before any logging: the
+	// snapshot goes to stdout, and a stray log line there would corrupt it
+	// (log writes to stderr, but the ordering makes the intent explicit).
+	if len(os.Args) > 1 && os.Args[1] == "backup" {
+		if err := runBackup(os.Args[2:], func(p string) (*store.DB, error) {
+			return store.Open(p)
+		}); err != nil {
+			log.Fatalf("backup: %v", err)
+		}
 		os.Exit(0)
 	}
 
@@ -194,9 +260,13 @@ func main() {
 	// and served by the ops HTTP server started further down, once cfg.Ops
 	// is known to be fully defaulted.
 	reg := ops.NewRegistry()
+	// health backs /livez. Created before the ops server so the endpoint is
+	// wired from the first request; the probe that feeds it starts once
+	// LivePort exists (further down).
+	health := ops.NewHealth(telegramLivenessWindow, time.Now())
 	if *cfg.Ops.MetricsEnabled {
 		startBackground(func() {
-			if err := ops.NewServer(cfg.Ops.MetricsAddr, reg).Run(signalCtx); err != nil {
+			if err := ops.NewServer(cfg.Ops.MetricsAddr, reg, health).Run(signalCtx); err != nil {
 				log.Printf("ops server: %v", err)
 			}
 		})
@@ -368,6 +438,31 @@ func main() {
 		log.Fatalf("bot identity (GetMe): %v", err)
 	}
 	log.Printf("bot identity resolved: id=%d", selfID)
+
+	// Liveness probe: a periodic GetMe down the same path every other call
+	// takes (rate limiter, dispatcher, HTTP client). Update traffic cannot
+	// serve this purpose — a quiet night in every chat is normal — so the
+	// bot asks Telegram a question it always knows the answer to.
+	startBackground(func() {
+		t := time.NewTicker(telegramProbeInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-signalCtx.Done():
+				return
+			case <-t.C:
+				pctx, cancel := context.WithTimeout(workCtx, telegramProbeInterval)
+				err := livePort.Ping(pctx)
+				cancel()
+				if err != nil {
+					log.Printf("telegram probe failed: %v", err)
+				} else {
+					health.Beat(time.Now())
+				}
+				reg.SetGauge("tg_antispam_telegram_probe_age_seconds", health.Age(time.Now()).Seconds())
+			}
+		}
+	})
 	// selfCheck reads the bot's admin rights in one chat and logs any missing
 	// rights or hazards (spec §13). Best-effort: a transient read error is
 	// logged and dropped, never fatal.
@@ -398,8 +493,24 @@ func main() {
 	handler = telegram.NewHandler(db, seq, cfgStore, machine)
 	handler.SetContext(workCtx)
 	adminHandler = admin.NewHandler(livePort, db, operatorSet(cfg))
-	adminHandler.SetTrainer(func(scope, label string, tokens []string) error {
-		_, err := train.RecordTokens(db, scope, label, "user", tokens)
+	// bayesScopeFor decides whose corpus a chat is scored against. In
+	// per_chat mode the chat's own scope is ADDITIVE: bayesAdapter reads it
+	// on top of the shared corpus, so a chat nobody has trained yet scores
+	// exactly as it did under "global". Without that layering, switching
+	// modes would silently disarm Bayes in every chat until moderators had
+	// rebuilt a corpus by hand.
+	bayesScopeFor := func(chatID int64) string {
+		if cfg.Detection.BayesScope != config.BayesScopePerChat {
+			return string(domain.ScopeGlobal)
+		}
+		return chatScope(chatID)
+	}
+
+	// Moderator feedback trains the same corpus the message was SCORED
+	// against, so a confirm/false-positive press in the crypto chat does not
+	// teach the hookah chats that "куплю usdt" is fine.
+	adminHandler.SetTrainer(func(chatID int64, label string, tokens []string) error {
+		_, err := train.RecordTokens(db, bayesScopeFor(chatID), label, "user", tokens)
 		return err
 	})
 
@@ -556,7 +667,7 @@ func main() {
 		DefaultAction:       cfg.Action,
 		DefaultScope:        domain.ScopeGlobal,
 		Bayes:               bayesAdapter{db: db},
-		BayesScope:          "global",
+		BayesScope:          bayesScopeFor,
 		BayesThreshold:      *cfg.Detection.BayesThreshold,
 		BayesVocabGuess:     cfg.Detection.BayesVocabGuess,
 		BayesEnabled:        *cfg.Detection.BayesEnabled,

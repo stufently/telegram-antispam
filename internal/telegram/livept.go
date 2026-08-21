@@ -74,6 +74,18 @@ func (p *LivePort) Self(ctx context.Context) (int64, error) {
 	return p.me(ctx, 0)
 }
 
+// Ping performs a GetMe that deliberately BYPASSES the cached identity, so
+// it is a real round trip to Telegram and not a map lookup. It is the
+// liveness probe: it exercises the same rate limiter, dispatcher and HTTP
+// client as every moderation call, so it fails when that path is wedged.
+func (p *LivePort) Ping(ctx context.Context) error {
+	_, err := submitSync(ctx, p.disp, 0, p.prio("GetMe"), func(ctx context.Context) (*models.User, error) {
+		u, err := p.b.GetMe(ctx)
+		return u, mapRetry(err)
+	})
+	return err
+}
+
 // CheckBotRights reports the bot's own admin rights in chat plus whether the
 // chat has native Aggressive Anti-Spam enabled (spec §13). Owners implicitly
 // have every right; a non-admin bot reports IsAdmin=false with no rights.

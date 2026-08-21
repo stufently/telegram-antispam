@@ -14,15 +14,20 @@ import (
 // M3 detection pipeline over one message. It carries no mutable state of its
 // own, so Decide is pure with respect to Cascade itself.
 type Cascade struct {
-	Trust           TrustSource
-	Hist            History
-	Rules           Rules
-	Behavior        BehaviorCfg
-	TrustThreshold  int
-	DefaultAction   domain.Action
-	DefaultScope    domain.Scope
-	Bayes           BayesSource
-	BayesScope      string
+	Trust          TrustSource
+	Hist           History
+	Rules          Rules
+	Behavior       BehaviorCfg
+	TrustThreshold int
+	DefaultAction  domain.Action
+	DefaultScope   domain.Scope
+	Bayes          BayesSource
+	// BayesScope is the corpus a message is scored against. It is a
+	// FUNCTION of the chat, not a constant, so a deployment can score every
+	// chat against one shared corpus or give each chat its own on top of
+	// it. nil means "global" — the pure cascade must stay usable without
+	// wiring-layer knowledge.
+	BayesScope      func(chatID int64) string
 	BayesThreshold  float64
 	BayesVocabGuess int
 	BayesEnabled    bool
@@ -142,7 +147,7 @@ func (c Cascade) Decide(m domain.Message, edited bool) (domain.Verdict, bool) {
 
 	if c.BayesEnabled && !trusted {
 		tokens := Tokenize(n)
-		ratio, scoreable, err := bayesScore(c.Bayes, c.BayesScope, tokens, c.BayesVocabGuess)
+		ratio, scoreable, err := bayesScore(c.Bayes, c.bayesScopeFor(m.ChatID), tokens, c.BayesVocabGuess)
 		if err != nil {
 			// A read error is NOT an untrained corpus, and the difference is
 			// expensive: falling through to the unscoreable branch below would
@@ -178,6 +183,15 @@ func (c Cascade) Decide(m domain.Message, edited bool) (domain.Verdict, bool) {
 	}
 
 	return domain.Verdict{Action: domain.ActionNone}, false
+}
+
+// bayesScopeFor resolves the corpus scope for one chat, defaulting to the
+// shared one when no resolver is wired.
+func (c Cascade) bayesScopeFor(chatID int64) string {
+	if c.BayesScope == nil {
+		return string(domain.ScopeGlobal)
+	}
+	return c.BayesScope(chatID)
 }
 
 // isCurrentAdmin reports whether userID is a current admin of the chat (spec

@@ -31,7 +31,8 @@ func newMigrated(t *testing.T) *store.DB {
 
 // trainerCall records one invocation of a fake Trainer.
 type trainerCall struct {
-	scope, label, text string
+	chatID      int64
+	label, text string
 }
 
 func TestAuthorizedOperatorAndChatAdmin(t *testing.T) {
@@ -92,8 +93,8 @@ func TestHandleConfirmSpamTrainsFromStoredTokens(t *testing.T) {
 	h := NewHandler(f, db, map[int64]bool{7: true}) // presser 7 is a global operator
 
 	var calls []trainerCall
-	h.SetTrainer(func(scope, label string, tokens []string) error {
-		calls = append(calls, trainerCall{scope, label, strings.Join(tokens, " ")})
+	h.SetTrainer(func(chatID int64, label string, tokens []string) error {
+		calls = append(calls, trainerCall{chatID, label, strings.Join(tokens, " ")})
 		return nil
 	})
 
@@ -109,7 +110,9 @@ func TestHandleConfirmSpamTrainsFromStoredTokens(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("trainer calls = %d, want 1 (calls=%v)", len(calls), calls)
 	}
-	want := trainerCall{"global", "spam", "casino bonus"}
+	// The trainer now receives the source chat: which corpus that maps to is
+	// the wiring layer's decision, not this package's.
+	want := trainerCall{-100123, "spam", "casino bonus"}
 	if calls[0] != want {
 		t.Fatalf("trainer call = %+v, want %+v", calls[0], want)
 	}
@@ -136,8 +139,8 @@ func TestHandleConfirmSpamUnauthorizedDoesNotTrain(t *testing.T) {
 	h := NewHandler(f, db, map[int64]bool{}) // no global operators
 
 	var calls []trainerCall
-	h.SetTrainer(func(scope, label string, tokens []string) error {
-		calls = append(calls, trainerCall{scope, label, strings.Join(tokens, " ")})
+	h.SetTrainer(func(chatID int64, label string, tokens []string) error {
+		calls = append(calls, trainerCall{chatID, label, strings.Join(tokens, " ")})
 		return nil
 	})
 
@@ -168,8 +171,8 @@ func TestHandleFalsePositiveUnmutesAndTrainsHam(t *testing.T) {
 	h := NewHandler(f, db, map[int64]bool{9: true})
 
 	var calls []trainerCall
-	h.SetTrainer(func(scope, label string, tokens []string) error {
-		calls = append(calls, trainerCall{scope, label, strings.Join(tokens, " ")})
+	h.SetTrainer(func(chatID int64, label string, tokens []string) error {
+		calls = append(calls, trainerCall{chatID, label, strings.Join(tokens, " ")})
 		return nil
 	})
 
@@ -247,8 +250,8 @@ func TestHandleLiftDoesNotTrain(t *testing.T) {
 	f := fake.New()
 	h := NewHandler(f, db, map[int64]bool{9: true})
 	var calls []trainerCall
-	h.SetTrainer(func(scope, label string, tokens []string) error {
-		calls = append(calls, trainerCall{scope, label, strings.Join(tokens, " ")})
+	h.SetTrainer(func(chatID int64, label string, tokens []string) error {
+		calls = append(calls, trainerCall{chatID, label, strings.Join(tokens, " ")})
 		return nil
 	})
 
@@ -305,7 +308,7 @@ func TestHandleSecondDecisionIsRefused(t *testing.T) {
 	f := fake.New()
 	h := NewHandler(f, db, map[int64]bool{9: true})
 	var trained int
-	h.SetTrainer(func(string, string, []string) error { trained++; return nil })
+	h.SetTrainer(func(int64, string, []string) error { trained++; return nil })
 
 	key := strconv.FormatInt(incidentID, 10)
 	if err := h.Handle(context.Background(), Callback{ID: "a", Data: encode(ActConfirmSpam, key), PresserID: 9}); err != nil {

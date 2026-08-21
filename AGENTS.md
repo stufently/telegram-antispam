@@ -195,6 +195,21 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
 - `tg_antispam_llm_checks_total` counts ADJUDICATIONS, one per message, not
   provider calls: under policy "any", answers [spam, ham] are one spam verdict.
   Per-provider failures have their own counter.
+- Per-chat Bayes (`detection.bayes_scope: per_chat`) is ADDITIVE: the adapter
+  reads the chat's scope ON TOP of "global", where the seeded corpus lives.
+  A chat scope alone would be empty, so a non-layered implementation would
+  disarm Bayes everywhere the moment the mode was switched. Moderator feedback
+  trains the same scope the message was scored against.
+- `/healthz` is about the PROCESS and backs readiness; `/livez` is about
+  reaching Telegram and backs liveness. Never move readiness onto `/livez`: a
+  not-ready pod leaves the Service, and its `/metrics` stops being scraped —
+  blinding monitoring exactly when something is wrong. The liveness window is
+  wide on purpose (a restart fixes a wedged process, not a Telegram outage,
+  and costs a full blocklist re-fetch).
+- The runtime image is distroless: no shell, no tar, no sqlite3. Anything an
+  operator needs to run inside the pod must be a subcommand of the bot binary
+  and stream to stdout (`backup -`), because `kubectl cp` and shell pipelines
+  do not exist there.
 - Anything derived from a link and then persisted goes through `extractHost`,
   which drops the path, the query, the fragment and the port. A bare
   "host?query" form has no slash, so hand-splitting on "/" kept the query.

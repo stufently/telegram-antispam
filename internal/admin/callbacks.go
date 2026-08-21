@@ -82,7 +82,7 @@ type Handler struct {
 	port      telegram.Port
 	db        *store.DB
 	operators map[int64]bool
-	trainer   func(scope, label string, tokens []string) error
+	trainer   func(chatID int64, label string, tokens []string) error
 }
 
 // NewHandler builds a Handler. operators is the set of Telegram user ids
@@ -100,7 +100,12 @@ func NewHandler(port telegram.Port, db *store.DB, operators map[int64]bool) *Han
 // incident kept (see store.SaveIncidentTokens): the raw message is deleted
 // from the source chat before an admin ever sees the button. A nil trainer
 // (the default) disables training.
-func (h *Handler) SetTrainer(t func(scope, label string, tokens []string) error) { h.trainer = t }
+// The trainer takes the SOURCE CHAT, not a corpus scope: which corpus a
+// chat's feedback belongs to is a deployment decision (one shared corpus or
+// one per chat), and this package has no business knowing it.
+func (h *Handler) SetTrainer(t func(chatID int64, label string, tokens []string) error) {
+	h.trainer = t
+}
 
 // Authorized reports whether presserID may act on incidents whose source
 // chat is sourceChatID. It checks the cheap, network-free global-operator
@@ -208,7 +213,7 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 			// re-pressing would only issue a second, pointless unban.
 			return "", err
 		}
-		trained := h.train(inc.ID, "ham")
+		trained := h.train(inc, "ham")
 		return joinReply("marked false positive", lifted, trained), nil
 
 	case ActConfirmSpam:
@@ -219,7 +224,7 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 			h.releaseClaim(inc.ID, act)
 			return "", err
 		}
-		trained := h.train(inc.ID, "spam")
+		trained := h.train(inc, "spam")
 		return joinReply("confirmed spam", "", trained), nil
 
 	case ActLiftNoLearn:
@@ -333,18 +338,18 @@ func (h *Handler) undo(ctx context.Context, inc store.IncidentRow) (string, erro
 // design: a missing token row (incident predating capture, captionless
 // media, or an already-reviewed incident) and a trainer error both degrade
 // to "not trained" rather than failing the admin's action.
-func (h *Handler) train(incidentID int64, label string) string {
+func (h *Handler) train(inc store.IncidentRow, label string) string {
 	if h.trainer == nil {
 		return ""
 	}
-	tokens, ok, err := h.db.GetIncidentTokens(incidentID)
+	tokens, ok, err := h.db.GetIncidentTokens(inc.ID)
 	if err != nil || !ok {
 		return "not trained"
 	}
-	if err := h.trainer(string(domain.ScopeGlobal), label, tokens); err != nil {
+	if err := h.trainer(inc.ChatID, label, tokens); err != nil {
 		return "not trained"
 	}
-	h.dropTokens(incidentID)
+	h.dropTokens(inc.ID)
 	return "trained " + label
 }
 

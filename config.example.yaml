@@ -90,6 +90,15 @@ detection:
   # boundary) and differs from leaving the key unset (which yields 1.0). Tune
   # precisely with detect.Evaluate (precision/recall).
   bayes_threshold: 1.0
+  # Whose corpus a message is scored against.
+  #   global   (default) — one shared corpus for every chat.
+  #   per_chat           — the shared corpus PLUS what moderators trained in
+  #                        that chat, and their feedback goes there too.
+  # per_chat is ADDITIVE: a chat nobody has trained yet scores exactly as it
+  # does under global, so switching cannot silently disarm detection. Use it
+  # when chats disagree about what spam is — buying USDT is the topic of one
+  # chat and the spam being filtered in the others.
+  bayes_scope: global
   # Estimated vocabulary size used for Laplace smoothing of per-token
   # likelihoods (detect.BayesLogRatio's vocabGuess param). 0 is not a
   # meaningful guess, so it is always treated as "unset". Default: 5000.
