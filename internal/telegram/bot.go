@@ -78,6 +78,13 @@ type Handler struct {
 	// SetDecide) working unchanged.
 	editedDecide func(domain.Message) (domain.Verdict, bool)
 
+	// commands, when set, handles moderator commands typed in a moderated
+	// chat (/spam, /ham). It is an interface rather than a function so the
+	// match and the execution stay one object: matching must be cheap and
+	// synchronous (it runs on the update path), while execution belongs on
+	// the per-chat sequencer.
+	commands CommandHandler
+
 	// rootCtx is the lifecycle context for every job accepted by the per-chat
 	// sequencer, including work flushed by AlbumBuffer. It is deliberately
 	// independent from the short-lived update callback context, so accepted
@@ -153,7 +160,22 @@ func (h *Handler) onUpdate(_ context.Context, updateID int64, m domain.Message, 
 		return
 	}
 	cfg := h.cfg.Current()
-	if !RegisteredChat(cfg, m.ChatID) || ImmuneSender(m.Sender) {
+	if !RegisteredChat(cfg, m.ChatID) {
+		return
+	}
+	// Moderator commands are dispatched BEFORE the immunity filter, and the
+	// order is load-bearing: an anonymous administrator posts as the chat
+	// itself, which is precisely the sender kind ImmuneSender drops. Checked
+	// after the filter, /spam from a chat's owner would be silently ignored.
+	// Edits are excluded: re-editing a message into "/spam" would replay a
+	// destructive action that was already performed (or refused) once.
+	if !edited && h.commands != nil && h.commands.Match(m) {
+		h.seq.Submit(m.ChatID, func() {
+			h.commands.Handle(h.rootCtx, m)
+		})
+		return
+	}
+	if ImmuneSender(m.Sender) {
 		return
 	}
 	// Standalone messages (Add returns true) are handled immediately; album
@@ -240,8 +262,11 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 			log.Printf("chat=%d msg=%d: moderation deferred: admin lookup unavailable", first.ChatID, first.MessageID)
 			return
 		}
+		// The signals carry the cascade's numbers (Bayes ratio vs threshold),
+		// never message text — that is what makes a later "why did this pass?"
+		// answerable at all. See detect.Cascade.Decide.
 		for _, m := range parts {
-			log.Printf("chat=%d msg=%d sender=%s: observed (dry-run spine)", m.ChatID, m.MessageID, m.Sender.Kind)
+			log.Printf("chat=%d msg=%d sender=%s: observed [%s]", m.ChatID, m.MessageID, m.Sender.Kind, formatSignals(verdict.Signals))
 		}
 		return
 	}
@@ -292,4 +317,40 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 	if err := h.machine.Handle(ctx, inc); err != nil {
 		log.Printf("chat=%d incident: %v", first.ChatID, err)
 	}
+}
+
+// formatSignals renders a verdict's signals for the log in a fixed, compact
+// shape ("name=detail name=detail"). Signal details are cascade-produced
+// diagnostics (scores, hosts), never raw user text, so this is safe to log.
+func formatSignals(sigs []domain.Signal) string {
+	if len(sigs) == 0 {
+		return "no signals"
+	}
+	parts := make([]string, 0, len(sigs))
+	for _, s := range sigs {
+		if s.Detail == "" {
+			parts = append(parts, s.Name)
+			continue
+		}
+		parts = append(parts, s.Name+"="+s.Detail)
+	}
+	return strings.Join(parts, " ")
+}
+
+// CommandHandler executes moderator commands typed in a moderated chat.
+// admin.Commands implements it; the interface lives here so package telegram
+// does not import package admin (admin already imports telegram).
+type CommandHandler interface {
+	// Match reports whether the message is a command for this bot. It must
+	// not perform I/O: it runs inline on the update path.
+	Match(m domain.Message) bool
+	// Handle executes the command. It runs on the chat's sequencer, so it is
+	// serialized against that chat's moderation work.
+	Handle(ctx context.Context, m domain.Message)
+}
+
+// SetCommands installs the moderator-command handler. Left unset, command
+// messages take the ordinary detection path like any other text.
+func (h *Handler) SetCommands(c CommandHandler) {
+	h.commands = c
 }

@@ -333,7 +333,18 @@ type LLM struct {
 	Policy string `yaml:"policy"`
 	// BorderlineBand is the width below BayesThreshold within which a message
 	// is sent to the LLM. Must be > 0 for the stage to ever run. Default: 0.5.
+	// Ignored when AlwaysForUntrusted is true.
 	BorderlineBand float64 `yaml:"borderline_band"`
+	// AlwaysForUntrusted sends every scoreable message from an untrusted
+	// sender to the LLM instead of only the ones near the threshold.
+	//
+	// Turn it on when the Bayes corpus is too small for the band to mean
+	// anything: with a few hundred documents, ordinary job-offer spam scores
+	// far BELOW the threshold, so a band-gated stage never sees it and the
+	// bot passes it silently (observed 2026-08-22, before this flag existed).
+	// Cost stays bounded by the trust gate — only a newcomer's first
+	// TrustThreshold messages can reach the paid stage. Default: false.
+	AlwaysForUntrusted bool `yaml:"always_for_untrusted"`
 	// HTTPTimeout bounds each provider call. Default: 10s.
 	HTTPTimeout Duration `yaml:"http_timeout"`
 	// Providers lists the LLM backends (1 or 2). An empty list disables the

@@ -95,3 +95,17 @@ func ImportFile(db *store.DB, scope, label, origin, path string) (added, skipped
 	}
 	return added, skipped, nil
 }
+
+// RelabelTokens moves an already-recorded tokenized sample to the other
+// label, or records it fresh if it was never seen. It is the learning half
+// of a moderator's correction: /ham on a message the bot (or a moderator)
+// previously called spam must REPLACE that judgement, not sit beside it.
+//
+// See store.RelabelSample for why adding the opposite label instead would
+// corrupt the corpus rather than cancel out.
+func RelabelTokens(db *store.DB, scope, from, to, origin string, tokens []string) (relabeled, added bool, err error) {
+	if len(tokens) == 0 {
+		return false, false, nil
+	}
+	return db.RelabelSample(scope, from, to, TokenHash(tokens), tokens)
+}

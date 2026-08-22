@@ -37,6 +37,13 @@ type Message struct {
 	PollOptionTexts    []string
 	EditDate           int64
 	HasMedia           bool
+	// ReplyTo is the message this one replies to, one level deep and never
+	// recursive. Detection ignores it; moderator commands need it, because
+	// "/spam" as a reply is the only way a human can point at a message the
+	// bot already let through, and the Bot API offers no way to fetch a
+	// message by id afterwards — if the update does not carry it, it is
+	// gone.
+	ReplyTo *Message
 }
 
 // Signal is one explainable reason produced by a detector.

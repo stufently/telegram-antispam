@@ -127,3 +127,33 @@ func (db *DB) BayesTotals(scope string) (spamDocs, hamDocs, spamTok, hamTok int,
 	}
 	return spamDocs, hamDocs, spamTok, hamTok, nil
 }
+
+// dropBayesTx removes one labeled sample's tokens from the feature store —
+// the exact inverse of bumpBayesTx — on an already-open transaction.
+//
+// Counts are floored at zero rather than allowed to go negative. A negative
+// count would not merely be wrong arithmetic: bayesScore reads these
+// aggregates as evidence, and a negative "evidence" flips the sign of a
+// term, which is a stronger claim than "no evidence at all". Flooring keeps
+// a corrupted or double-reversed corpus merely inaccurate instead of
+// actively misleading.
+func dropBayesTx(tx *sql.Tx, scope, label string, tokens []string) error {
+	for _, tok := range tokens {
+		if _, err := tx.Exec(`
+UPDATE bayes_tokens SET count = MAX(0, count - 1)
+WHERE scope = ? AND token = ? AND label = ?`,
+			scope, tok, label,
+		); err != nil {
+			return err
+		}
+	}
+
+	_, err := tx.Exec(`
+UPDATE bayes_totals
+SET docs   = MAX(0, docs - 1),
+    tokens = MAX(0, tokens - ?)
+WHERE scope = ? AND label = ?`,
+		len(tokens), scope, label,
+	)
+	return err
+}

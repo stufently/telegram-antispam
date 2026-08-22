@@ -9,6 +9,7 @@ package telegram_test
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -623,5 +624,80 @@ func TestEditsDoNotEarnTrust(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("trust = %d after one message and five edits, want 1", n)
+	}
+}
+
+// stubCommands records dispatch without doing any work.
+type stubCommands struct {
+	handled []domain.Message
+}
+
+func (s *stubCommands) Match(m domain.Message) bool {
+	return strings.HasPrefix(m.Text, "/spam")
+}
+
+func (s *stubCommands) Handle(_ context.Context, m domain.Message) {
+	s.handled = append(s.handled, m)
+}
+
+func newCommandHandler(t *testing.T) (*telegram.Handler, *telegram.Sequencer, *stubCommands) {
+	t.Helper()
+	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	f := fake.New()
+	m := incident.New(f, db, 999)
+	cfg := config.NewStore(&config.Config{
+		AdminChatID: 999,
+		Action:      domain.ActionDeleteMute,
+		Chats:       config.ChatsPolicy{Mode: "auto", StartInDryRun: boolPtr(false)},
+	})
+	seq := telegram.NewSequencer()
+	h := telegram.NewHandler(db, seq, cfg, m)
+	cmds := &stubCommands{}
+	h.SetCommands(cmds)
+	return h, seq, cmds
+}
+
+// The immunity filter drops messages sent as the chat itself — which is
+// exactly how Telegram delivers an anonymous administrator's messages. If
+// commands were dispatched after that filter, a chat's own owner could not
+// use them, so this pins the order.
+func TestCommandsDispatchBeforeImmunityFilter(t *testing.T) {
+	h, seq, cmds := newCommandHandler(t)
+
+	h.OnMessage(context.Background(), 1, domain.Message{
+		ChatID:    -100123,
+		MessageID: 5,
+		Text:      "/spam",
+		Sender:    domain.Sender{SenderChatID: -100123, Kind: domain.SenderAnonAdmin},
+	})
+	seq.Wait()
+
+	if len(cmds.handled) != 1 {
+		t.Fatalf("anonymous admin command must reach the handler, got %d", len(cmds.handled))
+	}
+}
+
+// An edit must not replay a command: the destructive action already ran (or
+// was already refused) when the original arrived.
+func TestCommandsIgnoreEdits(t *testing.T) {
+	h, seq, cmds := newCommandHandler(t)
+
+	h.OnEditedMessage(context.Background(), 2, domain.Message{
+		ChatID:    -100123,
+		MessageID: 6,
+		Text:      "/spam",
+		Sender:    domain.Sender{UserID: 42, Kind: domain.SenderUser},
+	})
+	seq.Wait()
+
+	if len(cmds.handled) != 0 {
+		t.Fatalf("edited command must be ignored, got %d", len(cmds.handled))
 	}
 }

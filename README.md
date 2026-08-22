@@ -40,13 +40,19 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
 - **Behavioral heuristics** — duplicate-message, short-message flood, and edit-after-post
   detection over a rolling window.
 - **Optional LLM adjudication (opt-in)** — for messages whose Bayes score sits near the
-  threshold, consult OpenAI and/or Anthropic with an `any`/`all` consensus policy.
+  threshold (or, with `always_for_untrusted`, for every newcomer message), consult OpenAI
+  and/or Anthropic with an `any`/`all` consensus policy.
   **Disabled by default** — no message text ever leaves the process unless you opt in.
 - **Evidence-backed moderation** — evidence is copied to a private admin chat with inline
   **Confirm spam / False positive / Lift (no learn) / Delete evidence** buttons and
   per-callback RBAC. The buttons act: false-positive and lift really unban / unmute the user
   in the source chat, delete-evidence really removes the copies, and confirm/false-positive
   train the Bayes filter. (Deleted messages cannot be restored — Telegram has no such call.)
+- **Moderator commands** — reply to any message with `/spam` (or `/spam@yourbot`) to delete
+  it, mute its author and train the corpus, or `/ham` to lift a sanction and relabel that
+  message. Commands run the same incident pipeline as the detector — evidence first, undo
+  buttons in the admin chat — and only administrators of that chat (or configured
+  operators) may use them; an unresolvable admin list denies rather than allows.
 - **Newcomer defenses** — spam-reaction cleanup, ephemeral one-way notices, and a trust
   score that graduates real users out of the strict checks.
 - **Dry-run mode** — observe and log verdicts without touching anyone, per chat.

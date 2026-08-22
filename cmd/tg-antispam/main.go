@@ -695,7 +695,11 @@ func main() {
 		BayesVocabGuess:     cfg.Detection.BayesVocabGuess,
 		BayesEnabled:        *cfg.Detection.BayesEnabled,
 		BayesBorderlineBand: bayesBorderlineBand,
-		Admins:              adminCache,
+		// The band and the flag are wired independently on purpose: the flag
+		// widens WHAT reaches the LLM, it does not change what the band means,
+		// so turning it off restores the previous behavior exactly.
+		BayesAlwaysBorderline: cfg.LLM.AlwaysForUntrusted && llmJudge != nil,
+		Admins:                adminCache,
 		FakeAdmin: detect.FakeAdminCfg{
 			Enabled:        *cfg.Detection.FakeAdminEnabled,
 			SuspiciousTags: cfg.Detection.FakeAdminSuspiciousTags,
@@ -758,6 +762,30 @@ func main() {
 	}
 	handler.SetDecide(func(m domain.Message) (domain.Verdict, bool) { return decideWith(m, false) })
 	handler.SetEditedDecide(func(m domain.Message) (domain.Verdict, bool) { return decideWith(m, true) })
+
+	// Moderator commands (/spam, /ham). They exist because the detector is
+	// not the only judge in the room: when it lets spam through, a human
+	// needs a way to say so that both removes the message AND teaches the
+	// corpus — otherwise the same message passes again tomorrow.
+	//
+	// The username lookup is best-effort: without it the bot simply ignores
+	// commands addressed as "/spam@name" (bare "/spam" keeps working), which
+	// is the safe failure — the alternative would be answering commands
+	// meant for a different bot in the same chat.
+	botUsername, err := livePort.SelfUsername(signalCtx)
+	if err != nil {
+		log.Printf("bot username lookup failed, addressed commands (/spam@name) disabled: %v", err)
+	}
+	commands := admin.NewCommands(adminHandler, botUsername, selfID)
+	commands.SetReporter(machine.HandleReport)
+	commands.SetRelabeler(func(chatID int64, from, to string, tokens []string) error {
+		_, _, err := train.RelabelTokens(db, bayesScopeFor(chatID), from, to, "user", tokens)
+		return err
+	})
+	commands.SetCounter(func(cmd admin.Command, result string) {
+		reg.IncCounter("tg_antispam_commands_total", 1, "command", string(cmd), "result", result)
+	})
+	handler.SetCommands(commands)
 
 	// Periodically sweep hist so stale duplicate/short-message events don't
 	// accumulate forever. maxAge is a couple of windows wide so a burst

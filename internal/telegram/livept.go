@@ -64,6 +64,21 @@ func (p *LivePort) me(ctx context.Context, chat int64) (int64, error) {
 	return u.ID, nil
 }
 
+// SelfUsername returns the bot's @username (without the "@"). Commands are
+// addressed as "/spam@thisbot" in chats that host several bots, and refusing
+// to answer a command addressed to a different bot requires knowing our own
+// name. Unlike Self it is not cached: it is called once at startup.
+func (p *LivePort) SelfUsername(ctx context.Context) (string, error) {
+	u, err := submitSync(ctx, p.disp, 0, p.prio("GetMe"), func(ctx context.Context) (*models.User, error) {
+		u, err := p.b.GetMe(ctx)
+		return u, mapRetry(err)
+	})
+	if err != nil {
+		return "", err
+	}
+	return u.Username, nil
+}
+
 // Self returns the bot's own user id, resolving it via GetMe on first use.
 // Startup calls it as an explicit connectivity/token probe: Bot.New is
 // constructed WithSkipGetMe so that the very first identity lookup is routed

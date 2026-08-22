@@ -91,6 +91,23 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   in reply text. Unmuting goes through `UnrestrictMember` (every permission true),
   never `RestrictMember` with a permissive `Perms`, which cannot express
   invite/pin/react rights and would half-lift the sanction.
+- Moderator commands (`/spam`, `/ham`) are dispatched BEFORE `ImmuneSender` in
+  `Handler.onUpdate` and never on edits. The order is load-bearing: an anonymous
+  administrator posts as the chat itself, which is exactly the sender kind the
+  immunity filter drops, so a check placed after it silently ignores the owner
+  of the chat. `/spam` must build a `domain.Incident` and go through
+  `incident.Machine`, never delete/mute on its own — a second implementation of
+  "moderate" is how the manual and automatic paths drift apart (evidence order,
+  fail-closed-on-copy-failure and the undo buttons all live in the machine).
+  Command authorization is `admin.Handler.Authorized` (operators + a LIVE
+  admin list), not the TTL `AdminCache`: a stale cache is fine for detection
+  immunity and unacceptable for a destructive action. An unresolvable admin
+  list denies.
+- A moderator's correction RELABELS a sample (`store.RelabelSample`), it does not
+  add the opposite label. Training both labels on one message does not cancel
+  out — it counts the same text as evidence for both classes and moves the
+  decision boundary in a direction nobody chose. Counts floor at zero: a
+  negative count would read as evidence for the other class.
 - An incident accepts exactly ONE decision (`store.RecordDecision`, a conditional
   UPDATE). The buttons live in the admin chat forever, so a late press would
   otherwise lift a newer, unrelated sanction on the same user — Telegram gives no

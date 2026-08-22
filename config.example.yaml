@@ -231,6 +231,14 @@ llm:
   # that, a fresh deploy with the LLM enabled would never call it. Trusted
   # users are never sent, so the volume falls off as newcomers settle in.
   borderline_band: 0.5
+  # always_for_untrusted sends EVERY scoreable message from an untrusted
+  # sender to the LLM, ignoring the band. Turn it on when the corpus is small:
+  # a band is a claim about score distribution, and with a few hundred
+  # documents that claim is false — ordinary job-offer spam scores far BELOW
+  # the threshold, so a band-gated stage never sees it and the bot passes it
+  # silently. The trust gate still bounds the bill: only a newcomer's first
+  # trust_threshold messages can reach the paid stage. Default: false.
+  always_for_untrusted: false
   # Per-provider call timeout. Default: 10s.
   http_timeout: 10s
   # 1 or 2 backends. kind is "openai" or "anthropic"; api_key and model are

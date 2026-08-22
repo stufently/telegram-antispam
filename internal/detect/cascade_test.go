@@ -2,6 +2,7 @@ package detect
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -402,9 +403,19 @@ func TestCascadeDecide_BayesBorderlineSignal(t *testing.T) {
 		BayesEnabled:    true,
 	}
 
-	// Band off: no borderline signal.
-	if v, actionable := base.Decide(m, false); actionable || len(v.Signals) != 0 {
-		t.Fatalf("band off: expected silent ActionNone, got actionable=%v v=%+v", actionable, v)
+	// Band off: no BORDERLINE signal. A diagnostic "bayes_pass" signal is
+	// still emitted — it carries the score that explains the pass, and
+	// nothing keys behavior off it (it is non-actionable, and only the
+	// borderline name reaches the LLM stage).
+	v0, actionable0 := base.Decide(m, false)
+	if actionable0 {
+		t.Fatalf("band off: expected non-actionable, got %+v", v0)
+	}
+	if len(v0.Signals) != 1 || v0.Signals[0].Name != "bayes_pass" {
+		t.Fatalf("band off: expected one bayes_pass signal, got %+v", v0.Signals)
+	}
+	if !strings.Contains(v0.Signals[0].Detail, "ratio=") {
+		t.Fatalf("band off: diagnostic must carry the ratio, got %q", v0.Signals[0].Detail)
 	}
 
 	// Band on and wide: borderline signal, non-actionable.
@@ -586,3 +597,54 @@ func TestBayesReadErrorDoesNotBecomeAnLLMCall(t *testing.T) {
 // globalScope is the resolver every cascade test uses: these tests are about
 // detection, not about which corpus a deployment picks.
 func globalScope(int64) string { return "global" }
+
+// A small corpus scores real spam far below the threshold, so a band-gated
+// LLM stage never sees it. BayesAlwaysBorderline is the switch that says
+// "ask anyway"; these cases pin what it does and does not change.
+func TestCascadeAlwaysBorderline(t *testing.T) {
+	trust := &fakeTrustSource{counts: map[[2]int64]int{}}
+	bayes := fakeBayes{
+		spam: map[string]int{"hello": 1},
+		ham:  map[string]int{"hello": 80},
+		c:    BayesCounts{SpamDocs: 100, HamDocs: 100, SpamTokenTotal: 500, HamTokenTotal: 500},
+	}
+	m := domain.Message{ChatID: -400, Sender: domain.Sender{UserID: 7}, Text: "hello hello"}
+
+	base := Cascade{
+		Trust:           trust,
+		Hist:            &fakeHistory{},
+		TrustThreshold:  5,
+		DefaultAction:   domain.ActionDeleteMute,
+		DefaultScope:    domain.ScopeChat,
+		Bayes:           bayes,
+		BayesScope:      globalScope,
+		BayesThreshold:  2.0,
+		BayesVocabGuess: 1000,
+		BayesEnabled:    true,
+		// Deliberately narrow: this is the configuration that let the miss
+		// through, and the flag must rescue it without touching the band.
+		BayesBorderlineBand: 0.5,
+	}
+
+	v, actionable := base.Decide(m, false)
+	if actionable || len(v.Signals) != 1 || v.Signals[0].Name != "bayes_pass" {
+		t.Fatalf("narrow band alone must pass silently, got actionable=%v %+v", actionable, v.Signals)
+	}
+
+	always := base
+	always.BayesAlwaysBorderline = true
+	v, actionable = always.Decide(m, false)
+	if actionable {
+		t.Fatalf("borderline must stay non-actionable, got %+v", v)
+	}
+	if len(v.Signals) != 1 || v.Signals[0].Name != "bayes_borderline" {
+		t.Fatalf("flag must route the message to the LLM stage, got %+v", v.Signals)
+	}
+
+	// The trust gate still bounds the cost: a trusted sender never reaches
+	// the Bayes stage at all, flag or not.
+	trust.counts[[2]int64{-400, 7}] = 5
+	if v, actionable := always.Decide(m, false); actionable || len(v.Signals) != 0 {
+		t.Fatalf("trusted sender must not reach the paid stage, got %+v", v)
+	}
+}

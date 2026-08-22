@@ -51,13 +51,35 @@ func (m *Machine) SetButtons(fn func(incidentKey string) [][]telegram.Button) {
 	m.buttonsFor = fn
 }
 
+// Handle drives one incident to completion. It hides the freshness flag: a
+// duplicate is not an error for the automatic path, which fires per message
+// and must stay silent when it re-sees one.
 func (m *Machine) Handle(ctx context.Context, inc domain.Incident) error {
+	_, err := m.HandleReport(ctx, inc)
+	return err
+}
+
+// HandleReport is Handle for callers that must distinguish "acted" from
+// "this message was already handled". A moderator typing /spam deserves that
+// distinction: silently doing nothing would read as a broken command, and
+// the corpus training that follows a manual report has to run either way.
+func (m *Machine) HandleReport(ctx context.Context, inc domain.Incident) (fresh bool, err error) {
+	if err := m.handle(ctx, inc, &fresh); err != nil {
+		return fresh, err
+	}
+	return fresh, nil
+}
+
+func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *bool) error {
 	if len(inc.MessageIDs) == 0 {
 		return fmt.Errorf("incident has no message ids")
 	}
 	id, fresh, err := m.repo.InsertPending(inc.ChatID, inc.MessageIDs[0], inc.Sender.UserID, inc.Sender.SenderChatID, inc.DryRun, inc.Verdict)
 	if err != nil {
 		return fmt.Errorf("insert pending: %w", err)
+	}
+	if freshOut != nil {
+		*freshOut = fresh
 	}
 	if !fresh {
 		// reprocess guard: this incident was already recorded, so evidence

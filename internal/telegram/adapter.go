@@ -50,6 +50,15 @@ func ToDomainMessage(m *models.Message) domain.Message {
 	hasMedia := m.Photo != nil || m.Video != nil || m.Document != nil ||
 		m.Audio != nil || m.Voice != nil || m.Sticker != nil || m.Animation != nil
 
+	// One level only: ToDomainMessage on the reply would recurse through
+	// reply_to_message chains, and nothing needs the grandparent.
+	var replyTo *domain.Message
+	if m.ReplyToMessage != nil {
+		r := ToDomainMessage(m.ReplyToMessage)
+		r.ReplyTo = nil
+		replyTo = &r
+	}
+
 	return domain.Message{
 		ChatID:             m.Chat.ID,
 		MessageID:          m.ID,
@@ -65,6 +74,7 @@ func ToDomainMessage(m *models.Message) domain.Message {
 		PollOptionTexts:    pollOptionTexts,
 		EditDate:           int64(m.EditDate),
 		HasMedia:           hasMedia,
+		ReplyTo:            replyTo,
 	}
 }
 

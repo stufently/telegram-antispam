@@ -5,6 +5,7 @@
 package detect
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/stufently/telegram-antispam/internal/domain"
@@ -36,10 +37,21 @@ type Cascade struct {
 	// as a non-actionable "bayes_borderline" signal instead of silently
 	// passing, so the wiring layer can consult the optional LLM stage (§5.4).
 	BayesBorderlineBand float64
-	Admins              AdminSource
-	FakeAdmin           FakeAdminCfg
-	Blocklist           BlocklistSource
-	BlocklistEnabled    bool
+	// BayesAlwaysBorderline sends EVERY scoreable non-spam result from an
+	// untrusted sender to the borderline path, whatever the band says. It
+	// exists because the band is a statement about a corpus ("scores near
+	// the threshold are uncertain"), and a small corpus makes that
+	// statement false: real spam lands far below the threshold and never
+	// reaches the LLM at all. One chat's answer to that is "widen the
+	// band", but a band wide enough to mean "everything" no longer reads
+	// as a band — it reads as a magic number. This flag says the intent
+	// outright. The trust gate still bounds the cost: only a newcomer's
+	// first TrustThreshold messages can reach the paid stage.
+	BayesAlwaysBorderline bool
+	Admins                AdminSource
+	FakeAdmin             FakeAdminCfg
+	Blocklist             BlocklistSource
+	BlocklistEnabled      bool
 }
 
 // BlocklistSource reports whether a user ID is present in a global blocklist
@@ -158,16 +170,25 @@ func (c Cascade) Decide(m domain.Message, edited bool) (domain.Verdict, bool) {
 		}
 		switch {
 		case scoreable:
+			// The ratio travels in Detail on every branch below. It is the
+			// only number that explains a verdict after the fact, and the
+			// message text can never be logged (it is user content), so
+			// without it a missed spam is undiagnosable: the operator sees
+			// "observed" and has nothing to reason about.
+			detail := fmt.Sprintf("ratio=%.2f threshold=%.2f", ratio, c.BayesThreshold)
 			if ratio >= c.BayesThreshold {
-				return c.actionable(domain.Signal{Name: "bayes"}), true
+				return c.actionable(domain.Signal{Name: "bayes", Detail: detail}), true
 			}
 			// Below threshold but close to it: hand the wiring layer a
 			// non-actionable borderline signal so it can optionally ask the
 			// LLM stage (§5.4). Non-actionable means behavior is unchanged
 			// (trust still bumps, no action taken) unless the LLM is wired.
-			if c.BayesBorderlineBand > 0 && c.BayesThreshold-ratio <= c.BayesBorderlineBand {
-				return domain.Verdict{Action: domain.ActionNone, Signals: []domain.Signal{{Name: "bayes_borderline"}}}, false
+			if c.BayesAlwaysBorderline || (c.BayesBorderlineBand > 0 && c.BayesThreshold-ratio <= c.BayesBorderlineBand) {
+				return domain.Verdict{Action: domain.ActionNone, Signals: []domain.Signal{{Name: "bayes_borderline", Detail: detail}}}, false
 			}
+			// Scored, not spam, not even borderline: still report the number
+			// so the pass is explainable.
+			return domain.Verdict{Action: domain.ActionNone, Signals: []domain.Signal{{Name: "bayes_pass", Detail: detail}}}, false
 		case c.BayesBorderlineBand > 0 && strings.TrimSpace(n.Text) != "":
 			// No basis to score at all — an untrained corpus. Without this
 			// branch a freshly deployed bot with the LLM enabled would never
