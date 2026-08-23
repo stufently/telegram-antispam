@@ -6,6 +6,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -24,6 +25,13 @@ const (
 	ActLiftNoLearn    Action = "lift"
 	ActConfirmSpam    Action = "confirm"
 	ActDeleteEvidence Action = "delevi"
+	// ActEnforce applies the sanction to an incident that was raised but
+	// never acted on — a review verdict, or any incident from a chat still
+	// in dry-run. "Confirm spam" deliberately does not do this: on an
+	// enforced incident the sanction has already happened and confirming
+	// only records and trains, so overloading it would silently change what
+	// the button does depending on the chat's mode.
+	ActEnforce Action = "enf"
 )
 
 // Callback is a normalized incoming callback query.
@@ -42,8 +50,8 @@ type Callback struct {
 // is "<act>:<incidentKey>", which must stay within Telegram's 64-byte
 // callback_data limit; incidentKey is expected to be a short opaque id (the
 // incident's decimal row id in M2), leaving ample headroom.
-func Buttons(incidentKey string) [][]telegram.Button {
-	return [][]telegram.Button{
+func Buttons(incidentKey string, unenforced bool) [][]telegram.Button {
+	rows := [][]telegram.Button{
 		{
 			{Text: "False positive", Data: encode(ActFalsePositive, incidentKey)},
 			{Text: "Lift (no learn)", Data: encode(ActLiftNoLearn, incidentKey)},
@@ -53,6 +61,17 @@ func Buttons(incidentKey string) [][]telegram.Button {
 			{Text: "Delete evidence", Data: encode(ActDeleteEvidence, incidentKey)},
 		},
 	}
+	if unenforced {
+		// Only on a card where nothing has been done yet. Without it a
+		// review incident is decorative: the moderator sees the evidence,
+		// presses "Confirm spam", the corpus learns — and the message the
+		// card is about is still sitting in the chat, because confirming
+		// never deletes anything.
+		rows = append(rows, []telegram.Button{
+			{Text: "Spam: enforce now", Data: encode(ActEnforce, incidentKey)},
+		})
+	}
+	return rows
 }
 
 func encode(act Action, incidentKey string) string {
@@ -68,7 +87,7 @@ func ParseCallback(data string) (Action, string, bool) {
 		return "", "", false
 	}
 	switch Action(act) {
-	case ActFalsePositive, ActLiftNoLearn, ActConfirmSpam, ActDeleteEvidence:
+	case ActFalsePositive, ActLiftNoLearn, ActConfirmSpam, ActDeleteEvidence, ActEnforce:
 		return Action(act), key, true
 	default:
 		return "", "", false
@@ -83,6 +102,14 @@ type Handler struct {
 	db        *store.DB
 	operators map[int64]bool
 	trainer   func(chatID int64, label string, tokens []string) error
+	// enforcer applies the sanction to an incident that was only reported.
+	// It is injected rather than implemented here because the sanction lives
+	// in incident.Machine, and admin must not grow a second copy of that
+	// ordering (sanction, then delete, then record).
+	// It returns what actually happened rather than a bare error, because
+	// the two halves fail independently and the reply — and whether the
+	// button may be pressed again — depend on which of them landed.
+	enforcer func(ctx context.Context, inc store.IncidentRow) (sanctioned, deleted bool, err error)
 }
 
 // NewHandler builds a Handler. operators is the set of Telegram user ids
@@ -105,6 +132,13 @@ func NewHandler(port telegram.Port, db *store.DB, operators map[int64]bool) *Han
 // one per chat), and this package has no business knowing it.
 func (h *Handler) SetTrainer(t func(chatID int64, label string, tokens []string) error) {
 	h.trainer = t
+}
+
+// SetEnforcer installs the callback that applies a sanction to a reported-only
+// incident (the "Spam: delete + mute" button). A nil enforcer (the default)
+// makes that button answer "enforcement not available" instead of acting.
+func (h *Handler) SetEnforcer(fn func(ctx context.Context, inc store.IncidentRow) (sanctioned, deleted bool, err error)) {
+	h.enforcer = fn
 }
 
 // Authorized reports whether presserID may act on incidents whose source
@@ -238,6 +272,51 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 		h.dropTokens(inc.ID)
 		return joinReply("lifted (not learned)", lifted, ""), nil
 
+	case ActEnforce:
+		if h.enforcer == nil {
+			h.releaseClaim(inc.ID, act)
+			return "enforcement not available", nil
+		}
+		if !inc.DryRun {
+			// The incident already acted; enforcing again would re-mute a
+			// user who may since have been unmuted by another button.
+			h.releaseClaim(inc.ID, act)
+			return "already enforced", nil
+		}
+		sanctioned, deleted, err := h.enforcer(ctx, inc)
+		if !sanctioned && !deleted {
+			// Nothing happened at all, so hand the claim back and let the
+			// moderator retry rather than leaving a card whose only acting
+			// button answers "already decided".
+			h.releaseClaim(inc.ID, act)
+			if err == nil {
+				err = errors.New("enforcement did nothing")
+			}
+			return "", err
+		}
+		// Something landed.
+		if err != nil {
+			log.Printf("incident %d: partial enforcement: %v", inc.ID, err)
+		}
+		// Hand the claim back if — and only if — the row now records the
+		// incident as enforced. That row is what refuses a SECOND enforce
+		// ("already enforced" above), so with it in place the claim is no
+		// longer the thing preventing a double sanction, and holding it
+		// would only block the undo buttons: an incident whose sanction is
+		// live and unliftable is exactly the state every other branch here
+		// is written to avoid. If the row did NOT flip (the marking write
+		// failed), the claim stays — then it is the only guard left.
+		if row, rerr := h.db.GetIncident(inc.ID); rerr == nil && !row.DryRun {
+			h.releaseClaim(inc.ID, act)
+		} else if rerr != nil {
+			log.Printf("incident %d: re-reading after enforcement failed, undo stays claimed: %v", inc.ID, rerr)
+		}
+		if _, err := h.db.InsertSample(decisionScope, string(act), "user", key); err != nil {
+			return "", err
+		}
+		trained := h.train(inc, "spam")
+		return joinReply(enforceReply(sanctioned, deleted), "", trained), nil
+
 	case ActDeleteEvidence:
 		n, err := h.deleteEvidence(ctx, inc.ID)
 		if err != nil {
@@ -250,6 +329,22 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 
 	default:
 		return "unknown action", nil
+	}
+}
+
+// enforceReply says what actually happened, because the two halves of
+// enforcement fail independently and a moderator who is told "done" while
+// the message is still in the chat has been misled into not finishing the
+// job by hand. It deliberately does not name the sanction: which one is
+// configured (ban / mute / delete-only) is the deployment's business.
+func enforceReply(sanctioned, deleted bool) string {
+	switch {
+	case sanctioned && deleted:
+		return "enforced: message removed, sanction applied"
+	case sanctioned:
+		return "sanction applied, but the message is STILL THERE — remove it by hand"
+	default:
+		return "message removed, but the sanction FAILED — apply it by hand"
 	}
 }
 
@@ -274,6 +369,8 @@ func decisionLabel(decision string) string {
 		return "confirmed spam"
 	case ActLiftNoLearn:
 		return "lifted"
+	case ActEnforce:
+		return "enforced"
 	case "":
 		// Only reachable if the row vanished between the claim and the read.
 		return "unknown"

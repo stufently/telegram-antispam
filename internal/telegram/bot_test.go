@@ -32,3 +32,21 @@ func TestImmuneKinds(t *testing.T) {
 		t.Error("plain user is not immune")
 	}
 }
+
+func TestUnionMediaKindsMergesAlbumPartsWithoutRepeats(t *testing.T) {
+	parts := []domain.Message{
+		{MediaKinds: []string{"photo"}},
+		{MediaKinds: []string{"photo"}},
+		{MediaKinds: []string{"video"}},
+	}
+	got := unionMediaKinds(parts)
+	if len(got) != 2 || got[0] != "photo" || got[1] != "video" {
+		t.Fatalf("album kinds = %v, want [photo video]", got)
+	}
+}
+
+func TestUnionMediaKindsOfATextOnlyAlbumIsEmpty(t *testing.T) {
+	if got := unionMediaKinds([]domain.Message{{}, {}}); got != nil {
+		t.Fatalf("got %v, want nil", got)
+	}
+}

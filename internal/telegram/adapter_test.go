@@ -75,7 +75,7 @@ func TestToDomainMessageExtractsDetectionSurfaces(t *testing.T) {
 	if got.EditDate != 1700100 {
 		t.Fatalf("bad edit date: %+v", got.EditDate)
 	}
-	if !got.HasMedia {
+	if !got.HasMedia() {
 		t.Fatalf("expected HasMedia true")
 	}
 	if got.ExternalReplyText != "quoted text" {
@@ -101,7 +101,84 @@ func TestToDomainMessageCaptionEntities(t *testing.T) {
 	if len(got.Entities) != 1 || got.Entities[0].Type != "url" {
 		t.Fatalf("caption entities not extracted: %+v", got.Entities)
 	}
-	if !got.HasMedia {
+	if !got.HasMedia() {
 		t.Fatalf("expected HasMedia true for document")
+	}
+}
+
+func TestToDomainMessageMediaKindsAreNamedNotJustCounted(t *testing.T) {
+	m := &models.Message{
+		ID:    9,
+		Chat:  models.Chat{ID: -100123, Type: models.ChatTypeSupergroup},
+		From:  &models.User{ID: 7},
+		Photo: []models.PhotoSize{{FileID: "p"}},
+		Video: &models.Video{FileID: "v"},
+	}
+	got := ToDomainMessage(m)
+	if len(got.MediaKinds) != 2 || got.MediaKinds[0] != "photo" || got.MediaKinds[1] != "video" {
+		t.Fatalf("media kinds = %v, want [photo video] in a stable order", got.MediaKinds)
+	}
+}
+
+func TestToDomainMessageForwardFromChannelIsDistinguishedFromAPerson(t *testing.T) {
+	fromChannel := &models.Message{
+		ID:   10,
+		Chat: models.Chat{ID: -100123, Type: models.ChatTypeSupergroup},
+		From: &models.User{ID: 7},
+		ForwardOrigin: &models.MessageOrigin{
+			Type:                 models.MessageOriginTypeChannel,
+			MessageOriginChannel: &models.MessageOriginChannel{},
+		},
+	}
+	got := ToDomainMessage(fromChannel)
+	if !got.Forwarded || !got.ForwardedFromChat {
+		t.Fatalf("channel forward: forwarded=%v fromChat=%v", got.Forwarded, got.ForwardedFromChat)
+	}
+
+	fromUser := &models.Message{
+		ID:   11,
+		Chat: models.Chat{ID: -100123, Type: models.ChatTypeSupergroup},
+		From: &models.User{ID: 7},
+		ForwardOrigin: &models.MessageOrigin{
+			Type:              models.MessageOriginTypeUser,
+			MessageOriginUser: &models.MessageOriginUser{},
+		},
+	}
+	got = ToDomainMessage(fromUser)
+	if !got.Forwarded {
+		t.Fatal("a forward from a person is still a forward")
+	}
+	if got.ForwardedFromChat {
+		t.Fatal("a forward from a person must not read as a relayed channel post")
+	}
+}
+
+func TestToDomainMessageKeyboardAndViaBotTravelTogether(t *testing.T) {
+	m := &models.Message{
+		ID:          12,
+		Chat:        models.Chat{ID: -100123, Type: models.ChatTypeSupergroup},
+		From:        &models.User{ID: 7},
+		ViaBot:      &models.User{ID: 42, IsBot: true},
+		ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{{Text: "go"}}}},
+	}
+	got := ToDomainMessage(m)
+	if !got.HasKeyboard {
+		t.Fatal("inline keyboard not detected")
+	}
+	if !got.ViaBot {
+		t.Fatal("via_bot is the innocent explanation for the keyboard and must be recorded")
+	}
+}
+
+func TestToDomainMessageNoMediaLeavesKindsEmpty(t *testing.T) {
+	m := &models.Message{
+		ID:   13,
+		Chat: models.Chat{ID: -100123, Type: models.ChatTypeSupergroup},
+		From: &models.User{ID: 7},
+		Text: "просто текст",
+	}
+	got := ToDomainMessage(m)
+	if got.HasMedia() || got.MediaKinds != nil {
+		t.Fatalf("plain text must carry no media kinds, got %v", got.MediaKinds)
 	}
 }

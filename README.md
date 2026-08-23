@@ -43,11 +43,22 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
   threshold (or, with `always_for_untrusted`, for every newcomer message), consult OpenAI
   and/or Anthropic with an `any`/`all` consensus policy.
   **Disabled by default** — no message text ever leaves the process unless you opt in.
+- **Captionless-media review** — a newcomer's photo, video or sticker with (almost) no
+  caption reaches no text detector at all: rules, Bayes and the LLM all read words. Such a
+  message is copied to the admin chat for a human to judge, with **no automatic sanction in
+  any chat mode** — a picture is a hint, not proof. Off by default (`media_caption_min_len`).
+- **Message shape as an LLM signal** — attachment kinds, "forwarded from a channel" and
+  "carries an inline keyboard" are passed to the LLM alongside the text, because the same
+  words read differently under a relayed channel post than typed by hand.
 - **Evidence-backed moderation** — evidence is copied to a private admin chat with inline
   **Confirm spam / False positive / Lift (no learn) / Delete evidence** buttons and
   per-callback RBAC. The buttons act: false-positive and lift really unban / unmute the user
   in the source chat, delete-evidence really removes the copies, and confirm/false-positive
   train the Bayes filter. (Deleted messages cannot be restored — Telegram has no such call.)
+  A card for an incident that was only reported — a review verdict, or any incident in a
+  dry-run chat — carries a fifth button, **Spam: delete + mute**, which applies the sanction
+  now: "Confirm spam" deliberately only records and trains, so on such a card it would
+  otherwise teach the corpus while leaving the message in the chat.
 - **Moderator commands** — reply to any message with `/spam` (or `/spam@yourbot`) to delete
   it, mute its author and train the corpus, or `/ham` to lift a sanction and relabel that
   message. Commands run the same incident pipeline as the detector — evidence first, undo

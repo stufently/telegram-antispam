@@ -221,6 +221,15 @@ type Detection struct {
 	// value doubles as "unset" and gets the default. Default: 300.
 	AdminCacheTTLSeconds int `yaml:"admin_cache_ttl_seconds"`
 
+	// MediaCaptionMinLen enables the captionless-media review stage: an
+	// untrusted sender's attachment with fewer than this many characters of
+	// text is copied to the admin chat for a human to judge, WITHOUT any
+	// sanction (see domain.Verdict.ReviewOnly). A plain int: 0 doubles as
+	// "unset" and means the stage is off, which is also the default —
+	// turning it on adds admin-chat traffic proportional to how often
+	// members post pictures, and that rate is chat-specific.
+	MediaCaptionMinLen int `yaml:"media_caption_min_len"`
+
 	// ReactionCleanupEnabled turns the M5 reaction-cleanup feature on or
 	// off. *bool for the usual nil-vs-false reason: an explicit "false"
 	// must not be re-promoted to the default "true". Default: true.

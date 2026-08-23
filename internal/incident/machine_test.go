@@ -17,6 +17,7 @@ type stubRepo struct {
 	verdict   domain.Verdict
 	tokens    []string
 	tokensErr error
+	savedIDs  []int
 }
 
 func (r *stubRepo) InsertPending(_ int64, _ int, _, _ int64, _ bool, verdict domain.Verdict) (int64, bool, error) {
@@ -25,6 +26,10 @@ func (r *stubRepo) InsertPending(_ int64, _ int, _, _ int64, _ bool, verdict dom
 }
 func (r *stubRepo) SetIncidentState(_ int64, s domain.IncidentState) error { r.state = s; return nil }
 func (r *stubRepo) AddEvidence(int64, int64, []int) error                  { return nil }
+func (r *stubRepo) SaveIncidentMessageIDs(_ int64, ids []int) error {
+	r.savedIDs = ids
+	return nil
+}
 func (r *stubRepo) SaveIncidentTokens(_ int64, tokens []string) error {
 	r.tokens = tokens
 	return r.tokensErr
@@ -289,7 +294,7 @@ func TestEphemeralNoticeErrorIsBestEffort(t *testing.T) {
 func TestButtonsAttachedToAdminMessage(t *testing.T) {
 	f := fake.New()
 	m := New(f, &stubRepo{fresh: true}, 999)
-	m.SetButtons(func(key string) [][]telegram.Button {
+	m.SetButtons(func(key string, _ bool) [][]telegram.Button {
 		return [][]telegram.Button{{{Text: "FP", Data: "fp:" + key}}}
 	})
 	if err := m.Handle(context.Background(), liveIncident(true)); err != nil { // dry-run: still sends admin
@@ -297,5 +302,73 @@ func TestButtonsAttachedToAdminMessage(t *testing.T) {
 	}
 	if len(f.LastAdmin.Buttons) == 0 {
 		t.Fatal("admin message should carry action buttons")
+	}
+}
+
+// A review verdict must never be enforced automatically, and the machine is
+// the last line of that defence: the wiring already turns such an incident
+// into a dry-run one, but the two must not be able to disagree.
+func TestReviewOnlyVerdictIsNeverEnforcedEvenInALiveChat(t *testing.T) {
+	f := fake.New()
+	r := &stubRepo{fresh: true}
+	m := New(f, r, 999)
+
+	inc := liveIncident(false) // live chat: dry_run is FALSE
+	inc.Verdict.ReviewOnly = true
+	if err := m.Handle(context.Background(), inc); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range f.Calls() {
+		switch c {
+		case "DeleteMessages", "RestrictMember", "BanMember", "BanSenderChat":
+			t.Fatalf("review verdict issued %s: a hint must never sanction on its own", c)
+		}
+	}
+	if f.LastAdmin.SourceChatID == 0 {
+		t.Fatal("the evidence must still reach the admin chat — that is the whole point")
+	}
+}
+
+func TestEnforceReportsTheHalfThatLanded(t *testing.T) {
+	inc := liveIncident(false)
+	// delete_mute, so the sanction goes through RestrictMember and the test
+	// can fail that half on its own.
+	inc.Verdict.Action = domain.ActionDeleteMute
+
+	// Mute lands, delete fails: the message is still in the chat and the
+	// moderator has to be told so.
+	f := fake.New()
+	f.DeleteErr = errors.New("message to delete not found")
+	out := New(f, &stubRepo{fresh: true}, 999).Enforce(context.Background(), 1, inc)
+	if !out.Sanctioned || out.Deleted || out.Err == nil {
+		t.Fatalf("sanctioned=%v deleted=%v err=%v, want sanction only", out.Sanctioned, out.Deleted, out.Err)
+	}
+
+	// Delete lands, mute fails.
+	f = fake.New()
+	f.RestrictErr = errors.New("not enough rights")
+	out = New(f, &stubRepo{fresh: true}, 999).Enforce(context.Background(), 1, inc)
+	if out.Sanctioned || !out.Deleted || out.Err == nil {
+		t.Fatalf("sanctioned=%v deleted=%v err=%v, want delete only", out.Sanctioned, out.Deleted, out.Err)
+	}
+
+	// Both land.
+	f = fake.New()
+	out = New(f, &stubRepo{fresh: true}, 999).Enforce(context.Background(), 1, inc)
+	if !out.Sanctioned || !out.Deleted || out.Err != nil {
+		t.Fatalf("clean run reported %+v", out)
+	}
+}
+
+func TestAlbumMessageIDsArePersistedForALaterSanction(t *testing.T) {
+	f := fake.New()
+	r := &stubRepo{fresh: true}
+	inc := liveIncident(true)
+	inc.MessageIDs = []int{55, 56, 57}
+	if err := New(f, r, 999).Handle(context.Background(), inc); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.savedIDs) != 3 {
+		t.Fatalf("saved album ids = %v, want all three so a later enforce removes the whole album", r.savedIDs)
 	}
 }

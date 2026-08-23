@@ -47,8 +47,28 @@ func ToDomainMessage(m *models.Message) domain.Message {
 		}
 	}
 
-	hasMedia := m.Photo != nil || m.Video != nil || m.Document != nil ||
-		m.Audio != nil || m.Voice != nil || m.Sticker != nil || m.Animation != nil
+	mediaKinds := collectMediaKinds(m)
+
+	// A forward is recorded as two facts, not one: that it IS a forward, and
+	// whether it came from a channel/group rather than a person. Only the
+	// second shape is the one spam takes (a relayed casino post), and a
+	// detector that cannot tell them apart would have to treat "my friend
+	// forwarded me this" identically.
+	forwarded := m.ForwardOrigin != nil
+	forwardedFromChat := false
+	if m.ForwardOrigin != nil {
+		forwardedFromChat = m.ForwardOrigin.MessageOriginChannel != nil ||
+			m.ForwardOrigin.MessageOriginChat != nil
+	}
+
+	// Only bots can attach an inline keyboard, so its presence under an
+	// ordinary member's message means the message was produced by a bot.
+	hasKeyboard := m.ReplyMarkup != nil && len(m.ReplyMarkup.InlineKeyboard) > 0
+	// via_bot is what makes a keyboard ordinary: an inline-bot result (a gif
+	// from @gif, a poll from a quiz bot) carries one and is posted by a real
+	// member on purpose. Recording it separately keeps "has buttons" a fact
+	// rather than an accusation.
+	viaBot := m.ViaBot != nil
 
 	// One level only: ToDomainMessage on the reply would recurse through
 	// reply_to_message chains, and nothing needs the grandparent.
@@ -73,9 +93,53 @@ func ToDomainMessage(m *models.Message) domain.Message {
 		ExternalReplyText:  externalReplyText,
 		PollOptionTexts:    pollOptionTexts,
 		EditDate:           int64(m.EditDate),
-		HasMedia:           hasMedia,
+		MediaKinds:         mediaKinds,
+		Forwarded:          forwarded,
+		ForwardedFromChat:  forwardedFromChat,
+		HasKeyboard:        hasKeyboard,
+		ViaBot:             viaBot,
 		ReplyTo:            replyTo,
 	}
+}
+
+// collectMediaKinds lists the attachment types present on a message, using
+// the Bot API's own field names so a config value or an audit row reads the
+// same as the API docs. Order is fixed (not map iteration) so a signal
+// detail is stable across restarts and diffable in the audit table.
+//
+// Poll, dice, game, venue and location are deliberately included: each is a
+// message with no text a text detector can read, which is the whole point of
+// tracking media at all.
+func collectMediaKinds(m *models.Message) []string {
+	kinds := make([]string, 0, 2)
+	add := func(present bool, name string) {
+		if present {
+			kinds = append(kinds, name)
+		}
+	}
+	add(m.Photo != nil, "photo")
+	add(m.PaidMedia != nil, "paid_media")
+	add(m.LivePhoto != nil, "live_photo")
+	add(m.Video != nil, "video")
+	add(m.VideoNote != nil, "video_note")
+	add(m.Animation != nil, "animation")
+	add(m.Audio != nil, "audio")
+	add(m.Voice != nil, "voice")
+	add(m.Document != nil, "document")
+	add(m.Sticker != nil, "sticker")
+	add(m.Story != nil, "story")
+	add(m.Contact != nil, "contact")
+	add(m.Poll != nil, "poll")
+	add(m.Dice != nil, "dice")
+	add(m.Game != nil, "game")
+	add(m.Venue != nil, "venue")
+	add(m.Location != nil, "location")
+	add(m.Invoice != nil, "invoice")
+	add(m.Checklist != nil, "checklist")
+	if len(kinds) == 0 {
+		return nil
+	}
+	return kinds
 }
 
 // toDomainEntities maps library message entities to domain entities. Type is

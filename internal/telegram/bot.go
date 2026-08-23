@@ -202,6 +202,24 @@ func (h *Handler) flushAlbum(parts []domain.Message) {
 	})
 }
 
+// unionMediaKinds merges the attachment kinds of every album part, keeping
+// first-seen order and dropping duplicates (a five-photo album is "photo",
+// not "photo,photo,photo,photo,photo").
+func unionMediaKinds(parts []domain.Message) []string {
+	seen := make(map[string]bool, 4)
+	var out []string
+	for _, m := range parts {
+		for _, k := range m.MediaKinds {
+			if seen[k] {
+				continue
+			}
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 // process runs on the per-chat sequencer worker for parts (one standalone
 // message, or all parts of one flushed album): register the chat, then
 // either build and hand off one incident (decide reports an actionable
@@ -230,6 +248,20 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 		if strings.TrimSpace(m.Text) != "" {
 			judged = m
 			break
+		}
+	}
+	// The album's non-text shape is the UNION of its parts, not the judged
+	// part's own: a photo+video album whose caption sits on the photo would
+	// otherwise be reported as containing only a photo, and a per-kind
+	// judgement (or a moderator reading the signal detail) would be looking
+	// at half the message.
+	if len(parts) > 1 {
+		judged.MediaKinds = unionMediaKinds(parts)
+		for _, m := range parts {
+			judged.Forwarded = judged.Forwarded || m.Forwarded
+			judged.ForwardedFromChat = judged.ForwardedFromChat || m.ForwardedFromChat
+			judged.HasKeyboard = judged.HasKeyboard || m.HasKeyboard
+			judged.ViaBot = judged.ViaBot || m.ViaBot
 		}
 	}
 	cfg := h.cfg.Current()
@@ -291,6 +323,14 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 	// now. Resolved after the fail-closed read above, so an unreadable gate
 	// still stops moderation rather than being overridden into acting.
 	dryRun = cfg.Chats.DryRunFor(first.ChatID, dryRun)
+	// A review-only verdict overrides enforcement in the safe direction and
+	// only in that direction: it can turn acting into observing, never the
+	// other way round. Without this the captionless-media stage — a hint, not
+	// a proof — would mute people for posting a picture in the nine chats
+	// that are live.
+	if verdict.ReviewOnly {
+		dryRun = true
+	}
 
 	ids := make([]int, len(parts))
 	for i, m := range parts {

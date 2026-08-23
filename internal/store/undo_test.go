@@ -265,3 +265,69 @@ func TestPruneUpdatesKeepsTheRecentWindow(t *testing.T) {
 		t.Fatalf("PruneUpdates(0) = %d, %v; want a no-op", n, err)
 	}
 }
+
+func TestIncidentMessageIDsRoundTrip(t *testing.T) {
+	db := newUndoDB(t)
+	defer db.Close()
+
+	id, _, err := db.InsertPending(-100123, 55, 7, 0, true, domain.Verdict{Action: domain.ActionQuarantine})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Before anything is saved, the keyed id is what a sanction would use.
+	row, err := db.GetIncident(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(row.MessageIDs) != 1 || row.MessageIDs[0] != 55 {
+		t.Fatalf("message ids = %v, want the keyed [55] as the fallback", row.MessageIDs)
+	}
+
+	if err := db.SaveIncidentMessageIDs(id, []int{55, 56, 57}); err != nil {
+		t.Fatal(err)
+	}
+	row, err = db.GetIncident(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(row.MessageIDs) != 3 || row.MessageIDs[2] != 57 {
+		t.Fatalf("message ids = %v, want all three album parts", row.MessageIDs)
+	}
+}
+
+func TestMarkIncidentEnforcedMakesTheSanctionUndoable(t *testing.T) {
+	db := newUndoDB(t)
+	defer db.Close()
+
+	id, _, err := db.InsertPending(-100123, 55, 7, 0, true, domain.Verdict{Action: domain.ActionQuarantine})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetIncidentState(id, domain.StateCleaned); err != nil {
+		t.Fatal(err)
+	}
+	row, err := db.GetIncident(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Sanctioned() {
+		t.Fatal("a reported-only incident has nothing to lift")
+	}
+
+	if err := db.MarkIncidentEnforced(id, domain.ActionDeleteMute); err != nil {
+		t.Fatal(err)
+	}
+	row, err = db.GetIncident(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.DryRun {
+		t.Fatal("dry_run must be cleared, or the digest counts a live sanction as an observation")
+	}
+	if row.Action != domain.ActionDeleteMute {
+		t.Fatalf("audit action = %q, want the sanction actually applied, not the quarantine placeholder", row.Action)
+	}
+	if !row.Sanctioned() {
+		t.Fatal("the sanction must now be liftable by the undo buttons")
+	}
+}

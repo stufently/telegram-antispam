@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,9 +22,14 @@ type IncidentRow struct {
 	// channel id — UserID is 0 (or a Telegram pseudo-user) in that case, so
 	// an unban keyed on it would target the wrong thing or nothing at all.
 	SenderChatID int64
-	DryRun       bool
-	State        domain.IncidentState
-	Action       domain.Action // from the audit row; "" when absent
+	// MessageIDs are the offending messages in the SOURCE chat: one id for
+	// an ordinary message, every part for an album. A sanction applied later
+	// from the admin chat has nothing else to go on, and deleting only the
+	// keyed id would leave the rest of an album standing.
+	MessageIDs []int
+	DryRun     bool
+	State      domain.IncidentState
+	Action     domain.Action // from the audit row; "" when absent
 }
 
 // Sanctioned reports whether this incident actually applied a sanction that
@@ -111,6 +117,62 @@ func (db *DB) RecordDecision(incidentID int64, decision string) (claimed bool, e
 	return claimed, existing, err
 }
 
+// parseMessageIDs reads the stored comma-separated id list, falling back to
+// the single keyed id. The fallback is what every row written before the
+// column existed looks like, and what an ordinary one-message incident
+// stores anyway, so it is the normal path rather than a migration special
+// case. Unparsable entries are skipped rather than failing the read: a
+// malformed list must not make the undo buttons unusable.
+func parseMessageIDs(list string, keyed int) []int {
+	out := make([]int, 0, 1)
+	for _, part := range strings.Split(list, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if n, err := strconv.Atoi(part); err == nil {
+			out = append(out, n)
+		}
+	}
+	if len(out) == 0 {
+		return []int{keyed}
+	}
+	return out
+}
+
+// SaveIncidentMessageIDs records every source message of an incident, so a
+// sanction applied later from the admin chat can remove all of them. Called
+// only when there is more than one; a single id is already the keyed column.
+func (db *DB) SaveIncidentMessageIDs(id int64, ids []int) error {
+	parts := make([]string, 0, len(ids))
+	for _, n := range ids {
+		parts = append(parts, strconv.Itoa(n))
+	}
+	return db.Write(func(tx *sql.Tx) error {
+		_, err := tx.Exec("UPDATE incidents SET message_ids=? WHERE id=?", strings.Join(parts, ","), id)
+		return err
+	})
+}
+
+// MarkIncidentEnforced records that a moderator applied the sanction to an
+// incident that had only been reported.
+//
+// Both writes matter. Clearing dry_run is what makes the sanction undoable:
+// IncidentRow.Sanctioned() refuses to lift anything from a dry-run incident,
+// so without this the admin who enforced would have no way back. Rewriting
+// the audit action replaces the placeholder the detector recorded
+// ("quarantine", a no-op) with what was actually applied, so the daily
+// digest reports the real sanction instead of counting it as an observation.
+func (db *DB) MarkIncidentEnforced(id int64, action domain.Action) error {
+	return db.Write(func(tx *sql.Tx) error {
+		if _, err := tx.Exec("UPDATE incidents SET dry_run=0 WHERE id=?", id); err != nil {
+			return err
+		}
+		_, err := tx.Exec("UPDATE audit SET action=? WHERE incident_id=?", string(action), id)
+		return err
+	})
+}
+
 // GetIncident reads one incident joined with its audit action. The audit row
 // is written in the same transaction as the incident, so a missing action is
 // a corrupted row rather than a normal state; it is surfaced as an empty
@@ -118,18 +180,21 @@ func (db *DB) RecordDecision(incidentID int64, decision string) (claimed bool, e
 // failing the whole callback.
 func (db *DB) GetIncident(id int64) (IncidentRow, error) {
 	var (
-		r      IncidentRow
-		dry    int
-		state  string
-		action sql.NullString
+		r          IncidentRow
+		dry        int
+		state      string
+		action     sql.NullString
+		messageID  int
+		messageIDs string
 	)
 	err := db.Read().QueryRow(`
-SELECT i.id, i.chat_id, i.user_id, i.sender_chat_id, i.dry_run, i.state, a.action
+SELECT i.id, i.chat_id, i.user_id, i.sender_chat_id, i.message_id, i.message_ids, i.dry_run, i.state, a.action
 FROM incidents i LEFT JOIN audit a ON a.incident_id = i.id
-WHERE i.id = ?`, id).Scan(&r.ID, &r.ChatID, &r.UserID, &r.SenderChatID, &dry, &state, &action)
+WHERE i.id = ?`, id).Scan(&r.ID, &r.ChatID, &r.UserID, &r.SenderChatID, &messageID, &messageIDs, &dry, &state, &action)
 	if err != nil {
 		return IncidentRow{}, err
 	}
+	r.MessageIDs = parseMessageIDs(messageIDs, messageID)
 	r.DryRun = dry == 1
 	r.State = domain.IncidentState(state)
 	if action.Valid {

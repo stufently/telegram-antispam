@@ -52,6 +52,17 @@ type Cascade struct {
 	FakeAdmin             FakeAdminCfg
 	Blocklist             BlocklistSource
 	BlocklistEnabled      bool
+	// CaptionMinLen enables the captionless-media stage when > 0: an
+	// untrusted sender's message that carries an attachment and fewer than
+	// this many characters of text is surfaced for human review.
+	//
+	// It is the only stage that exists because of what a message does NOT
+	// contain. A photo with no caption reaches no text detector at all —
+	// rules, Bayes and the LLM all read text — so the shape is invisible
+	// today no matter how obviously promotional the picture is. The stage
+	// runs LAST and returns a ReviewOnly verdict: it never preempts a real
+	// detector, and it never sanctions on its own.
+	CaptionMinLen int
 }
 
 // BlocklistSource reports whether a user ID is present in a global blocklist
@@ -206,6 +217,49 @@ func (c Cascade) Decide(m domain.Message, edited bool) (domain.Verdict, bool) {
 	return domain.Verdict{Action: domain.ActionNone}, false
 }
 
+// ReviewCandidate reports an untrusted sender's attachment that carries
+// (almost) no text, as a review-only verdict.
+//
+// It is deliberately NOT a stage inside Decide. Decide is first-hit-wins and
+// its Bayes branches return early, so a stage placed anywhere in that chain
+// either preempts a stronger detector or is preempted by a "pass" — and in
+// both cases the caller's LLM step, which only runs on a non-actionable
+// result, would be skipped. The caller runs this LAST, after the text
+// cascade AND after the LLM have declined to act, so it is a fallback for
+// the one message shape none of them can read rather than a competitor to
+// them.
+//
+// The kinds travel in Detail because "photo" and "sticker" call for
+// different judgements from the moderator who sees the evidence; they are
+// attachment type names, never user content.
+func (c Cascade) ReviewCandidate(m domain.Message) (domain.Verdict, bool) {
+	if c.CaptionMinLen <= 0 {
+		return domain.Verdict{}, false
+	}
+	n := Normalize(m)
+	if len(n.MediaKinds) == 0 || n.RawLen >= c.CaptionMinLen {
+		return domain.Verdict{}, false
+	}
+	if IsTrusted(c.Trust, m.ChatID, m.Sender.UserID, c.TrustThreshold) {
+		return domain.Verdict{}, false
+	}
+	// Admin immunity again, because this runs OUTSIDE Decide and therefore
+	// outside the §4 gate. Without it a moderator posting a screenshot gets
+	// their own review card, complete with a button to mute themselves. An
+	// unresolvable admin list means we cannot prove the sender is not an
+	// admin, so it declines — the same fail-safe direction Decide takes.
+	if c.Admins != nil {
+		admins, err := c.Admins.AdminIdentities(m.ChatID)
+		if err != nil || isCurrentAdmin(admins, m.Sender.UserID) {
+			return domain.Verdict{}, false
+		}
+	}
+	return c.review(domain.Signal{
+		Name:   "captionless_media",
+		Detail: fmt.Sprintf("kinds=%s len=%d", strings.Join(n.MediaKinds, ","), n.RawLen),
+	}), true
+}
+
 // bayesScopeFor resolves the corpus scope for one chat, defaulting to the
 // shared one when no resolver is wired.
 func (c Cascade) bayesScopeFor(chatID int64) string {
@@ -229,6 +283,27 @@ func isCurrentAdmin(admins []AdminIdentity, userID int64) bool {
 		}
 	}
 	return false
+}
+
+// review builds a verdict that raises an incident but forbids the sanction:
+// the evidence reaches the admin chat, the buttons work, nobody is muted.
+func (c Cascade) review(sig domain.Signal) domain.Verdict {
+	return domain.Verdict{
+		// Quarantine, not the configured action: the audit row and the daily
+		// digest read the ACTION back, and recording "delete_mute" for an
+		// incident where nothing was deleted and nobody was muted would make
+		// the two disagree about what the bot did. Quarantine is a no-op in
+		// incident.Machine.applyAction, so it also fails safe if the dry-run
+		// override below it were ever bypassed.
+		Action:  domain.ActionQuarantine,
+		Scope:   c.DefaultScope,
+		Signals: []domain.Signal{sig},
+		Reason:  sig.Name,
+		// Confidence stays 0: the whole point of a review verdict is that
+		// the cascade is NOT certain, and the actionable default of 1.0
+		// would put a confident-looking number next to a suggestion.
+		ReviewOnly: true,
+	}
 }
 
 // actionable builds the Verdict for a matched signal using the cascade's

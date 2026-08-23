@@ -55,7 +55,7 @@ func TestAuthorizedOperatorAndChatAdmin(t *testing.T) {
 }
 
 func TestParseCallbackRoundTrip(t *testing.T) {
-	btns := Buttons("abc123")
+	btns := Buttons("abc123", false)
 	// first button data must parse back
 	act, key, ok := ParseCallback(btns[0][0].Data)
 	if !ok || key != "abc123" || act == "" {

@@ -131,6 +131,17 @@ detection:
   # always treated as "unset". Default: 300.
   admin_cache_ttl_seconds: 300
 
+  # Captionless-media review: an untrusted sender's message that carries an
+  # attachment and fewer than this many characters of text is copied to the
+  # admin chat for a human to judge, with a "Spam: delete + mute" button —
+  # and NO automatic sanction, in any chat mode.
+  #
+  # It covers the one message shape no other stage can read: a photo with no
+  # caption reaches no rule, no Bayes corpus and no LLM, because all of them
+  # read text. It is off by default (0): how often members post pictures is
+  # chat-specific, and every hit costs a card in the admin chat.
+  media_caption_min_len: 0
+
   # M5 reaction-cleanup: removes the bot's own reactions/artifacts once a
   # moderation action has been taken. Default: true.
   reaction_cleanup_enabled: true

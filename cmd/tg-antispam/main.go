@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -536,6 +537,36 @@ func main() {
 		_, err := train.RecordTokens(db, bayesScopeFor(chatID), label, "user", tokens)
 		return err
 	})
+	// The "Spam: delete + mute" button on a card where nothing was done yet
+	// (a review verdict, or a chat still observing). It reuses the incident
+	// machine's own enforcement so the ordering — sanction, then delete, then
+	// record — is the same one the automatic path takes.
+	//
+	// The action is the CONFIGURED one, not the incident's stored action: a
+	// review verdict carries "quarantine", which is by definition a no-op,
+	// and a moderator pressing this button is asking for the real sanction.
+	adminHandler.SetEnforcer(func(ctx context.Context, inc store.IncidentRow) (bool, bool, error) {
+		action := cfgStore.Current().Action
+		out := machine.Enforce(ctx, inc.ID, domain.Incident{
+			ChatID:     inc.ChatID,
+			MessageIDs: inc.MessageIDs,
+			Sender: domain.Sender{
+				UserID:       inc.UserID,
+				SenderChatID: inc.SenderChatID,
+				Kind:         senderKindFor(inc),
+			},
+			Verdict: domain.Verdict{Action: action, Scope: domain.ScopeGlobal},
+		})
+		if out.Sanctioned {
+			// Record it as really enforced: this is what makes the sanction
+			// undoable (Sanctioned() refuses to lift a dry-run incident) and
+			// what stops the digest counting a live mute as an observation.
+			if err := db.MarkIncidentEnforced(inc.ID, action); err != nil {
+				log.Printf("incident %d: marking manual enforcement failed: %v", inc.ID, err)
+			}
+		}
+		return out.Sanctioned, out.Deleted, out.Err
+	})
 
 	// adminCache is the M5 fake-admin detector's detect.AdminSource: a
 	// TTL-cached wrapper over GetChatAdministrators so both the cascade
@@ -708,6 +739,7 @@ func main() {
 		},
 		Blocklist:        blocklistSource,
 		BlocklistEnabled: *cfg.Blocklist.Enabled,
+		CaptionMinLen:    cfg.Detection.MediaCaptionMinLen,
 	}
 	llmTimeout := cfg.LLM.HTTPTimeout.Duration()
 	// decideWith runs the pure cascade, then — for a non-actionable
@@ -719,7 +751,7 @@ func main() {
 		v, ok := cascade.Decide(m, edited)
 		if !ok && llmJudge != nil && hasBorderline(v) {
 			cctx, cancel := context.WithTimeout(workCtx, llmTimeout)
-			out := llmJudge.Adjudicate(cctx, m.Text, cfg.LLM.PromptFor(m.ChatID))
+			out := llmJudge.Adjudicate(cctx, llmMessageText(m), cfg.LLM.PromptFor(m.ChatID))
 			cancel()
 			// A failed call is counted as "error", never as "ham". The stage
 			// is fail-open, so an expired key, an exhausted quota or a
@@ -755,7 +787,19 @@ func main() {
 				ok = true
 			}
 		}
+		// Captionless-media fallback, last: only when the text cascade AND
+		// the LLM have both declined to act, and never over a deferral (an
+		// unresolved admin list means we may not judge this sender at all).
+		if !ok && v.Reason != detect.ReasonAdminLookupUnavailable {
+			if rv, hit := cascade.ReviewCandidate(m); hit {
+				v, ok = rv, true
+			}
+		}
 		if ok {
+			// The action label is the verdict's own: a review-only verdict
+			// carries ActionQuarantine, so it counts as "quarantine" and
+			// never inflates the "delete_mute" series with incidents where
+			// nobody was muted.
 			reg.IncCounter("tg_antispam_incidents_total", 1, "action", string(v.Action))
 		}
 		return v, ok
@@ -960,6 +1004,54 @@ func operatorSet(cfg *config.Config) map[int64]bool {
 		ops[id] = true
 	}
 	return ops
+}
+
+// senderKindFor recovers just enough of the sender classification for a
+// sanction issued from the admin chat. Only the channel case needs telling
+// apart: a message posted on behalf of a channel is sanctioned with
+// banChatSenderChat, and calling the member API for it fails (see
+// incident.Machine.applyAction).
+func senderKindFor(inc store.IncidentRow) domain.SenderKind {
+	if inc.SenderChatID != 0 {
+		return domain.SenderExternalChannel
+	}
+	return domain.SenderUser
+}
+
+// llmMessageText renders what the LLM is asked to judge: the message text,
+// prefixed by one line of structural facts when the message has any.
+//
+// The prefix IS new data leaving the process: attachment type names and two
+// booleans that were not sent before. They are structural, not personal — no
+// file, no name, no id — but the honest statement is "a little more metadata
+// now goes to the provider", not "nothing changed". It exists because those
+// facts change the reading of the same words: "подробности в лс" under a forwarded
+// channel post with an inline keyboard is a different message from the same
+// sentence typed by hand, and until now the model could not tell.
+func llmMessageText(m domain.Message) string {
+	var facts []string
+	if len(m.MediaKinds) > 0 {
+		facts = append(facts, "вложение: "+strings.Join(m.MediaKinds, ", "))
+	}
+	switch {
+	case m.ForwardedFromChat:
+		facts = append(facts, "переслано из канала или группы")
+	case m.Forwarded:
+		facts = append(facts, "переслано")
+	}
+	if m.HasKeyboard {
+		// via_bot is the innocent explanation, so it is stated rather than
+		// hidden: an inline-bot result with buttons is ordinary chat use.
+		if m.ViaBot {
+			facts = append(facts, "кнопки под сообщением, отправлено через инлайн-бота")
+		} else {
+			facts = append(facts, "кнопки под сообщением: такое может прислать только бот")
+		}
+	}
+	if len(facts) == 0 {
+		return m.Text
+	}
+	return "[метаданные сообщения: " + strings.Join(facts, "; ") + "]\n" + m.Text
 }
 
 // hasBorderline reports whether a verdict carries the cascade's

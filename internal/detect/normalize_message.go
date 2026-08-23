@@ -20,6 +20,18 @@ type NormalizedMessage struct {
 	HasCustomEmoji bool
 	SenderTagNorm  string
 	RawLen         int
+	// MediaKinds, Forwarded, ForwardedFromChat and HasKeyboard carry the
+	// message's non-text shape through to the detectors. They are copied
+	// verbatim from domain.Message rather than derived here: normalization
+	// is about TEXT, and a detector that needs to know "photo with no
+	// caption" would otherwise have to reach around this type back to the
+	// raw message, which is exactly the coupling NormalizedMessage exists
+	// to prevent.
+	MediaKinds        []string
+	Forwarded         bool
+	ForwardedFromChat bool
+	HasKeyboard       bool
+	ViaBot            bool
 }
 
 // urlRe matches http(s) URLs anywhere in raw text.
@@ -53,12 +65,17 @@ func Normalize(m domain.Message) NormalizedMessage {
 	}
 
 	return NormalizedMessage{
-		Text:           Deobfuscate(raw),
-		Links:          collectLinks(m.Entities, m.Text, raw),
-		Mentions:       collectMentions(raw),
-		HasCustomEmoji: hasCustomEmoji,
-		SenderTagNorm:  Deobfuscate(m.SenderTag),
-		RawLen:         utf8.RuneCountInString(m.Text),
+		Text:              Deobfuscate(raw),
+		Links:             collectLinks(m.Entities, m.Text, raw),
+		Mentions:          collectMentions(raw),
+		HasCustomEmoji:    hasCustomEmoji,
+		SenderTagNorm:     Deobfuscate(m.SenderTag),
+		RawLen:            utf8.RuneCountInString(m.Text),
+		MediaKinds:        m.MediaKinds,
+		Forwarded:         m.Forwarded,
+		ForwardedFromChat: m.ForwardedFromChat,
+		HasKeyboard:       m.HasKeyboard,
+		ViaBot:            m.ViaBot,
 	}
 }
 

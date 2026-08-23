@@ -105,8 +105,19 @@ func (db *DB) Migrate() error {
 		// incident otherwise records only a user id (0 for a channel post).
 		// Without this column the admin-chat undo button had nothing to
 		// pass and silently did nothing.
-		return addColumnIfMissing(tx, "incidents", "sender_chat_id",
-			"INTEGER NOT NULL DEFAULT 0")
+		if err := addColumnIfMissing(tx, "incidents", "sender_chat_id",
+			"INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return err
+		}
+		// Every source message of the incident, comma-separated. The row is
+		// keyed on ONE message_id (the UNIQUE dedup key), which is all the
+		// automatic path ever needed: it deletes from the live incident,
+		// which still has the whole album in memory. A sanction applied
+		// LATER from the admin chat has only this row — and without the rest
+		// of the ids it would delete one photo of a five-photo album and
+		// leave the other four standing. Empty means "just message_id".
+		return addColumnIfMissing(tx, "incidents", "message_ids",
+			"TEXT NOT NULL DEFAULT ''")
 	})
 }
 

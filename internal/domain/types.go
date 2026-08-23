@@ -36,7 +36,33 @@ type Message struct {
 	ExternalReplyText  string
 	PollOptionTexts    []string
 	EditDate           int64
-	HasMedia           bool
+	// MediaKinds lists the attachment types this message carries, by their
+	// Bot API field names ("photo", "video", "voice", ...). It replaces the
+	// earlier single HasMedia flag, which told a detector that SOMETHING was
+	// attached but never what — and so could not tell a sticker reply apart
+	// from a captionless promo image, the one shape that reaches no text
+	// detector at all. Empty means no attachment.
+	MediaKinds []string
+	// Forwarded is true when the message carries a forward_origin, i.e. it
+	// was forwarded from somewhere rather than typed here. It is a SIGNAL,
+	// not a verdict: forwarding is ordinary chat behavior, and the useful
+	// reading of it ("a newcomer whose first act is forwarding a channel
+	// post") only exists in combination with the other stages.
+	Forwarded bool
+	// ForwardedFromChat narrows Forwarded to origins that are a channel or
+	// a group, as opposed to a person. A relayed channel post is the shape
+	// casino/investment spam actually takes; a forwarded message from a
+	// friend is not.
+	ForwardedFromChat bool
+	// HasKeyboard is true when an inline keyboard is attached to the
+	// message. Only bots can attach one, so in a group where ordinary
+	// members are humans it says the message came through a bot.
+	HasKeyboard bool
+	// ViaBot is true when the message was produced through an inline bot
+	// (Telegram's via_bot). It is the innocent explanation for HasKeyboard
+	// and for an otherwise odd-looking media message, so the two travel
+	// together or neither is worth reading.
+	ViaBot bool
 	// ReplyTo is the message this one replies to, one level deep and never
 	// recursive. Detection ignores it; moderator commands need it, because
 	// "/spam" as a reply is the only way a human can point at a message the
@@ -45,6 +71,10 @@ type Message struct {
 	// gone.
 	ReplyTo *Message
 }
+
+// HasMedia reports whether the message carries any attachment. It replaces
+// the former field of the same name so the two can never disagree.
+func (m Message) HasMedia() bool { return len(m.MediaKinds) > 0 }
 
 // Signal is one explainable reason produced by a detector.
 type Signal struct {
@@ -59,6 +89,17 @@ type Verdict struct {
 	Confidence float64
 	Signals    []Signal
 	Reason     string
+	// ReviewOnly marks a verdict that must reach a human but must NOT be
+	// enforced: the evidence is copied to the admin chat with its buttons
+	// and the sanction is skipped, whatever the chat's mode says.
+	//
+	// It exists for signals that are suggestive but not probative — a
+	// newcomer's captionless photo is the first one. Enforcing those
+	// automatically bans real people for posting a picture; ignoring them
+	// leaves the one message shape no text detector can see completely
+	// unwatched. A verdict is therefore actionable (an incident is raised)
+	// while carrying its own veto over the action.
+	ReviewOnly bool
 }
 
 // IsActionable reports whether the verdict requires side effects.

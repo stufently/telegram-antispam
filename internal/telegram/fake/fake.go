@@ -30,6 +30,12 @@ type Fake struct {
 	EphemeralErr error
 	Rights       telegram.BotRights
 	RightsErr    error
+	// DeleteErr and RestrictErr let a test drive the two halves of
+	// enforcement independently: they fail separately in production (a
+	// message older than 48h cannot be deleted even when the mute lands),
+	// and the caller's next move differs for each.
+	DeleteErr   error
+	RestrictErr error
 
 	// LastAdmin captures the most recent AdminMessage passed to SendAdmin, so
 	// tests can assert on fields SendAdmin doesn't otherwise record.
@@ -106,7 +112,7 @@ func (f *Fake) DeleteMessages(_ context.Context, chat int64, ids []int) error {
 	f.LastDelete.Chat, f.LastDelete.IDs = chat, ids
 	f.mu.Unlock()
 	f.log("DeleteMessages")
-	return nil
+	return f.DeleteErr
 }
 
 func (f *Fake) BanMember(_ context.Context, _, _ int64) error {
@@ -136,7 +142,7 @@ func (f *Fake) RestrictMember(_ context.Context, chat, user int64, perms telegra
 	f.LastRestrict.Perms, f.LastRestrict.Until = perms, until
 	f.mu.Unlock()
 	f.log("RestrictMember")
-	return nil
+	return f.RestrictErr
 }
 
 func (f *Fake) SendAdmin(_ context.Context, _ int64, msg telegram.AdminMessage) (int, error) {

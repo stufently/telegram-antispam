@@ -701,3 +701,55 @@ func TestCommandsIgnoreEdits(t *testing.T) {
 		t.Fatalf("edited command must be ignored, got %d", len(cmds.handled))
 	}
 }
+
+// End-to-end guard for the review path: a chat in full enforcement, a
+// verdict marked ReviewOnly. The evidence must reach the admin chat and the
+// user must be left alone — no ban, no mute, no deletion.
+func TestReviewOnlyVerdictReportsWithoutSanctionInAnEnforcingChat(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	f := fake.New()
+	f.SendAdminID = 5
+	m := incident.New(f, db, 999)
+	cfg := config.NewStore(&config.Config{
+		AdminChatID: 999,
+		Action:      domain.ActionDeleteMute,
+		Chats:       config.ChatsPolicy{Mode: "auto", StartInDryRun: boolPtr(false)},
+	})
+	seq := telegram.NewSequencer()
+	h := telegram.NewHandler(db, seq, cfg, m)
+	h.SetDecide(func(domain.Message) (domain.Verdict, bool) {
+		return domain.Verdict{
+			Action:     domain.ActionQuarantine,
+			Signals:    []domain.Signal{{Name: "captionless_media", Detail: "kinds=photo len=0"}},
+			Reason:     "captionless_media",
+			ReviewOnly: true,
+		}, true
+	})
+	h.OnMessage(context.Background(), 1, domain.Message{
+		ChatID: -100123, MessageID: 55,
+		Sender:     domain.Sender{UserID: 7, Kind: domain.SenderUser},
+		MediaKinds: []string{"photo"},
+	})
+	seq.Wait()
+
+	calls := f.Calls()
+	evidence := false
+	for _, c := range calls {
+		switch c {
+		case "CopyMessages", "SendAdmin":
+			evidence = true
+		case "BanMember", "RestrictMember", "DeleteMessages", "BanSenderChat":
+			t.Fatalf("review verdict issued %s in an enforcing chat; calls=%v", c, calls)
+		}
+	}
+	if !evidence {
+		t.Fatalf("no evidence reached the admin chat; calls=%v", calls)
+	}
+}

@@ -18,6 +18,10 @@ type Repo interface {
 	SetIncidentState(id int64, s domain.IncidentState) error
 	AddEvidence(id int64, adminChatID int64, adminMessageIDs []int) error
 	SaveIncidentTokens(id int64, tokens []string) error
+	// SaveIncidentMessageIDs records every source message of the incident,
+	// so a sanction applied later from the admin chat removes the whole
+	// album rather than the one part the row is keyed on.
+	SaveIncidentMessageIDs(id int64, ids []int) error
 }
 
 type Machine struct {
@@ -30,7 +34,7 @@ type Machine struct {
 	// admin (Handler.dispatch) needs telegram.Port too, and importing it
 	// here would create an import cycle; main wires the real implementation
 	// via SetButtons.
-	buttonsFor func(incidentKey string) [][]telegram.Button
+	buttonsFor func(incidentKey string, unenforced bool) [][]telegram.Button
 
 	// EphemeralNotice enables a best-effort, per-user-visible notice sent
 	// after a live sanction, telling the user their message was removed
@@ -47,7 +51,7 @@ func New(port telegram.Port, repo Repo, adminChatID int64) *Machine {
 
 // SetButtons installs a provider that renders the admin action buttons for an
 // incident key. If unset, the admin message has no buttons.
-func (m *Machine) SetButtons(fn func(incidentKey string) [][]telegram.Button) {
+func (m *Machine) SetButtons(fn func(incidentKey string, unenforced bool) [][]telegram.Button) {
 	m.buttonsFor = fn
 }
 
@@ -87,6 +91,16 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 		return nil
 	}
 
+	// An album's remaining ids, for a sanction applied later from the admin
+	// chat: the row itself is keyed on one of them. Best-effort — failing to
+	// record them must not stop the moderation that is about to happen; the
+	// cost is a later manual enforce that removes only the keyed part.
+	if len(inc.MessageIDs) > 1 {
+		if err := m.repo.SaveIncidentMessageIDs(id, inc.MessageIDs); err != nil {
+			log.Printf("incident %d: recording album message ids failed: %v", id, err)
+		}
+	}
+
 	// Capture the normalized tokens before anything destructive: they are
 	// what an admin's later Confirm-spam / False-positive press trains on,
 	// and after the originals are deleted there is no way to recover them.
@@ -119,7 +133,10 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 			Text:             fmt.Sprintf("evidence copy failed: %v; %s; %s", copyErr, inc.Verdict.Reason, tail),
 		}
 		if m.buttonsFor != nil {
-			msg.Buttons = m.buttonsFor(key)
+			// No enforce button on this card, even in dry-run: the evidence
+			// copy is what failed, so the moderator is being asked to act on
+			// a message they cannot see. Undo and evidence buttons stay.
+			msg.Buttons = m.buttonsFor(key, false)
 		}
 		_, sendErr := m.port.SendAdmin(ctx, m.adminChatID, msg)
 		if !acting {
@@ -141,7 +158,10 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 			Text:             inc.Verdict.Reason,
 		}
 		if m.buttonsFor != nil {
-			msg.Buttons = m.buttonsFor(key)
+			// A dry-run incident (a review verdict, or a chat still in
+			// observation) is one nothing was done about yet, so its card
+			// gets the extra button that does it. See admin.Buttons.
+			msg.Buttons = m.buttonsFor(key, inc.DryRun)
 		}
 		if _, err := m.port.SendAdmin(ctx, m.adminChatID, msg); err != nil {
 			return fmt.Errorf("send admin: %w", err)
@@ -152,31 +172,19 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 		m.setState(id, domain.StateEvidenced)
 	}
 
-	if inc.DryRun {
+	// A review verdict is never enforced automatically, whatever the chat's
+	// mode says. The wiring already turns such an incident into a dry-run
+	// one; this second check is deliberate duplication, because the cost of
+	// the two disagreeing is a real mute nobody asked for.
+	if inc.DryRun || inc.Verdict.ReviewOnly {
 		return m.repo.SetIncidentState(id, domain.StateDone)
 	}
 
-	// 2. apply action.
-	actErr := m.applyAction(ctx, inc)
-	if actErr == nil {
-		m.setState(id, domain.StateActed)
+	// 2-3. sanction, then delete the originals.
+	out := m.Enforce(ctx, id, inc)
+	if out.Err != nil {
+		return out.Err
 	}
-
-	// 3. delete originals last — ALSO when the sanction failed. Returning
-	// early on a failed sanction (as this did) left the spam standing in the
-	// chat: the one half of moderation that always works was skipped because
-	// the other half errored. Deleting is independent of banning, so it runs
-	// either way and the sanction error is reported afterwards.
-	if err := m.port.DeleteMessages(ctx, inc.ChatID, inc.MessageIDs); err != nil {
-		if actErr != nil {
-			return fmt.Errorf("apply action: %w (originals also not deleted: %v)", actErr, err)
-		}
-		return fmt.Errorf("delete originals: %w", err)
-	}
-	if actErr != nil {
-		return fmt.Errorf("apply action: %w (originals deleted)", actErr)
-	}
-	m.setState(id, domain.StateCleaned)
 
 	if m.EphemeralNotice && m.EphemeralText != "" && inc.Sender.UserID != 0 {
 		// Best-effort, per-user-visible notice. Delivery is not guaranteed
@@ -225,6 +233,59 @@ func (m *Machine) setState(id int64, st domain.IncidentState) {
 	if err := m.repo.SetIncidentState(id, st); err != nil {
 		log.Printf("incident %d: recording state %s failed: %v", id, st, err)
 	}
+}
+
+// Outcome reports what an Enforce attempt actually managed to do. The two
+// halves are reported separately because they fail independently, and the
+// caller's next move differs: a sanction that landed must not be applied a
+// second time by a retry, while a delete that failed is worth retrying (or
+// telling the moderator to finish by hand). A single error return could not
+// express "muted, but the message is still there".
+type Outcome struct {
+	Sanctioned bool  // the ban/mute/restrict call succeeded (or was a no-op)
+	Deleted    bool  // the original messages were removed
+	Err        error // what went wrong, if anything
+}
+
+// Enforce applies the sanction and removes the offending message, recording
+// how far it got. It is the second half of Handle, exported because it is
+// also the whole job of the admin-chat "enforce" button: an incident raised
+// for review (or in a dry-run chat) has evidence and buttons but was never
+// acted on, and the moderator who decides it IS spam needs the same two
+// effects to happen now, from the same code path — a second implementation
+// would be a second set of ordering bugs.
+//
+// The caller is responsible for deciding that enforcement is wanted at all;
+// Enforce does not consult DryRun.
+func (m *Machine) Enforce(ctx context.Context, id int64, inc domain.Incident) Outcome {
+	var out Outcome
+	actErr := m.applyAction(ctx, inc)
+	if actErr == nil {
+		out.Sanctioned = true
+		m.setState(id, domain.StateActed)
+	}
+
+	// Delete the originals last — ALSO when the sanction failed. Returning
+	// early on a failed sanction (as this did) left the spam standing in the
+	// chat: the one half of moderation that always works was skipped because
+	// the other half errored. Deleting is independent of banning, so it runs
+	// either way and the sanction error is reported afterwards.
+	delErr := m.port.DeleteMessages(ctx, inc.ChatID, inc.MessageIDs)
+	if delErr == nil {
+		out.Deleted = true
+	}
+
+	switch {
+	case actErr != nil && delErr != nil:
+		out.Err = fmt.Errorf("apply action: %w (originals also not deleted: %v)", actErr, delErr)
+	case delErr != nil:
+		out.Err = fmt.Errorf("delete originals: %w", delErr)
+	case actErr != nil:
+		out.Err = fmt.Errorf("apply action: %w (originals deleted)", actErr)
+	default:
+		m.setState(id, domain.StateCleaned)
+	}
+	return out
 }
 
 func (m *Machine) applyAction(ctx context.Context, inc domain.Incident) error {
