@@ -54,6 +54,19 @@ detection:
     # Domains that are always treated as spam links, regardless of trust.
     # Default: [].
     banned_domains: []
+    # Entries that match only when they are the WHOLE message, after
+    # normalization. For words too ordinary to ban as substrings: an exact
+    # "работа" catches the one-word bait while leaving "работаю с утра"
+    # alone. The allow_stopwords list overrides these too. Default: [].
+    deny_exact: []
+    # Occurrence limits for one message from an UNTRUSTED sender. They count
+    # repeats, not distinct values: "@bob @bob @bob" is three mentions.
+    # 0 disables each, which is the default — these are signals, not proof
+    # (a legitimate ad has links, an excited member has emoji), so the
+    # numbers are a per-deployment decision.
+    max_links: 0
+    max_mentions: 0
+    max_emoji: 0
 
   behavior:
     # Duplicate-message count within dup_window that triggers a hit.
@@ -141,6 +154,30 @@ detection:
   # read text. It is off by default (0): how often members post pictures is
   # chat-specific, and every hit costs a card in the admin chat.
   media_caption_min_len: 0
+
+  # Minimum message length that counts toward trust. Default: 3 (which only
+  # rejects "+" and a bare emoji). Trust exempts a sender from Bayes, the LLM
+  # and the fake-admin check, so at 3 a spammer graduates by typing "привет"
+  # five times. Raising it (20-30) makes warming up an account cost real
+  # effort; the price is that terse but genuine members stay checked longer.
+  #
+  # Only DIFFERENT messages count in any case: repeating one word earns
+  # credit once.
+  meaningful_min_len: 3
+
+  # Surface an untrusted sender's message that carries an inline keyboard
+  # for human review (no sanction, like media_caption_min_len). Only bots can
+  # attach a keyboard, so under an ordinary member's name it means the message
+  # came through a bot. Messages sent via an inline bot (via_bot) are
+  # excluded — that is ordinary chat use. Default: false.
+  review_keyboard: false
+
+  # Delete Telegram's own "X joined" / "X left" notices. Pure hygiene, no
+  # moderation: in a chat that removes spammers daily they pile up into a
+  # wall nobody reads. Some chats use joins as a greeting cue, so both
+  # default to false.
+  delete_join_messages: false
+  delete_leave_messages: false
 
   # M5 reaction-cleanup: removes the bot's own reactions/artifacts once a
   # moderation action has been taken. Default: true.
@@ -263,6 +300,10 @@ llm:
   #  - kind: openai
   #    api_key: "sk-..."
   #    model: gpt-4o-mini
+  #    # Optional: point the same provider at a compatible gateway (a proxy,
+  #    # a self-hosted or third-party OpenAI-compatible server). Empty means
+  #    # the official endpoint.
+  #    api_base: "https://gateway.example/v1-compatible"
   #  - kind: anthropic
   #    api_key: "sk-ant-..."
   #    model: claude-3-5-haiku-latest

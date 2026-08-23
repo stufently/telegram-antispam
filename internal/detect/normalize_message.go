@@ -27,6 +27,14 @@ type NormalizedMessage struct {
 	// caption" would otherwise have to reach around this type back to the
 	// raw message, which is exactly the coupling NormalizedMessage exists
 	// to prevent.
+	// LinkCount and MentionCount are OCCURRENCE counts, unlike Links and
+	// Mentions, which are deduplicated for the domain rules. A limit rule
+	// has to count occurrences: "@a @a @a @a @a" is a mention flood, and the
+	// deduplicated list would report exactly one.
+	LinkCount    int
+	MentionCount int
+	// EmojiCount counts emoji runes plus Telegram custom-emoji entities.
+	EmojiCount        int
 	MediaKinds        []string
 	Forwarded         bool
 	ForwardedFromChat bool
@@ -71,12 +79,47 @@ func Normalize(m domain.Message) NormalizedMessage {
 		HasCustomEmoji:    hasCustomEmoji,
 		SenderTagNorm:     Deobfuscate(m.SenderTag),
 		RawLen:            utf8.RuneCountInString(m.Text),
+		LinkCount:         len(urlRe.FindAllString(raw, -1)) + len(tMeRe.FindAllString(raw, -1)),
+		MentionCount:      len(mentionRe.FindAllString(raw, -1)),
+		EmojiCount:        countEmoji(raw) + countCustomEmoji(m.Entities),
 		MediaKinds:        m.MediaKinds,
 		Forwarded:         m.Forwarded,
 		ForwardedFromChat: m.ForwardedFromChat,
 		HasKeyboard:       m.HasKeyboard,
 		ViaBot:            m.ViaBot,
 	}
+}
+
+// countEmoji counts emoji runes in s. It works on Unicode ranges rather than
+// grapheme clusters, so a flag or a family (several runes joined by
+// zero-width joiners) counts as more than one — deliberately: the rule this
+// feeds is "an unreasonable NUMBER of emoji", and a message built out of
+// composite emoji is exactly as decorated as its rune count suggests.
+func countEmoji(s string) int {
+	n := 0
+	for _, r := range s {
+		switch {
+		case r >= 0x1F300 && r <= 0x1FAFF, // pictographs, symbols, faces
+			r >= 0x2600 && r <= 0x27BF,   // misc symbols and dingbats
+			r >= 0x1F000 && r <= 0x1F2FF, // mahjong, cards, enclosed
+			r >= 0xFE0F && r <= 0xFE0F:   // variation selector-16
+			n++
+		}
+	}
+	return n
+}
+
+// countCustomEmoji counts Telegram's premium custom emoji, which are ordinary
+// entities over placeholder text and would otherwise be invisible to a count
+// over the raw string.
+func countCustomEmoji(entities []domain.Entity) int {
+	n := 0
+	for _, e := range entities {
+		if e.Type == "custom_emoji" {
+			n++
+		}
+	}
+	return n
 }
 
 // collectLinks gathers, in order: text_link URLs hidden behind entities

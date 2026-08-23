@@ -97,3 +97,24 @@ func TestDecideNeverReturnsReviewVerdict(t *testing.T) {
 		t.Fatalf("Decide must stay silent on captionless media, got ok=%v verdict=%+v", ok, v)
 	}
 }
+
+func TestReviewCandidateFlagsABotKeyboard(t *testing.T) {
+	c := reviewCascade(0, 0) // caption stage off; only the keyboard rule is on
+	c.ReviewKeyboard = true
+
+	m := mediaMsg("посмотри тут")
+	m.HasKeyboard = true
+	v, ok := c.ReviewCandidate(m)
+	if !ok || v.Signals[0].Name != "bot_keyboard" {
+		t.Fatalf("ok=%v verdict=%+v, want a bot_keyboard review", ok, v)
+	}
+	if !v.ReviewOnly {
+		t.Fatal("only a bot can attach a keyboard, but that is a hint, not proof")
+	}
+
+	// An inline-bot result is ordinary chat use.
+	m.ViaBot = true
+	if _, ok := c.ReviewCandidate(m); ok {
+		t.Fatal("via_bot is the innocent explanation and must not be flagged")
+	}
+}

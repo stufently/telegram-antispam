@@ -63,6 +63,10 @@ type Cascade struct {
 	// runs LAST and returns a ReviewOnly verdict: it never preempts a real
 	// detector, and it never sanctions on its own.
 	CaptionMinLen int
+	// ReviewKeyboard surfaces an untrusted sender's message that carries an
+	// inline keyboard, which only a bot can attach. Excludes via_bot: an
+	// inline-bot result is ordinary chat use.
+	ReviewKeyboard bool
 }
 
 // BlocklistSource reports whether a user ID is present in a global blocklist
@@ -233,11 +237,12 @@ func (c Cascade) Decide(m domain.Message, edited bool) (domain.Verdict, bool) {
 // different judgements from the moderator who sees the evidence; they are
 // attachment type names, never user content.
 func (c Cascade) ReviewCandidate(m domain.Message) (domain.Verdict, bool) {
-	if c.CaptionMinLen <= 0 {
+	if c.CaptionMinLen <= 0 && !c.ReviewKeyboard {
 		return domain.Verdict{}, false
 	}
 	n := Normalize(m)
-	if len(n.MediaKinds) == 0 || n.RawLen >= c.CaptionMinLen {
+	sig, hit := c.reviewSignal(n)
+	if !hit {
 		return domain.Verdict{}, false
 	}
 	if IsTrusted(c.Trust, m.ChatID, m.Sender.UserID, c.TrustThreshold) {
@@ -254,10 +259,21 @@ func (c Cascade) ReviewCandidate(m domain.Message) (domain.Verdict, bool) {
 			return domain.Verdict{}, false
 		}
 	}
-	return c.review(domain.Signal{
-		Name:   "captionless_media",
-		Detail: fmt.Sprintf("kinds=%s len=%d", strings.Join(n.MediaKinds, ","), n.RawLen),
-	}), true
+	return c.review(sig), true
+}
+
+// reviewSignal picks which review-worthy shape this message has, if any.
+func (c Cascade) reviewSignal(n NormalizedMessage) (domain.Signal, bool) {
+	if len(n.MediaKinds) > 0 && n.RawLen < c.CaptionMinLen {
+		return domain.Signal{
+			Name:   "captionless_media",
+			Detail: fmt.Sprintf("kinds=%s len=%d", strings.Join(n.MediaKinds, ","), n.RawLen),
+		}, true
+	}
+	if c.ReviewKeyboard && n.HasKeyboard && !n.ViaBot {
+		return domain.Signal{Name: "bot_keyboard"}, true
+	}
+	return domain.Signal{}, false
 }
 
 // bayesScopeFor resolves the corpus scope for one chat, defaulting to the

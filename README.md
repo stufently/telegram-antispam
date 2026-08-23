@@ -60,12 +60,20 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
   now: "Confirm spam" deliberately only records and trains, so on such a card it would
   otherwise teach the corpus while leaving the message in the chat.
 - **Moderator commands** — reply to any message with `/spam` (or `/spam@yourbot`) to delete
-  it, mute its author and train the corpus, or `/ham` to lift a sanction and relabel that
-  message. Commands run the same incident pipeline as the detector — evidence first, undo
+  it, mute its author and train the corpus, `/ban` to remove the author WITHOUT teaching the
+  corpus anything (a rule violation is not a spam sample), or `/ham` to lift a sanction and
+  relabel that message. Commands run the same incident pipeline as the detector — evidence first, undo
   buttons in the admin chat — and only administrators of that chat (or configured
   operators) may use them; an unresolvable admin list denies rather than allows.
 - **Newcomer defenses** — spam-reaction cleanup, ephemeral one-way notices, and a trust
-  score that graduates real users out of the strict checks.
+  score that graduates real users out of the strict checks. Warming up an account is not
+  free: only messages of a configurable minimum length count, and only DIFFERENT ones —
+  repeating "привет" five times earns credit once.
+- **Occurrence limits and whole-message stop words** — caps on links, mentions and emoji per
+  message from an untrusted sender (counting repeats, not distinct values), plus a
+  `deny_exact` list that matches only when the entry IS the whole message, for words too
+  ordinary to ban as substrings.
+- **Chat hygiene** — optional removal of Telegram's own "X joined" / "X left" notices.
 - **Dry-run mode** — observe and log verdicts without touching anyone, per chat.
 - **Observability** — Prometheus `/metrics`, a `/healthz` endpoint, and a **daily digest**
   of actions to the admin chat, reporting applied, dry-run, and incomplete actions separately.

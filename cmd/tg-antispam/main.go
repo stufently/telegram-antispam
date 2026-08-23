@@ -516,6 +516,9 @@ func main() {
 	machine.EphemeralText = cfg.Detection.EphemeralNoticeText
 	handler = telegram.NewHandler(db, seq, cfgStore, machine)
 	handler.SetContext(workCtx)
+	handler.SetSweeper(func(chatID int64, ids []int) error {
+		return livePort.DeleteMessages(workCtx, chatID, ids)
+	})
 	adminHandler = admin.NewHandler(livePort, db, operatorSet(cfg))
 	// bayesScopeFor decides whose corpus a chat is scored against. In
 	// per_chat mode the chat's own scope is ADDITIVE: bayesAdapter reads it
@@ -687,6 +690,7 @@ func main() {
 				provs = append(provs, llm.OpenAI{
 					APIKey:      pc.APIKey,
 					Model:       pc.Model,
+					BaseURL:     pc.APIBase,
 					Prompt:      cfg.LLM.Prompt,
 					Temperature: cfg.LLM.Temperature,
 					MaxTokens:   cfg.LLM.MaxTokens,
@@ -695,6 +699,7 @@ func main() {
 				provs = append(provs, llm.Anthropic{
 					APIKey:      pc.APIKey,
 					Model:       pc.Model,
+					BaseURL:     pc.APIBase,
 					Prompt:      cfg.LLM.Prompt,
 					Temperature: cfg.LLM.Temperature,
 					MaxTokens:   cfg.LLM.MaxTokens,
@@ -713,8 +718,12 @@ func main() {
 		Rules: detect.Rules{
 			DenyStopwords:          cfg.Detection.Rules.DenyStopwords,
 			AllowStopwords:         cfg.Detection.Rules.AllowStopwords,
+			DenyExact:              cfg.Detection.Rules.DenyExact,
 			BlockLinksForUntrusted: *cfg.Detection.Rules.BlockLinksForUntrusted,
 			BannedDomains:          cfg.Detection.Rules.BannedDomains,
+			MaxLinks:               cfg.Detection.Rules.MaxLinks,
+			MaxMentions:            cfg.Detection.Rules.MaxMentions,
+			MaxEmoji:               cfg.Detection.Rules.MaxEmoji,
 		},
 		Behavior:            behaviorCfg,
 		TrustThreshold:      *cfg.Detection.TrustThreshold,
@@ -740,6 +749,7 @@ func main() {
 		Blocklist:        blocklistSource,
 		BlocklistEnabled: *cfg.Blocklist.Enabled,
 		CaptionMinLen:    cfg.Detection.MediaCaptionMinLen,
+		ReviewKeyboard:   cfg.Detection.ReviewKeyboard,
 	}
 	llmTimeout := cfg.LLM.HTTPTimeout.Duration()
 	// decideWith runs the pure cascade, then — for a non-actionable

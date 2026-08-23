@@ -61,6 +61,17 @@ func ToDomainMessage(m *models.Message) domain.Message {
 			m.ForwardOrigin.MessageOriginChat != nil
 	}
 
+	// Join/leave service messages are the chat's own noise: they have no
+	// author to moderate and no text to read, and a chat that removes
+	// spammers all day accumulates a wall of them.
+	serviceKind := ""
+	switch {
+	case len(m.NewChatMembers) > 0:
+		serviceKind = "join"
+	case m.LeftChatMember != nil:
+		serviceKind = "leave"
+	}
+
 	// Only bots can attach an inline keyboard, so its presence under an
 	// ordinary member's message means the message was produced by a bot.
 	hasKeyboard := m.ReplyMarkup != nil && len(m.ReplyMarkup.InlineKeyboard) > 0
@@ -98,6 +109,7 @@ func ToDomainMessage(m *models.Message) domain.Message {
 		ForwardedFromChat:  forwardedFromChat,
 		HasKeyboard:        hasKeyboard,
 		ViaBot:             viaBot,
+		ServiceKind:        serviceKind,
 		ReplyTo:            replyTo,
 	}
 }

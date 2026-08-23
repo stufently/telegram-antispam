@@ -21,6 +21,20 @@ const (
 	// CmdHam undoes a sanction on the replied-to message's author and
 	// relabels that message as ham.
 	CmdHam Command = "ham"
+	// CmdBan removes the replied-to message's author from the chat WITHOUT
+	// teaching the corpus anything.
+	//
+	// It exists because "this person is out" and "this text is spam" are
+	// different statements, and /spam can only make both at once. A moderator
+	// banning someone for abuse, flooding or breaking a chat rule would
+	// otherwise feed that perfectly ordinary text to the Bayes corpus as a
+	// spam sample and poison it against every future message that looks like
+	// normal conversation.
+	//
+	// Telegram deletes a banned member's other messages in a supergroup by
+	// itself, so this doubles as the cleanup a bot cannot do on its own (the
+	// Bot API offers no "list a user's messages").
+	CmdBan Command = "ban"
 )
 
 // ParseCommand recognizes "/spam" and "/ham" (optionally addressed as
@@ -53,6 +67,8 @@ func ParseCommand(text, botUsername string) (Command, bool) {
 		return CmdSpam, true
 	case CmdHam:
 		return CmdHam, true
+	case CmdBan:
+		return CmdBan, true
 	default:
 		return "", false
 	}
@@ -155,6 +171,8 @@ func (c *Commands) Handle(ctx context.Context, m domain.Message) {
 		c.handleSpam(ctx, m, *target)
 	case CmdHam:
 		c.handleHam(ctx, m, *target)
+	case CmdBan:
+		c.handleBan(ctx, m, *target)
 	}
 }
 
@@ -244,6 +262,56 @@ func (c *Commands) handleSpam(ctx context.Context, cmdMsg domain.Message, target
 	}
 
 	c.train(target.ChatID, "ham", "spam", tokens)
+	c.deleteCommand(ctx, cmdMsg)
+}
+
+// handleBan runs the same incident pipeline as /spam — evidence into the
+// admin chat first, then the sanction, then undo buttons — and differs in
+// exactly two places: the action is a ban, and NOTHING is trained.
+func (c *Commands) handleBan(ctx context.Context, cmdMsg domain.Message, target domain.Message) {
+	if c.report == nil {
+		c.counted(CmdBan, "error")
+		c.notify(ctx, cmdMsg, "Обработчик инцидентов не подключён — обратись к оператору.")
+		return
+	}
+
+	inc := domain.Incident{
+		ChatID:     target.ChatID,
+		MessageIDs: []int{target.MessageID},
+		ThreadID:   target.ThreadID,
+		Sender:     target.Sender,
+		Verdict: domain.Verdict{
+			Action: domain.ActionBan,
+			Scope:  domain.ScopeGlobal,
+			Reason: "manual_ban",
+			Signals: []domain.Signal{{
+				Name:   "manual_ban",
+				Detail: fmt.Sprintf("by=%d cmd_msg=%d", cmdMsg.Sender.UserID, cmdMsg.MessageID),
+			}},
+		},
+		// A human decision acts in any chat, dry-run included: dry-run
+		// restrains the DETECTOR while it is being evaluated, not the
+		// moderators.
+		DryRun: false,
+		// No Tokens: they exist so the admin-chat buttons can train later,
+		// and this command deliberately teaches nothing. Carrying them would
+		// leave a "Confirm spam" button that turns a rule violation into a
+		// spam sample by accident.
+	}
+
+	fresh, err := c.report(ctx, inc)
+	switch {
+	case err != nil:
+		log.Printf("command ban chat=%d msg=%d: %v", target.ChatID, target.MessageID, err)
+		c.counted(CmdBan, "error")
+		c.notify(ctx, cmdMsg, "Не смог обработать сообщение: "+err.Error())
+	case !fresh:
+		c.counted(CmdBan, "duplicate")
+		c.notify(ctx, cmdMsg, "Это сообщение уже обработано ботом — карточка есть в админ-чате.")
+	default:
+		c.counted(CmdBan, "ok")
+		c.notify(ctx, cmdMsg, "Автор забанен, сообщение удалено. Корпус не обучался.")
+	}
 	c.deleteCommand(ctx, cmdMsg)
 }
 

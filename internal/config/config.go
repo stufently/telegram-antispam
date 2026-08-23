@@ -110,10 +110,19 @@ func (d Duration) MarshalYAML() (interface{}, error) {
 // explicit "false" in the config file — a plain bool can't distinguish
 // those two cases since both leave the field at its zero value.
 type DetectionRules struct {
-	DenyStopwords          []string `yaml:"deny_stopwords"`
-	AllowStopwords         []string `yaml:"allow_stopwords"`
+	DenyStopwords  []string `yaml:"deny_stopwords"`
+	AllowStopwords []string `yaml:"allow_stopwords"`
+	// DenyExact matches only when the whole message equals the entry — for
+	// words too ordinary to ban as substrings (see detect.Rules.DenyExact).
+	DenyExact              []string `yaml:"deny_exact"`
 	BlockLinksForUntrusted *bool    `yaml:"block_links_for_untrusted"`
 	BannedDomains          []string `yaml:"banned_domains"`
+	// MaxLinks, MaxMentions and MaxEmoji cap occurrences in one message from
+	// an untrusted sender. 0 (the default) disables each: they are signals,
+	// not proof, and the right number is chat-specific.
+	MaxLinks    int `yaml:"max_links"`
+	MaxMentions int `yaml:"max_mentions"`
+	MaxEmoji    int `yaml:"max_emoji"`
 }
 
 // DetectionBehavior configures the pure behavioral detector (detect.BehaviorCfg).
@@ -230,6 +239,35 @@ type Detection struct {
 	// members post pictures, and that rate is chat-specific.
 	MediaCaptionMinLen int `yaml:"media_caption_min_len"`
 
+	// MeaningfulMinLen is the minimum message length that counts toward a
+	// user's trust score (see detect.IsMeaningful). A plain int: 0 doubles
+	// as "unset" and gets the historical default of 3, because 0 would mean
+	// "an empty message earns trust".
+	//
+	// It is the price of warming up an account. At 3, five "привет" graduate
+	// a newcomer out of Bayes, the LLM and the fake-admin check. Raising it
+	// makes that expensive — and makes genuinely terse members stay checked
+	// (and, with block_links_for_untrusted, link-blocked) for longer, so the
+	// right value is chat-specific.
+	MeaningfulMinLen int `yaml:"meaningful_min_len"`
+
+	// ReviewKeyboard surfaces an untrusted sender's message that carries an
+	// inline keyboard for human review (no sanction, like the captionless
+	// media stage). Only bots can attach one, so under an ordinary member's
+	// name it means the message came through a bot — suggestive, but an
+	// inline-bot result (via_bot) is ordinary chat use, and those are
+	// excluded. Default: false.
+	ReviewKeyboard bool `yaml:"review_keyboard"`
+
+	// DeleteJoinMessages and DeleteLeaveMessages remove Telegram's own
+	// "X joined" / "X left" service messages. Pure hygiene, no moderation:
+	// in a chat where the bot removes spammers daily, those notices pile up
+	// into a wall of noise nobody reads. Default: false, because some chats
+	// use joins as a greeting cue. Deleting one needs the same rights the
+	// bot already has.
+	DeleteJoinMessages  bool `yaml:"delete_join_messages"`
+	DeleteLeaveMessages bool `yaml:"delete_leave_messages"`
+
 	// ReactionCleanupEnabled turns the M5 reaction-cleanup feature on or
 	// off. *bool for the usual nil-vs-false reason: an explicit "false"
 	// must not be re-promoted to the default "true". Default: true.
@@ -313,6 +351,12 @@ type LLMProvider struct {
 	Kind   string `yaml:"kind"`
 	APIKey string `yaml:"api_key"`
 	Model  string `yaml:"model"`
+	// APIBase overrides the provider's endpoint. Empty means the official
+	// one. It exists so a deployment can point the same provider at a
+	// compatible gateway (a proxy, a self-hosted or third-party
+	// OpenAI-compatible server) without a code change; the client code
+	// already supported it and only the config did not expose it.
+	APIBase string `yaml:"api_base"`
 }
 
 // PromptFor returns the system prompt to use for chatID: its override when one

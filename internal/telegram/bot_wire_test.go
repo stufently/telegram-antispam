@@ -753,3 +753,79 @@ func TestReviewOnlyVerdictReportsWithoutSanctionInAnEnforcingChat(t *testing.T) 
 		t.Fatalf("no evidence reached the admin chat; calls=%v", calls)
 	}
 }
+
+func TestJoinMessagesAreSweptOnlyWhenConfigured(t *testing.T) {
+	newHandler := func(t *testing.T, del bool) (*telegram.Handler, *fake.Fake, *telegram.Sequencer) {
+		t.Helper()
+		db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { db.Close() })
+		if err := db.Migrate(); err != nil {
+			t.Fatal(err)
+		}
+		f := fake.New()
+		cfg := config.NewStore(&config.Config{
+			AdminChatID: 999,
+			Chats:       config.ChatsPolicy{Mode: "auto"},
+			Detection:   config.Detection{DeleteJoinMessages: del},
+		})
+		seq := telegram.NewSequencer()
+		h := telegram.NewHandler(db, seq, cfg, incident.New(f, db, 999))
+		h.SetSweeper(func(chatID int64, ids []int) error {
+			return f.DeleteMessages(context.Background(), chatID, ids)
+		})
+		return h, f, seq
+	}
+
+	h, f, seq := newHandler(t, true)
+	h.OnMessage(context.Background(), 1, domain.Message{
+		ChatID: -100123, MessageID: 55, ServiceKind: "join",
+		Sender: domain.Sender{UserID: 7, Kind: domain.SenderUser},
+	})
+	seq.Wait()
+	if f.LastDelete.Chat != -100123 || len(f.LastDelete.IDs) != 1 {
+		t.Fatalf("join notice not swept: %+v", f.LastDelete)
+	}
+
+	h, f, seq = newHandler(t, false)
+	h.OnMessage(context.Background(), 2, domain.Message{
+		ChatID: -100123, MessageID: 56, ServiceKind: "join",
+		Sender: domain.Sender{UserID: 7, Kind: domain.SenderUser},
+	})
+	seq.Wait()
+	if f.LastDelete.Chat != 0 {
+		t.Fatalf("join notice deleted with the setting off: %+v", f.LastDelete)
+	}
+}
+
+// A service message has no author and no text; it must never reach the
+// detectors, whatever the sweep setting says.
+func TestServiceMessagesNeverReachTheDetector(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	f := fake.New()
+	cfg := config.NewStore(&config.Config{AdminChatID: 999, Chats: config.ChatsPolicy{Mode: "auto"}})
+	seq := telegram.NewSequencer()
+	h := telegram.NewHandler(db, seq, cfg, incident.New(f, db, 999))
+	decided := false
+	h.SetDecide(func(domain.Message) (domain.Verdict, bool) {
+		decided = true
+		return domain.Verdict{}, false
+	})
+	h.OnMessage(context.Background(), 3, domain.Message{
+		ChatID: -100123, MessageID: 57, ServiceKind: "leave",
+		Sender: domain.Sender{UserID: 7, Kind: domain.SenderUser},
+	})
+	seq.Wait()
+	if decided {
+		t.Fatal("a leave notice was handed to the detector")
+	}
+}

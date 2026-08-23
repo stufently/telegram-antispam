@@ -1,6 +1,7 @@
 package detect
 
 import (
+	"fmt"
 	"net/url"
 	"strings"
 
@@ -9,10 +10,28 @@ import (
 
 // Rules defines the hard-rule configuration for detecting spam.
 type Rules struct {
-	DenyStopwords          []string
-	AllowStopwords         []string
+	DenyStopwords  []string
+	AllowStopwords []string
+	// DenyExact matches only when the WHOLE message equals the entry, after
+	// normalization. It is a separate list rather than a magic prefix on
+	// DenyStopwords because a prefix needs escaping rules the moment someone
+	// wants to ban a phrase that legitimately starts with it, and because
+	// "the whole message is X" and "X appears anywhere" are different enough
+	// that mixing them in one list makes both harder to read.
+	//
+	// It exists for the words too ordinary to ban as substrings: "работа"
+	// catches "работаю с утра", while an exact "работа" catches only the
+	// one-word bait.
+	DenyExact              []string
 	BlockLinksForUntrusted bool
 	BannedDomains          []string
+	// MaxLinks, MaxMentions and MaxEmoji are OCCURRENCE limits, applied to
+	// untrusted senders only. Zero or negative disables each — these are
+	// signals, not proof (a legitimate ad has links; an excited member has
+	// emoji), so they stay off until a deployment decides its own numbers.
+	MaxLinks    int
+	MaxMentions int
+	MaxEmoji    int
 }
 
 // Check applies hard rules to a normalized message and returns the first
@@ -21,6 +40,13 @@ type Rules struct {
 func (r Rules) Check(n NormalizedMessage, trusted bool) (domain.Signal, bool) {
 	// 1. Check deny stopwords (unless allow stopwords override)
 	if sig, hit := r.checkDenyStopword(n); hit {
+		return sig, true
+	}
+
+	// 1b. Whole-message matches. Also subject to the allow list: an allow
+	// entry means "this text is fine here", and that must hold however the
+	// deny side was written.
+	if sig, hit := r.checkDenyExact(n); hit {
 		return sig, true
 	}
 
@@ -34,6 +60,30 @@ func (r Rules) Check(n NormalizedMessage, trusted bool) (domain.Signal, bool) {
 		return sig, true
 	}
 
+	// 4. Occurrence limits, untrusted senders only.
+	if sig, hit := r.checkLimits(n, trusted); hit {
+		return sig, true
+	}
+
+	return domain.Signal{}, false
+}
+
+// checkLimits applies the occurrence caps. Trusted members are exempt for the
+// same reason they skip the semantic stages: someone who has held a real
+// conversation in this chat posting five links is sharing, not flooding.
+func (r Rules) checkLimits(n NormalizedMessage, trusted bool) (domain.Signal, bool) {
+	if trusted {
+		return domain.Signal{}, false
+	}
+	if r.MaxLinks > 0 && n.LinkCount > r.MaxLinks {
+		return domain.Signal{Name: "too_many_links", Detail: fmt.Sprintf("count=%d limit=%d", n.LinkCount, r.MaxLinks)}, true
+	}
+	if r.MaxMentions > 0 && n.MentionCount > r.MaxMentions {
+		return domain.Signal{Name: "too_many_mentions", Detail: fmt.Sprintf("count=%d limit=%d", n.MentionCount, r.MaxMentions)}, true
+	}
+	if r.MaxEmoji > 0 && n.EmojiCount > r.MaxEmoji {
+		return domain.Signal{Name: "too_many_emoji", Detail: fmt.Sprintf("count=%d limit=%d", n.EmojiCount, r.MaxEmoji)}, true
+	}
 	return domain.Signal{}, false
 }
 
@@ -72,6 +122,37 @@ func (r Rules) checkDenyStopword(n NormalizedMessage) (domain.Signal, bool) {
 		}
 	}
 
+	return domain.Signal{}, false
+}
+
+// checkDenyExact matches an entry against the WHOLE normalized message.
+// Both sides go through Deobfuscate for the same reason the substring list
+// does: the message text has been folded, so a Cyrillic entry would never
+// match otherwise.
+func (r Rules) checkDenyExact(n NormalizedMessage) (domain.Signal, bool) {
+	if len(r.DenyExact) == 0 {
+		return domain.Signal{}, false
+	}
+	text := strings.ToLower(strings.TrimSpace(n.Text))
+	if text == "" {
+		return domain.Signal{}, false
+	}
+	for _, w := range r.AllowStopwords {
+		if w == "" {
+			continue
+		}
+		if strings.Contains(text, strings.ToLower(Deobfuscate(w))) {
+			return domain.Signal{}, false
+		}
+	}
+	for _, w := range r.DenyExact {
+		if w == "" {
+			continue
+		}
+		if text == strings.ToLower(Deobfuscate(strings.TrimSpace(w))) {
+			return domain.Signal{Name: "deny_exact", Detail: w}, true
+		}
+	}
 	return domain.Signal{}, false
 }
 

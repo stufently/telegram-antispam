@@ -45,35 +45,35 @@ func TestIsTrustedErrorTreatedAsNotTrusted(t *testing.T) {
 
 func TestIsMeaningfulAcceptsRealText(t *testing.T) {
 	n := NormalizedMessage{Text: "hello there, how are you?", RawLen: 26}
-	if !IsMeaningful(n) {
+	if !IsMeaningful(n, 0) {
 		t.Fatal("expected real text to be meaningful")
 	}
 }
 
 func TestIsMeaningfulRejectsPlusSign(t *testing.T) {
 	n := NormalizedMessage{Text: "+", RawLen: 1}
-	if IsMeaningful(n) {
+	if IsMeaningful(n, 0) {
 		t.Fatal("expected '+' to not be meaningful")
 	}
 }
 
 func TestIsMeaningfulRejectsEmpty(t *testing.T) {
 	n := NormalizedMessage{Text: "", RawLen: 0}
-	if IsMeaningful(n) {
+	if IsMeaningful(n, 0) {
 		t.Fatal("expected empty message to not be meaningful")
 	}
 }
 
 func TestIsMeaningfulRejectsWhitespaceOnly(t *testing.T) {
 	n := NormalizedMessage{Text: "   ", RawLen: 3}
-	if IsMeaningful(n) {
+	if IsMeaningful(n, 0) {
 		t.Fatal("expected whitespace-only text to not be meaningful")
 	}
 }
 
 func TestIsMeaningfulRejectsShortRawLen(t *testing.T) {
 	n := NormalizedMessage{Text: "ok", RawLen: 2}
-	if IsMeaningful(n) {
+	if IsMeaningful(n, 0) {
 		t.Fatal("expected RawLen < 3 to not be meaningful")
 	}
 }

@@ -63,6 +63,11 @@ type Message struct {
 	// and for an otherwise odd-looking media message, so the two travel
 	// together or neither is worth reading.
 	ViaBot bool
+	// ServiceKind names a Telegram service message ("join", "leave") and is
+	// empty for an ordinary one. Such messages have no author to moderate;
+	// the only thing to decide about them is whether to leave them in the
+	// chat.
+	ServiceKind string
 	// ReplyTo is the message this one replies to, one level deep and never
 	// recursive. Detection ignores it; moderator commands need it, because
 	// "/spam" as a reply is the only way a human can point at a message the

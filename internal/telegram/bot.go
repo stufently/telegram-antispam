@@ -85,6 +85,13 @@ type Handler struct {
 	// the per-chat sequencer.
 	commands CommandHandler
 
+	// sweeper deletes service messages (join/leave notices) when the config
+	// asks for it. A narrow func rather than the whole Port: this is the
+	// only Telegram call the handler itself makes — everything else it does
+	// goes through the incident machine — and a nil sweeper simply disables
+	// the sweep instead of panicking.
+	sweeper func(chatID int64, messageIDs []int) error
+
 	// rootCtx is the lifecycle context for every job accepted by the per-chat
 	// sequencer, including work flushed by AlbumBuffer. It is deliberately
 	// independent from the short-lived update callback context, so accepted
@@ -163,6 +170,19 @@ func (h *Handler) onUpdate(_ context.Context, updateID int64, m domain.Message, 
 	if !RegisteredChat(cfg, m.ChatID) {
 		return
 	}
+	// Service messages are not moderation: they carry no author and no text,
+	// so they are either swept or ignored, and never reach the detectors.
+	if m.ServiceKind != "" {
+		if !edited && h.sweeper != nil && h.serviceSweepWanted(cfg, m.ServiceKind) {
+			h.seq.Submit(m.ChatID, func() {
+				if err := h.sweeper(m.ChatID, []int{m.MessageID}); err != nil {
+					log.Printf("delete %s message chat=%d msg=%d: %v", m.ServiceKind, m.ChatID, m.MessageID, err)
+				}
+			})
+		}
+		return
+	}
+
 	// Moderator commands are dispatched BEFORE the immunity filter, and the
 	// order is load-bearing: an anonymous administrator posts as the chat
 	// itself, which is precisely the sender kind ImmuneSender drops. Checked
@@ -187,6 +207,12 @@ func (h *Handler) onUpdate(_ context.Context, updateID int64, m domain.Message, 
 	}
 }
 
+// SetSweeper installs the deleter used to remove service messages. Without
+// it the join/leave hygiene settings are inert.
+func (h *Handler) SetSweeper(fn func(chatID int64, messageIDs []int) error) {
+	h.sweeper = fn
+}
+
 // flushAlbum is the AlbumBuffer's flush callback: it runs on the buffer's
 // own timer goroutine, outside any request context, so it submits its own
 // sequencer job using rootCtx (see the Handler field doc). Album grouping
@@ -200,6 +226,28 @@ func (h *Handler) flushAlbum(parts []domain.Message) {
 	h.seq.Submit(chatID, func() {
 		h.process(h.rootCtx, parts, false)
 	})
+}
+
+// serviceSweepWanted reports whether this kind of service message should be
+// removed under cfg.
+func (h *Handler) serviceSweepWanted(cfg *config.Config, kind string) bool {
+	switch kind {
+	case "join":
+		return cfg.Detection.DeleteJoinMessages
+	case "leave":
+		return cfg.Detection.DeleteLeaveMessages
+	}
+	return false
+}
+
+// trustThresholdOf reads the configured trust threshold, tolerating an
+// unset pointer: config.Defaults always fills it, but this runs on every
+// message and a nil deref here would take the whole bot down.
+func trustThresholdOf(cfg *config.Config) int {
+	if cfg.Detection.TrustThreshold == nil {
+		return 0
+	}
+	return *cfg.Detection.TrustThreshold
 }
 
 // unionMediaKinds merges the attachment kinds of every album part, keeping
@@ -285,8 +333,17 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 		// one message five times used to raise trust to 5 and buy a brand
 		// new account its way past the link policy, the fake-admin check and
 		// Bayes — all of which only apply to the untrusted.
-		if !edited && verdict.Reason != detect.ReasonAdminLookupUnavailable && judged.Sender.Kind == domain.SenderUser && detect.IsMeaningful(detect.Normalize(judged)) {
-			if _, err := h.db.BumpTrust(first.ChatID, first.Sender.UserID); err != nil {
+		if !edited && verdict.Reason != detect.ReasonAdminLookupUnavailable && judged.Sender.Kind == domain.SenderUser &&
+			detect.IsMeaningful(detect.Normalize(judged), cfg.Detection.MeaningfulMinLen) {
+			// Distinct messages only: repeating one word is not a
+			// conversation, and trust is what switches off every expensive
+			// detector. The limit is the trust threshold itself — past it the
+			// user is trusted and nothing further needs remembering.
+			if _, _, err := h.db.BumpTrustDistinct(
+				first.ChatID, first.Sender.UserID,
+				detect.TrustFingerprint(judged.Text),
+				trustThresholdOf(cfg),
+			); err != nil {
 				log.Printf("bump trust chat=%d user=%d: %v", first.ChatID, first.Sender.UserID, err)
 			}
 		}

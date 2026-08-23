@@ -246,3 +246,43 @@ func TestCommandMatch(t *testing.T) {
 		t.Error("ordinary text must not match")
 	}
 }
+
+func TestParseCommandRecognizesBan(t *testing.T) {
+	if cmd, ok := ParseCommand("/ban", "thebot"); !ok || cmd != CmdBan {
+		t.Fatalf("cmd=%q ok=%v", cmd, ok)
+	}
+	if cmd, ok := ParseCommand("/ban@thebot", "thebot"); !ok || cmd != CmdBan {
+		t.Fatalf("addressed: cmd=%q ok=%v", cmd, ok)
+	}
+	if _, ok := ParseCommand("за такое надо /ban", "thebot"); ok {
+		t.Fatal("a command must be the first token, or ordinary chat triggers moderation")
+	}
+}
+
+func TestCommandBanSanctionsWithoutTraining(t *testing.T) {
+	fx := newCmdFixture(t)
+	cmd := spamCmd(testAdmin, target(42))
+	cmd.Text = "/ban"
+
+	fx.c.Handle(context.Background(), cmd)
+
+	if len(fx.reported) != 1 {
+		t.Fatalf("expected exactly one incident, got %d", len(fx.reported))
+	}
+	got := fx.reported[0]
+	if len(fx.trained) != 0 {
+		t.Fatalf("/ban must not teach the corpus: a rule violation is not a spam sample (trained=%v)", fx.trained)
+	}
+	if got.Verdict.Action != domain.ActionBan {
+		t.Fatalf("action = %q, want ban", got.Verdict.Action)
+	}
+	if got.Verdict.Reason != "manual_ban" {
+		t.Fatalf("reason = %q", got.Verdict.Reason)
+	}
+	if got.DryRun {
+		t.Fatal("a human decision acts even in a chat that is still observing")
+	}
+	if len(got.Tokens) != 0 {
+		t.Fatalf("tokens = %v, want none — they only exist so the buttons can train later", got.Tokens)
+	}
+}
