@@ -194,6 +194,43 @@ turns ordinary chat into spam verdicts. Calibrate on a holdout with
 corpus, raising `bayes_threshold` from 1.0 to 2.0 removed every false positive
 at identical recall.
 
+## Answer a card without Telegram
+
+A bot cannot press its own inline keyboard — Telegram only ever delivers a
+callback query from a user account — so a reviewer working outside the chat
+(an operator on the host, a script, an agent) has no way to answer a card at
+all. The `decide` subcommand is that way in:
+
+```bash
+tg-antispam decide -preview 12 13     # what these cards are, changes nothing
+tg-antispam decide 12 13              # confirm as spam: record + learn
+tg-antispam decide -no-train 14       # record the decision, learn nothing
+```
+
+It does exactly what the **Confirm spam** button does — takes the same
+single-decision claim, writes the same audit sample, trains the same corpus the
+message was scored against — and nothing else. That ceiling is deliberate:
+confirming touches no one, while every other card action (false positive, lift,
+enforce, delete evidence) calls Telegram and either frees a muted user,
+sanctions a live one, or destroys evidence. Those stay behind a human pressing a
+button.
+
+`-no-train` is for when the sanction was right but the text is a poor example —
+a blocklist hit sanctions a known id, and its message may be perfectly
+ordinary. It is final: the captured tokens are dropped, so a later plain
+`decide` cannot learn what this run refused. Re-running on an already-confirmed
+incident is otherwise safe — it finishes an interrupted confirm (claim taken,
+training never done) and is a no-op on a complete one. A training failure is
+reported and exits non-zero, leaving the tokens for a retry.
+
+The corpus a decision trains is resolved from the config file as it is NOW
+(`detection.bayes_scope`), not as it was when the message was scored; changing
+that setting is a restart anyway, but a card left unanswered across such a
+change would train the new corpus.
+
+Note that confirming does not edit the card, so the buttons stay in the admin
+chat; a later press answers "already decided: confirmed spam".
+
 ## Enable the optional LLM stage
 
 Opt-in only — it sends borderline message text to a paid, official API. The system prompt is

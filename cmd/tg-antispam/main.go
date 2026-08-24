@@ -125,6 +125,34 @@ type bayesAdapter struct{ db *store.DB }
 // collide with the shared "global" scope or with a future named one.
 func chatScope(chatID int64) string { return fmt.Sprintf("chat:%d", chatID) }
 
+// knownSubcommands are the only arguments this binary accepts. The bot itself
+// takes none.
+var knownSubcommands = map[string]bool{"import": true, "backup": true, "decide": true}
+
+// unknownSubcommand returns the offending argument when the command line is
+// not one this binary understands, and "" when it is. Falling through to the
+// bot instead would be expensive: see the guard at the call site.
+func unknownSubcommand(args []string) string {
+	if len(args) < 2 || knownSubcommands[args[1]] {
+		return ""
+	}
+	return args[1]
+}
+
+// bayesScopeResolver builds the chat -> corpus scope mapping for one config.
+// It is shared with the `decide` subcommand rather than inlined at the one
+// call site it used to have: a decision made from the CLI must train exactly
+// the corpus the message was scored against, and a second copy of this rule
+// would be wrong the first time the modes change.
+func bayesScopeResolver(cfg *config.Config) func(chatID int64) string {
+	return func(chatID int64) string {
+		if cfg.Detection.BayesScope != config.BayesScopePerChat {
+			return string(domain.ScopeGlobal)
+		}
+		return chatScope(chatID)
+	}
+}
+
 // TokenCounts reads a scope's token counts, LAYERED on the shared corpus
 // when the scope is a per-chat one.
 //
@@ -196,6 +224,30 @@ func main() {
 			log.Fatalf("backup: %v", err)
 		}
 		os.Exit(0)
+	}
+
+	// Handle decide subcommand if present: confirm incidents as spam without
+	// the admin chat (see runDecide).
+	if len(os.Args) > 1 && os.Args[1] == "decide" {
+		if err := runDecide(os.Args[2:], func(p string) (*store.DB, error) {
+			return store.Open(p)
+		}); err != nil {
+			log.Fatalf("decide: %v", err)
+		}
+		os.Exit(0)
+	}
+
+	// Anything else on the command line is a mistake, and falling through to
+	// the bot would be an expensive one: the binary would start a SECOND
+	// long-polling instance against the same token, Telegram would hand the
+	// updates to whichever asked last, and the real bot would sit there
+	// logging "terminated by other getUpdates request" while a stray process
+	// moderates the chats. Observed for real on 2026-08-24, from a mistyped
+	// `kubectl exec ... -- /tg-antispam decide` against a binary that had no
+	// such subcommand yet.
+	if bad := unknownSubcommand(os.Args); bad != "" {
+		log.Fatalf("unknown subcommand %q (known: import, backup, decide); "+
+			"the bot itself takes no arguments", bad)
 	}
 
 	log.Printf("tg-antispam %s starting", version.String())
@@ -526,12 +578,7 @@ func main() {
 	// exactly as it did under "global". Without that layering, switching
 	// modes would silently disarm Bayes in every chat until moderators had
 	// rebuilt a corpus by hand.
-	bayesScopeFor := func(chatID int64) string {
-		if cfg.Detection.BayesScope != config.BayesScopePerChat {
-			return string(domain.ScopeGlobal)
-		}
-		return chatScope(chatID)
-	}
+	bayesScopeFor := bayesScopeResolver(cfg)
 
 	// Moderator feedback trains the same corpus the message was SCORED
 	// against, so a confirm/false-positive press in the crypto chat does not

@@ -251,15 +251,17 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 		return joinReply("marked false positive", lifted, trained), nil
 
 	case ActConfirmSpam:
-		if _, err := h.db.InsertSample(decisionScope, string(act), "user", key); err != nil {
+		res, err := RecordConfirmation(h.db, inc, "user", h.trainer)
+		if err != nil {
 			// Nothing happened in Telegram here — confirming spam only
 			// records and trains — so the claim must go back, or a failed
 			// write would answer "already decided" forever.
 			h.releaseClaim(inc.ID, act)
 			return "", err
 		}
-		trained := h.train(inc, "spam")
-		return joinReply("confirmed spam", "", trained), nil
+		// A failed train is best-effort here: the toast says so, the
+		// tokens are still there, and the decision stands.
+		return joinReply("confirmed spam", "", res.Reply), nil
 
 	case ActLiftNoLearn:
 		// Explicitly not a learning signal: no sample write, and the
@@ -436,18 +438,77 @@ func (h *Handler) undo(ctx context.Context, inc store.IncidentRow) (string, erro
 // media, or an already-reviewed incident) and a trainer error both degrade
 // to "not trained" rather than failing the admin's action.
 func (h *Handler) train(inc store.IncidentRow, label string) string {
-	if h.trainer == nil {
-		return ""
+	phrase, _, _ := trainIncident(h.db, inc, label, h.trainer)
+	return phrase
+}
+
+// trainIncident feeds one incident's captured tokens to the trainer and
+// forgets them. It returns a short phrase for the reply, whether the corpus
+// actually learned, and why it did not when that was a failure rather than a
+// choice. A nil trainer means training is disabled, and an incident with no
+// tokens left has nothing to learn from — neither is an error.
+//
+// The error is separate from the phrase because the two callers want
+// different things from a failed train. A button press is best-effort: the
+// decision stands and the toast says "not trained", because a moderator
+// cannot act on a SQLITE_BUSY anyway. The CLI has an exit code, and a run
+// that reports success while the corpus learned nothing is a lie a script
+// would believe.
+func trainIncident(db *store.DB, inc store.IncidentRow, label string, trainer func(chatID int64, label string, tokens []string) error) (string, bool, error) {
+	if trainer == nil {
+		return "", false, nil
 	}
-	tokens, ok, err := h.db.GetIncidentTokens(inc.ID)
-	if err != nil || !ok {
-		return "not trained"
+	tokens, ok, err := db.GetIncidentTokens(inc.ID)
+	if err != nil {
+		return "not trained", false, fmt.Errorf("read incident tokens: %w", err)
 	}
-	if err := h.trainer(inc.ChatID, label, tokens); err != nil {
-		return "not trained"
+	if !ok {
+		return "not trained", false, nil
 	}
-	h.dropTokens(inc.ID)
-	return "trained " + label
+	if err := trainer(inc.ChatID, label, tokens); err != nil {
+		// The tokens are deliberately KEPT: a failed attempt must stay
+		// retryable, and dropping them would make the loss permanent.
+		return "not trained", false, fmt.Errorf("train: %w", err)
+	}
+	// Errors are ignored: the periodic prune is the backstop, and failing a
+	// decision over bookkeeping would be worse than a stale row.
+	_ = db.DeleteIncidentTokens(inc.ID)
+	return "trained " + label, true, nil
+}
+
+// RecordConfirmation applies the "confirm spam" decision to one incident:
+// it writes the audit sample and feeds the incident's tokens to the trainer,
+// returning the same short training phrase the button reply carries.
+//
+// It is exported because there are two ways in. A bot cannot press its own
+// inline keyboard — a callback query only ever comes from a user account —
+// so the `decide` CLI subcommand is the second door for whoever reviews
+// cards without Telegram. Both doors must do the SAME thing; a hand-copied
+// sequence in cmd/ would drift from this one the first time either changes.
+//
+// The caller owns the claim: it must have taken the decision through
+// store.RecordDecision first, and must release it if this returns an error
+// (nothing here touches Telegram, so a failed call has changed nothing that
+// a retry would double-apply).
+//
+// origin distinguishes who decided ("user" for a button press) and is
+// recorded on the sample rather than affecting what is learned.
+func RecordConfirmation(db *store.DB, inc store.IncidentRow, origin string, trainer func(chatID int64, label string, tokens []string) error) (Confirmation, error) {
+	key := strconv.FormatInt(inc.ID, 10)
+	if _, err := db.InsertSample(decisionScope, string(ActConfirmSpam), origin, key); err != nil {
+		return Confirmation{}, err
+	}
+	phrase, trained, trainErr := trainIncident(db, inc, "spam", trainer)
+	return Confirmation{Reply: phrase, Trained: trained, TrainErr: trainErr}, nil
+}
+
+// Confirmation is what a confirm-spam decision achieved. Reply is the phrase
+// the button toast carries; TrainErr is set only when training was attempted
+// and failed, which the button ignores by design and the CLI must not.
+type Confirmation struct {
+	Reply    string
+	Trained  bool
+	TrainErr error
 }
 
 // dropTokens deletes the incident's captured tokens once it has been

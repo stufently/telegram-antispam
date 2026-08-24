@@ -426,3 +426,42 @@ func TestFailedUndoCanBeRetried(t *testing.T) {
 		t.Fatalf("UnbanMember called %d times, want 2 (one failed, one retried)", unbanned)
 	}
 }
+
+// TestRecordConfirmationSeparatesAFailedTrainFromTheDecision: the two callers
+// need different things from a failed train. The button is best-effort — the
+// decision stands and the toast says "not trained" — while the CLI has an
+// exit code and must be able to tell that the corpus learned nothing. The
+// tokens have to survive either way, or the retry has nothing to learn from.
+func TestRecordConfirmationSeparatesAFailedTrainFromTheDecision(t *testing.T) {
+	db := newMigrated(t)
+	id, _, err := db.InsertPending(-100777, 5, 77, 0, false, domain.Verdict{Action: domain.ActionDeleteMute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveIncidentTokens(id, []string{"free", "casino"}); err != nil {
+		t.Fatal(err)
+	}
+	inc, err := db.GetIncident(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := RecordConfirmation(db, inc, "cli", func(int64, string, []string) error {
+		return errors.New("corpus unavailable")
+	})
+	if err != nil {
+		t.Fatalf("a failed train must not fail the decision: %v", err)
+	}
+	if res.TrainErr == nil {
+		t.Fatal("a failed train must be reported to the caller")
+	}
+	if res.Trained {
+		t.Fatal("Trained must be false when the trainer failed")
+	}
+	if res.Reply != "not trained" {
+		t.Fatalf("toast phrase = %q, want \"not trained\"", res.Reply)
+	}
+	if _, ok, err := db.GetIncidentTokens(id); err != nil || !ok {
+		t.Fatalf("tokens must survive a failed train for the retry: ok=%t err=%v", ok, err)
+	}
+}
