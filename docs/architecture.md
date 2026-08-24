@@ -87,6 +87,16 @@ stops without acting. Either way the admin chat is told what happened, because
 `Confidence`: every wired detector emits `1.0`, so a confidence threshold
 would let everything through.
 
+Both outcomes are logged, and symmetrically: `internal/telegram` writes
+`observed` for a message that passed, `internal/incident` writes `enforced`
+(with `outcome=succeeded|partial|failed`, since `action_ok` and `deleted`
+fail independently and neither landing must not read as a sanction) or
+`not enforced` (with `dry_run` / `review_only`, or a `stage=` for an
+incident that ended before enforcement) for one that raised an incident. The acted-on line prints signal NAMES only — a detail can hold a
+display name, a phrase equal to the whole message, or a newline that would
+forge a second line — while the pass line keeps the details that answer "why
+did this get through?". Neither prints message text.
+
 The ops server exposes `/healthz` (process liveness, used for readiness),
 `/livez` (time since the last successful Telegram round trip, used for
 liveness) and `/metrics`. A periodic GetMe feeds `/livez`, because update

@@ -419,6 +419,10 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 // formatSignals renders a verdict's signals for the log in a fixed, compact
 // shape ("name=detail name=detail"). Signal details are cascade-produced
 // diagnostics (scores, hosts), never raw user text, so this is safe to log.
+//
+// It stays on the pass ("observed") path only. What was DONE about a message
+// is logged by package incident, which prints signal NAMES and no details —
+// see incident.signalNames for why the acted-on path is stricter.
 func formatSignals(sigs []domain.Signal) string {
 	if len(sigs) == 0 {
 		return "no signals"

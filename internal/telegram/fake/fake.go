@@ -14,10 +14,13 @@ type Fake struct {
 	calls []string
 
 	// knobs
-	CopyErr     error
-	SendAdminID int
-	Admins      []telegram.Member
-	AdminsErr   error
+	CopyErr error
+	// SendAdminErr fails the admin-chat card, which ends the incident before
+	// any sanction: tests use it to cover that terminal branch.
+	SendAdminErr error
+	SendAdminID  int
+	Admins       []telegram.Member
+	AdminsErr    error
 	// BeforeGetAdmins, when set, runs at the start of
 	// GetChatAdministrators. Tests use it to hold a fetch in flight and
 	// interleave other cache operations with it.
@@ -150,7 +153,7 @@ func (f *Fake) SendAdmin(_ context.Context, _ int64, msg telegram.AdminMessage) 
 	f.LastAdmin = msg
 	f.mu.Unlock()
 	f.log("SendAdmin")
-	return f.SendAdminID, nil
+	return f.SendAdminID, f.SendAdminErr
 }
 
 func (f *Fake) BanSenderChat(_ context.Context, _, _ int64) error {

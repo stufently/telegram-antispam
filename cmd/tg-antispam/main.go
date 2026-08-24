@@ -550,6 +550,11 @@ func main() {
 	// and a moderator pressing this button is asking for the real sanction.
 	adminHandler.SetEnforcer(func(ctx context.Context, inc store.IncidentRow) (bool, bool, error) {
 		action := cfgStore.Current().Action
+		// Enforce logs the outcome for every path it serves; this says which
+		// path it was. A moderator pressing the button carries no detection
+		// signals, so without it the resulting line ("no signals") would be
+		// indistinguishable from a detector that fired on nothing.
+		log.Printf("incident %d: enforce requested from the admin chat, action=%s", inc.ID, action)
 		out := machine.Enforce(ctx, inc.ID, domain.Incident{
 			ChatID:     inc.ChatID,
 			MessageIDs: inc.MessageIDs,

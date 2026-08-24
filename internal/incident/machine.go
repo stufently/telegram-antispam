@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/stufently/telegram-antispam/internal/domain"
 	"github.com/stufently/telegram-antispam/internal/telegram"
@@ -141,12 +142,18 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 		_, sendErr := m.port.SendAdmin(ctx, m.adminChatID, msg)
 		if !acting {
 			if sendErr != nil {
-				return fmt.Errorf("evidence copy failed (%v), admins not notified either: %w", copyErr, sendErr)
+				err := fmt.Errorf("evidence copy failed (%v), admins not notified either: %w", copyErr, sendErr)
+				m.logOutcome(id, inc, "not enforced", "stage=admin_notify", err)
+				return err
 			}
-			return fmt.Errorf("evidence copy failed, not acting on a probabilistic verdict: %w", copyErr)
+			err := fmt.Errorf("evidence copy failed, not acting on a probabilistic verdict: %w", copyErr)
+			m.logOutcome(id, inc, "not enforced", "stage=evidence_copy", err)
+			return err
 		}
 		if sendErr != nil {
-			return fmt.Errorf("send admin: %w", sendErr)
+			err := fmt.Errorf("send admin: %w", sendErr)
+			m.logOutcome(id, inc, "not enforced", "stage=admin_notify", err)
+			return err
 		}
 	} else {
 		key := fmt.Sprintf("%d", id)
@@ -164,10 +171,14 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 			msg.Buttons = m.buttonsFor(key, inc.DryRun)
 		}
 		if _, err := m.port.SendAdmin(ctx, m.adminChatID, msg); err != nil {
-			return fmt.Errorf("send admin: %w", err)
+			err = fmt.Errorf("send admin: %w", err)
+			m.logOutcome(id, inc, "not enforced", "stage=admin_notify", err)
+			return err
 		}
 		if err := m.repo.AddEvidence(id, m.adminChatID, adminIDs); err != nil {
-			return fmt.Errorf("save evidence: %w", err)
+			err = fmt.Errorf("save evidence: %w", err)
+			m.logOutcome(id, inc, "not enforced", "stage=evidence_store", err)
+			return err
 		}
 		m.setState(id, domain.StateEvidenced)
 	}
@@ -177,6 +188,7 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 	// one; this second check is deliberate duplication, because the cost of
 	// the two disagreeing is a real mute nobody asked for.
 	if inc.DryRun || inc.Verdict.ReviewOnly {
+		m.logOutcome(id, inc, "not enforced", fmt.Sprintf("dry_run=%t review_only=%t", inc.DryRun, inc.Verdict.ReviewOnly), nil)
 		return m.repo.SetIncidentState(id, domain.StateDone)
 	}
 
@@ -285,7 +297,88 @@ func (m *Machine) Enforce(ctx context.Context, id int64, inc domain.Incident) Ou
 	default:
 		m.setState(id, domain.StateCleaned)
 	}
+	m.logOutcome(id, inc, "enforced", fmt.Sprintf("outcome=%s action_ok=%t deleted=%t",
+		outcomeOf(out), out.Sanctioned, out.Deleted), out.Err)
 	return out
+}
+
+// logOutcome records what was done about an incident, as the counterpart of
+// the "observed" line package telegram writes for a message that passed.
+//
+// Without it the log answers "why did this pass?" and nothing else: every
+// applied sanction was invisible there, recoverable only from SQLite or the
+// metrics, so neither a grep nor a log-based alert could see the bot act.
+// Enforce is the single place all three sanction paths — the automatic one,
+// the admin chat's enforce button and the /spam, /ban commands — pass
+// through, so one line here covers them all; the branches that end an
+// incident before it gets that far say so with a stage= instead.
+//
+// action_ok, not "sanctioned": applyAction succeeds trivially for
+// delete_only and quarantine, where no sanction is applied at all, and a
+// field that reads true for those would misreport what happened.
+func (m *Machine) logOutcome(id int64, inc domain.Incident, what, detail string, err error) {
+	msgID := 0
+	if len(inc.MessageIDs) > 0 {
+		msgID = inc.MessageIDs[0]
+	}
+	parts := ""
+	if len(inc.MessageIDs) > 1 {
+		parts = fmt.Sprintf(" parts=%d", len(inc.MessageIDs))
+	}
+	tail := ""
+	if err != nil {
+		tail = ": " + sanitize(err.Error())
+	}
+	log.Printf("chat=%d msg=%d sender=%s: %s incident=%d action=%s %s%s [%s]%s",
+		inc.ChatID, msgID, inc.Sender.Kind, what, id, inc.Verdict.Action,
+		detail, parts, signalNames(inc.Verdict.Signals), tail)
+}
+
+// outcomeOf names what enforcement actually achieved, because the two halves
+// fail independently and "enforced" alone would be a lie for the case where
+// neither landed: an alert counting "enforced" lines would report sanctions
+// that never happened.
+func outcomeOf(out Outcome) string {
+	switch {
+	case out.Sanctioned && out.Deleted:
+		return "succeeded"
+	case out.Sanctioned || out.Deleted:
+		return "partial"
+	default:
+		return "failed"
+	}
+}
+
+// signalNames lists which detectors fired, and deliberately NOT what they
+// saw. Signal.Detail is fine on the pass path, but this line is written for
+// messages the bot acted on, where the detail can be a person's @tag or
+// display name (fake_admin) or a configured phrase that matched the whole
+// message (deny_exact). The full detail stays where it is already kept: the
+// admin card and the audit table.
+func signalNames(sigs []domain.Signal) string {
+	if len(sigs) == 0 {
+		return "no signals"
+	}
+	names := make([]string, 0, len(sigs))
+	for _, s := range sigs {
+		names = append(names, sanitize(s.Name))
+	}
+	return strings.Join(names, " ")
+}
+
+// sanitize keeps one incident to one log line. Signal names are literals in
+// this codebase and Telegram's error strings are not user-authored, so
+// neither is a live injection vector today — but both are free-form strings
+// reaching a line that monitoring parses, and a newline in one of them would
+// let a second, forged record appear. Cheaper to fold them here than to rely
+// on that staying true.
+func sanitize(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' || (r < 0x20) || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
 }
 
 func (m *Machine) applyAction(ctx context.Context, inc domain.Incident) error {

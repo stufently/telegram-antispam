@@ -77,6 +77,9 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
 - **Dry-run mode** — observe and log verdicts without touching anyone, per chat.
 - **Observability** — Prometheus `/metrics`, a `/healthz` endpoint, and a **daily digest**
   of actions to the admin chat, reporting applied, dry-run, and incomplete actions separately.
+  Every message a detector rules on leaves one log line — `observed` when it passed,
+  `enforced` (with `outcome=succeeded|partial|failed`) or `not enforced` when it raised an
+  incident — carrying ids, the action and which detectors fired, and never message text.
 - **Startup self-check** — warns if the bot lacks `can_delete_messages` /
   `can_restrict_members`, or if Telegram's native Aggressive Anti-Spam would hide messages.
 - **Single static binary** — pure Go (`CGO_ENABLED=0`), pure-Go SQLite, distroless image.
