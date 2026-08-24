@@ -60,6 +60,11 @@ type Port interface {
 	// worse than no button at all.
 	UnbanSenderChat(ctx context.Context, chat, senderChat int64) error
 	GetChatAdministrators(ctx context.Context, chat int64) ([]Member, error)
+	// ChatTitle names a chat for a human reading the admin chat. An evidence
+	// copy carries no origin — copyMessage strips it, which is the point —
+	// so without this a moderator sees spam and cannot tell WHERE it was
+	// posted. Best-effort by contract: an error means "show the id".
+	ChatTitle(ctx context.Context, chat int64) (string, error)
 	AnswerCallback(ctx context.Context, callbackID, text string) error
 	EditAdminMarkup(ctx context.Context, adminChat int64, messageID int, buttons [][]Button) error
 	DeleteMessageReaction(ctx context.Context, chat int64, messageID int, userID int64) error

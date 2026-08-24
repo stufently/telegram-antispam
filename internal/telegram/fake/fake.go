@@ -33,6 +33,10 @@ type Fake struct {
 	EphemeralErr error
 	Rights       telegram.BotRights
 	RightsErr    error
+	// Titles answers ChatTitle per chat id; TitleErr fails the lookup, which
+	// the admin card must survive by falling back to the bare id.
+	Titles   map[int64]string
+	TitleErr error
 	// DeleteErr and RestrictErr let a test drive the two halves of
 	// enforcement independently: they fail separately in production (a
 	// message older than 48h cannot be deleted even when the mute lands),
@@ -178,6 +182,17 @@ func (f *Fake) GetChatAdministrators(ctx context.Context, _ int64) ([]telegram.M
 		return nil, f.AdminsErr
 	}
 	return f.Admins, nil
+}
+
+// ChatTitle returns Titles[chat], or TitleErr when set. An unknown chat
+// answers the empty string with no error, which is the "chat has no title"
+// case the card has to render as an id.
+func (f *Fake) ChatTitle(_ context.Context, chat int64) (string, error) {
+	f.log("ChatTitle")
+	if f.TitleErr != nil {
+		return "", f.TitleErr
+	}
+	return f.Titles[chat], nil
 }
 
 func (f *Fake) AnswerCallback(_ context.Context, _, _ string) error {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/stufently/telegram-antispam/internal/domain"
 	"github.com/stufently/telegram-antispam/internal/telegram"
@@ -114,6 +115,19 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 
 	// 1. evidence BEFORE any destructive action.
 	adminIDs, copyErr := m.port.CopyMessages(ctx, m.adminChatID, inc.ChatID, inc.MessageIDs)
+
+	// The chat's name for the card, fetched AFTER the copy: it is a
+	// convenience, and evidence-first means nothing may queue ahead of the
+	// copy. Best-effort AND time-boxed — the card is what tells the admins
+	// anything happened, and the sanction waits behind it, so a getChat that
+	// sits in a 429 retry must not hold either one. An error costs the card
+	// its title; the chat id identifies the chat regardless.
+	titleCtx, cancelTitle := context.WithTimeout(ctx, chatTitleBudget)
+	chatTitle, titleErr := m.port.ChatTitle(titleCtx, inc.ChatID)
+	cancelTitle()
+	if titleErr != nil {
+		log.Printf("incident %d: chat title lookup failed: %v", id, titleErr)
+	}
 	if copyErr != nil {
 		m.setState(id, domain.StateEvidenceFailed)
 		acting := actsWithoutEvidence(inc.Verdict)
@@ -131,7 +145,13 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 			SourceChatID:     inc.ChatID,
 			CopiedFromChatID: inc.ChatID,
 			CopyMessageIDs:   nil,
-			Text:             fmt.Sprintf("evidence copy failed: %v; %s; %s", copyErr, inc.Verdict.Reason, tail),
+			// Same header as a normal card: this is the ONLY trace left of
+			// an incident whose evidence never arrived, so it is the card
+			// that most needs to say which chat and who.
+			// acting says whether a sanction actually follows: without the
+			// evidence, a probabilistic verdict is dropped, and the card
+			// must not name an action nobody will apply.
+			Text: formatCard(id, inc, chatTitle, fmt.Sprintf("evidence copy failed: %v; %s", copyErr, tail), acting && !inc.DryRun),
 		}
 		if m.buttonsFor != nil {
 			// No enforce button on this card, even in dry-run: the evidence
@@ -162,7 +182,7 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 			SourceChatID:     inc.ChatID,
 			CopiedFromChatID: inc.ChatID,
 			CopyMessageIDs:   adminIDs,
-			Text:             inc.Verdict.Reason,
+			Text:             formatCard(id, inc, chatTitle, "", !inc.DryRun),
 		}
 		if m.buttonsFor != nil {
 			// A dry-run incident (a review verdict, or a chat still in
@@ -374,12 +394,30 @@ func signalNames(sigs []domain.Signal) string {
 // on that staying true.
 func sanitize(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\r' || r == '\t' || (r < 0x20) || r == 0x7f {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t' || r < 0x20,
+			r >= 0x7f && r <= 0x9f,     // DEL and the C1 controls, incl. NEL
+			r == 0x2028 || r == 0x2029: // line and paragraph separators
 			return ' '
+		case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069, r == 0x061c:
+			// Bidi overrides. A spammer's display name carrying a
+			// right-to-left override reverses everything printed AFTER it,
+			// so a line can be made to read as something it is not — in a
+			// log grep and on the admin card alike.
+			return -1
+		case r >= 0x200b && r <= 0x200f, r == 0xfeff:
+			// Zero-width space / joiners / marks: invisible, and enough of
+			// them turn a name into a wall of nothing.
+			return -1
 		}
 		return r
 	}, s)
 }
+
+// chatTitleBudget bounds the optional chat-title lookup. It is short on
+// purpose: everything the incident still has to do — telling the admins,
+// applying the sanction — queues behind it, and a title is worth none of that.
+const chatTitleBudget = 3 * time.Second
 
 func (m *Machine) applyAction(ctx context.Context, inc domain.Incident) error {
 	// A message sent on behalf of a channel has no member to sanction: its

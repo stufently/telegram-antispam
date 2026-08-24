@@ -10,6 +10,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"time"
 
 	bot "github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -24,9 +25,25 @@ type LivePort struct {
 	disp *queue.Dispatcher
 	prio func(method string) queue.Priority
 
-	mu     sync.Mutex // guards selfID
+	mu     sync.Mutex // guards selfID and titles
 	selfID int64      // bot's own user id, resolved once via GetMe
+	titles map[int64]titleEntry
 }
+
+// titleEntry is one cached chat title. Titles are cached because the admin
+// card needs one per incident and a chat is renamed far more rarely than it
+// is moderated; the TTL bounds how long a rename stays invisible.
+type titleEntry struct {
+	title string
+	at    time.Time
+}
+
+// chatTitleTTL is how long a fetched chat title is reused, and maxTitleCache
+// bounds how many chats are remembered at once.
+const (
+	chatTitleTTL  = time.Hour
+	maxTitleCache = 512
+)
 
 var _ Port = (*LivePort)(nil)
 
@@ -396,6 +413,47 @@ func (p *LivePort) SendAdmin(ctx context.Context, adminChat int64, msg AdminMess
 		}
 		return res.ID, nil
 	})
+}
+
+// ChatTitle returns the chat's human-readable name, cached for chatTitleTTL.
+// The title is what makes an admin card readable: the evidence copy carries no
+// origin, so the id alone leaves the moderator matching numbers by hand.
+func (p *LivePort) ChatTitle(ctx context.Context, chat int64) (string, error) {
+	p.mu.Lock()
+	if e, ok := p.titles[chat]; ok && time.Since(e.at) < chatTitleTTL {
+		p.mu.Unlock()
+		return e.title, nil
+	}
+	p.mu.Unlock()
+
+	title, err := submitSync(ctx, p.disp, chat, p.prio("ChatTitle"), func(ctx context.Context) (string, error) {
+		full, err := p.b.GetChat(ctx, &bot.GetChatParams{ChatID: chat})
+		if err != nil {
+			return "", mapRetry(err)
+		}
+		if full.Title != "" {
+			return full.Title, nil
+		}
+		// A private chat has no title; the name it does have is a person's.
+		return full.Username, nil
+	})
+	if err != nil {
+		return "", err
+	}
+
+	p.mu.Lock()
+	if p.titles == nil {
+		p.titles = map[int64]titleEntry{}
+	}
+	if len(p.titles) >= maxTitleCache {
+		// A long-lived bot in many chats would otherwise grow this map
+		// forever. Dropping it whole costs one getChat per active chat and
+		// needs no eviction bookkeeping for what is a convenience cache.
+		p.titles = map[int64]titleEntry{}
+	}
+	p.titles[chat] = titleEntry{title: title, at: time.Now()}
+	p.mu.Unlock()
+	return title, nil
 }
 
 func (p *LivePort) BanSenderChat(ctx context.Context, chat, senderChat int64) error {

@@ -50,7 +50,13 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
 - **Message shape as an LLM signal** — attachment kinds, "forwarded from a channel" and
   "carries an inline keyboard" are passed to the LLM alongside the text, because the same
   words read differently under a relayed channel post than typed by hand.
-- **Evidence-backed moderation** — evidence is copied to a private admin chat with inline
+- **Evidence-backed moderation** — evidence is copied to a private admin chat, followed by a
+  card that says what the copy cannot: `copyMessage` strips the origin by design, so the card
+  carries the incident id, the reason, whether a sanction is being applied at all (a dry-run
+  chat, a review-only verdict and a failed evidence copy all say "nothing applied"), the chat (title and id), the
+  message id and the author (`@tag`, numeric id, display name). Attacker-controlled fields are
+  sanitized and clipped — a newline or a right-to-left override in a display name would
+  otherwise let a spammer forge a line of the card. The card comes with inline
   **Confirm spam / False positive / Lift (no learn) / Delete evidence** buttons and
   per-callback RBAC. The buttons act: false-positive and lift really unban / unmute the user
   in the source chat, delete-evidence really removes the copies, and confirm/false-positive
