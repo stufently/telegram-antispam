@@ -51,7 +51,12 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
   "carries an inline keyboard" are passed to the LLM alongside the text, because the same
   words read differently under a relayed channel post than typed by hand.
 - **Evidence-backed moderation** — evidence is copied to a private admin chat, followed by a
-  card that says what the copy cannot: `copyMessage` strips the origin by design, so the card
+  card **posted as a reply to that copy**, so the pairing survives interleaving: incidents from
+  different chats are processed in parallel and an album copies several messages per card, which
+  means admin-chat order alone can attach a verdict to the wrong evidence. (If the copy failed
+  there is nothing to reply to and the card goes out on its own; if the evidence is deleted
+  between the copy and the card, the card is still sent, just unthreaded.) The card says what
+  the copy cannot: `copyMessage` strips the origin by design, so the card
   carries the incident id, the reason, whether a sanction is being applied at all (a dry-run
   chat, a review-only verdict and a failed evidence copy all say "nothing applied"), the chat (title and id), the
   message id and the author (`@tag`, numeric id, display name). Attacker-controlled fields are

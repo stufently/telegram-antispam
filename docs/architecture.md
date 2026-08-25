@@ -70,7 +70,9 @@ orders side effects as:
 
 1. atomically insert `pending` and the verdict's audit row;
 2. copy evidence messages to the admin chat;
-3. send the admin summary and inline buttons;
+3. send the admin summary and inline buttons, as a reply to the first copied
+   message — chats are moderated concurrently, so admin-chat order alone does
+   not say which evidence a card belongs to;
 4. save the copied message IDs and mark the incident `evidenced`;
 5. in live mode, apply the configured sanction (a channel sender is banned
    with `banChatSenderChat`, which has no member to restrict);

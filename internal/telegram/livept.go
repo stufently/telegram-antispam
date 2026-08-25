@@ -401,18 +401,91 @@ func (p *LivePort) RestrictMember(ctx context.Context, chat, user int64, perms P
 	})
 }
 
+// SendAdmin posts the verdict card, threaded onto the evidence copy that was
+// sent just before it.
+//
+// The thread is not cosmetic. Incidents from different source chats are
+// processed in parallel, so the admin chat can legitimately show "evidence A,
+// evidence B, card B, card A" — and an album contributes several evidence
+// messages to a single card. Whoever reviews a false positive later pairs the
+// evidence with the verdict, and with nothing but message order to go on that
+// pairing can silently be wrong: unbanning a spammer, or refusing to unban a
+// person. A reply makes the pairing explicit and order-independent.
+//
+// msg.CopyMessageIDs is empty exactly when the copy failed (the machine's
+// StateEvidenceFailed branch); then the card goes out unthreaded, as before.
 func (p *LivePort) SendAdmin(ctx context.Context, adminChat int64, msg AdminMessage) (int, error) {
 	return submitSync(ctx, p.disp, adminChat, p.prio("SendAdmin"), func(ctx context.Context) (int, error) {
 		params := &bot.SendMessageParams{ChatID: adminChat, Text: msg.Text}
 		if len(msg.Buttons) > 0 {
 			params.ReplyMarkup = models.InlineKeyboardMarkup{InlineKeyboard: toInlineKeyboard(msg.Buttons)}
 		}
+		if len(msg.CopyMessageIDs) > 0 && msg.CopyMessageIDs[0] > 0 {
+			// First copy of an album is enough to anchor the whole group.
+			// The id must be positive: MessageID is omitempty, so a zero would
+			// serialize as a reply_parameters naming no target at all, which
+			// the Bot API silently treats as "no reply" — a request that reads
+			// like a thread and is not one.
+			//
+			// ChatID is deliberately omitted: the copy lives in adminChat,
+			// which is where this send goes, and Bot API reserves that field
+			// for a reply whose target is in a DIFFERENT chat.
+			//
+			// AllowSendingWithoutReply is the first half of "the card must go
+			// out no matter what": if a moderator deleted the evidence in the
+			// seconds between the copy and this send, Telegram delivers the
+			// card unthreaded instead of refusing it.
+			params.ReplyParameters = &models.ReplyParameters{
+				MessageID:                msg.CopyMessageIDs[0],
+				AllowSendingWithoutReply: true,
+			}
+		}
 		res, err := p.b.SendMessage(ctx, params)
+		if err != nil && params.ReplyParameters != nil && replyTargetGone(err) {
+			// Second half: allow_sending_without_reply is documented not to
+			// cover every case (it does not apply across chats or forum
+			// topics), so if Telegram still refuses over the reply target,
+			// drop the thread and resend. A card without a thread is a
+			// degraded card; a missing card is a lost incident.
+			params.ReplyParameters = nil
+			res, err = p.b.SendMessage(ctx, params)
+		}
 		if err != nil {
 			return 0, mapRetry(err)
 		}
 		return res.ID, nil
 	})
+}
+
+// replyTargetGone reports whether err is Telegram refusing a send because the
+// message being replied to is no longer there.
+//
+// The match is deliberately loose ("repl…" plus "not found", or the raw
+// MESSAGE_ID_INVALID): Bot API has worded this several ways over the years
+// ("message to be replied not found", "reply message not found"), and the
+// cost of missing a wording is a dropped verdict card, while the cost of an
+// over-match is one extra send of a card that was going out regardless. It
+// is only ever consulted for a sendMessage whose sole message id IS the reply
+// target, so no other id can be the one Telegram calls invalid.
+//
+// A 429 is excluded STRUCTURALLY rather than by wording, because that is the
+// one error where resending is actively wrong: the dispatcher owns the retry,
+// and mapRetry only sees the error if this returns false. Relying on the text
+// alone would hand a rate-limit whose description happened to mention the
+// reply target straight into an immediate resend.
+func replyTargetGone(err error) bool {
+	if err == nil {
+		return false
+	}
+	var tooMany *bot.TooManyRequestsError
+	if errors.As(err, &tooMany) {
+		return false
+	}
+	m := strings.ToLower(err.Error())
+	if strings.Contains(m, "message_id_invalid") {
+		return true
+	}
+	return strings.Contains(m, "repl") && strings.Contains(m, "not found")
 }
 
 // ChatTitle returns the chat's human-readable name, cached for chatTitleTTL.

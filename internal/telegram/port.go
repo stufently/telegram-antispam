@@ -24,8 +24,13 @@ type AdminMessage struct {
 	IncidentKey      string
 	SourceChatID     int64
 	CopiedFromChatID int64
-	CopyMessageIDs   []int
-	Buttons          [][]Button
+	// CopyMessageIDs are the admin-chat ids of the copied evidence. The card
+	// is sent as a reply to the first of them, which is what tells a reviewer
+	// WHICH evidence a verdict belongs to: incidents from different chats run
+	// in parallel, so admin-chat order alone does not pair them. Empty means
+	// the copy failed and the card goes out unthreaded.
+	CopyMessageIDs []int
+	Buttons        [][]Button
 }
 
 // Button is one inline keyboard button (text + opaque callback data ≤64 bytes).

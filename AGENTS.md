@@ -11,6 +11,8 @@ agents and contributors; user-facing setup remains in `README.md` and
   defaults. Keep it synchronized with `internal/config`.
 - `docs/architecture.md` describes the current runtime wiring and deliberate
   implementation boundaries.
+- `CHANGELOG.md` records behavior changes an operator would notice. Add an
+  entry under **Unreleased** in the same commit as such a change.
 - `docs/superpowers/specs` and `docs/superpowers/plans` are design and delivery
   history. All M1-M7 checklists are complete, but their intermediate-state
   prose can be stale; do not use it over current code and tests.
@@ -83,6 +85,15 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   and originals are deleted last. Dry-run still records and copies evidence
   but performs no sanction or deletion. Preserve this order in
   `internal/incident`.
+- The verdict card is sent as a REPLY to the first copied evidence message
+  (`AdminMessage.CopyMessageIDs[0]`). Chats are moderated concurrently and an
+  album copies several messages per card, so admin-chat order does not pair
+  evidence with verdict, and a reviewer pairing by position judges the wrong
+  incident. The card must still be sent when the thread cannot be formed — it
+  is the only trace an incident leaves — hence no evidence means an unthreaded
+  card, `allow_sending_without_reply` is set, and a refusal naming the reply
+  target is retried once without it. Do not make card delivery conditional on
+  the reply landing.
 - The admin-chat buttons are real moderation, not bookkeeping: false-positive and
   lift call Telegram to unban/unmute, delete-evidence deletes the copies, and
   confirm/false-positive train Bayes from the incident's stored tokens. Undo is
