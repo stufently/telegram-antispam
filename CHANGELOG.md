@@ -8,6 +8,8 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-08-25
+
 ### Fixed
 
 - The admin-chat verdict card is now sent as a **reply to the copied evidence**
