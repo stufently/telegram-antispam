@@ -61,7 +61,13 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
   chat, a review-only verdict and a failed evidence copy all say "nothing applied"), the chat (title and id), the
   message id and the author (`@tag`, numeric id, display name). Attacker-controlled fields are
   sanitized and clipped — a newline or a right-to-left override in a display name would
-  otherwise let a spammer forge a line of the card. The card comes with inline
+  otherwise let a spammer forge a line of the card. Telegram silently skips messages it
+  cannot copy (a quiz poll, say) and calls that a success, so "copied" is verified by
+  counting: nothing copied is handled as a failed copy — no sanction on a probabilistic
+  verdict — and a partly copied album is sanctioned with `evidence INCOMPLETE: copied N of M
+  messages — the part that triggered the verdict may be missing` on its card, so nobody
+  reviews part of a message believing it is all of it.
+  The card comes with inline
   **Confirm spam / False positive / Lift (no learn) / Delete evidence** buttons and
   per-callback RBAC. The buttons act: false-positive and lift really unban / unmute the user
   in the source chat, delete-evidence really removes the copies, and confirm/false-positive

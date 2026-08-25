@@ -5,6 +5,7 @@ package incident
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -13,6 +14,12 @@ import (
 	"github.com/stufently/telegram-antispam/internal/domain"
 	"github.com/stufently/telegram-antispam/internal/telegram"
 )
+
+// errNothingCopied stands for a copyMessages call that reported success and
+// copied nothing. It is not a Telegram error — there is no error to report —
+// but the outcome it leaves behind is identical to a failed copy, so it is
+// deliberately routed down the same branch instead of getting one of its own.
+var errNothingCopied = errors.New("copyMessages copied nothing (message type not copyable?)")
 
 // Repo is the persistence surface the machine needs; *store.DB satisfies it.
 type Repo interface {
@@ -115,6 +122,17 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 
 	// 1. evidence BEFORE any destructive action.
 	adminIDs, copyErr := m.port.CopyMessages(ctx, m.adminChatID, inc.ChatID, inc.MessageIDs)
+	// A successful copyMessages is not the same as evidence in the admin
+	// chat. Telegram silently skips messages it cannot copy — a quiz poll is
+	// the case seen in production, and a poll's option texts are part of what
+	// the detectors read — and still reports no error, so the returned list can
+	// come back short or empty. Empty is indistinguishable, from the admin
+	// chat's side, from the copy having failed outright: a verdict card with
+	// undo buttons and NOTHING under it to review. Fail it the same way, so
+	// a probabilistic verdict is not enforced on evidence nobody can see.
+	if copyErr == nil && len(adminIDs) == 0 {
+		copyErr = errNothingCopied
+	}
 
 	// The chat's name for the card, fetched AFTER the copy: it is a
 	// convenience, and evidence-first means nothing may queue ahead of the
@@ -177,12 +195,27 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 		}
 	} else {
 		key := fmt.Sprintf("%d", id)
+		// Some evidence arrived, but maybe not all of it: an album whose
+		// poll or unsupported part Telegram declined to copy lands here with
+		// a short list and no error. The sanction still applies — dropping it
+		// would let one uncopyable part shield the whole album — but the card
+		// has to SAY so, because the part that actually triggered the verdict
+		// may be one of the missing ones: an album is judged on the single
+		// part carrying its text, and copyMessages returns destination ids
+		// with no mapping back, so we know how many parts are missing and
+		// never which. Without the line a moderator reviewing a false
+		// positive reads the copies as the whole message and overturns, or
+		// upholds, a verdict on a picture they have only part of.
+		note := ""
+		if got, want := len(adminIDs), len(inc.MessageIDs); got < want {
+			note = fmt.Sprintf("evidence INCOMPLETE: copied %d of %d messages — the part that triggered the verdict may be missing", got, want)
+		}
 		msg := telegram.AdminMessage{
 			IncidentKey:      key,
 			SourceChatID:     inc.ChatID,
 			CopiedFromChatID: inc.ChatID,
 			CopyMessageIDs:   adminIDs,
-			Text:             formatCard(id, inc, chatTitle, "", !inc.DryRun),
+			Text:             formatCard(id, inc, chatTitle, note, !inc.DryRun),
 		}
 		if m.buttonsFor != nil {
 			// A dry-run incident (a review verdict, or a chat still in

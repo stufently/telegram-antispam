@@ -52,6 +52,17 @@ type BotRights struct {
 
 // Port is the narrow Telegram surface the incident logic depends on.
 type Port interface {
+	// CopyMessages returns the ids of the copies that were actually made,
+	// which may be FEWER than the ids asked for — and, for a single
+	// message, none at all. Telegram's copyMessages silently skips what it
+	// cannot copy (a quiz poll is the case seen in production, and a poll's
+	// option texts are part of what the detectors judge) and reports success
+	// anyway. Callers must therefore compare len(result) with len(ids)
+	// rather than read a nil error as "the evidence is in the admin chat".
+	//
+	// The result is a list of DESTINATION ids in the admin chat with no
+	// mapping back to the sources, so a short list says how many parts are
+	// missing and never which ones.
 	CopyMessages(ctx context.Context, dstChat, srcChat int64, ids []int) ([]int, error)
 	DeleteMessages(ctx context.Context, chat int64, ids []int) error
 	BanMember(ctx context.Context, chat, user int64) error

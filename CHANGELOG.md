@@ -8,6 +8,33 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-08-25
+
+### Fixed
+
+- A sanction is no longer applied on evidence that never arrived. Telegram's
+  `copyMessages` silently SKIPS messages it cannot copy — a quiz poll is the
+  case seen in production, and a poll's option texts are part of what the
+  detectors judge — and still reports success, so the call can return a short or empty
+  id list with no error. An empty list was read as "evidence copied": the
+  incident was marked `evidenced` and the sanction went ahead, leaving the
+  admin chat with a verdict card, undo buttons and nothing underneath to
+  review them against. It is now treated as the copy having failed and takes
+  the existing `evidence_failed` branch — admins are told, and a probabilistic
+  verdict (rules, behavior, Bayes, LLM) is not enforced; an externally
+  verifiable blocklist hit still is, exactly as when the copy errors out.
+
+### Changed
+
+- A PARTIALLY copied album is still sanctioned — dropping the action would let
+  one uncopyable part shield the whole album — but its card now says so:
+  `evidence INCOMPLETE: copied N of M messages — the part that triggered the
+  verdict may be missing`. An album is judged on the single part carrying its
+  text and the copy result is destination ids with no mapping back, so the
+  count of missing parts is known and their identity is not. Without the line
+  a moderator reviewing a false positive reads the copies as the whole message
+  and upholds or overturns the verdict on part of the picture.
+
 ## [0.14.1] - 2026-08-25
 
 ### Fixed

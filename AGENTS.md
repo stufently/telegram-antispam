@@ -207,6 +207,17 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   CAS/LOLS blocklist hit). Everything probabilistic fails closed when the
   evidence copy fails, because the buttons under that copy are the only way to
   reverse the sanction. Either way the admin chat is told.
+- "No error from `copyMessages`" is NOT "the evidence is in the admin chat".
+  Telegram silently skips messages it cannot copy (a quiz poll — whose option
+  texts the detectors do read) and reports success, so the returned id list
+  may be shorter than the request or empty. Compare `len(result)` with
+  `len(ids)`: empty takes the no-evidence branch above, and a short one is
+  sanctioned but flagged on the card ("evidence INCOMPLETE: copied N of M").
+  A silently empty copy must never reach `StateEvidenced` — a card with undo
+  buttons and nothing under them cannot be reviewed. The result is destination
+  ids with no mapping back to the sources, so a short list says how many parts
+  are missing and never which: the flag has to assume the triggering part is
+  among them.
 - Trust counts participation, so edits never bump it: re-editing one message
   was otherwise a free path past every untrusted-only check.
 - Sequencer jobs run under `recover`. One process serves every chat, so an

@@ -3,6 +3,7 @@ package incident
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stufently/telegram-antispam/internal/domain"
@@ -18,6 +19,11 @@ type stubRepo struct {
 	tokens    []string
 	tokensErr error
 	savedIDs  []int
+	// evidenceCalls / evidenceIDs record AddEvidence. What is stored here is
+	// what the admin buttons later act on, so "was it called" and "with
+	// which copies" are separate questions from the incident's state.
+	evidenceCalls int
+	evidenceIDs   []int
 }
 
 func (r *stubRepo) InsertPending(_ int64, _ int, _, _ int64, _ bool, verdict domain.Verdict) (int64, bool, error) {
@@ -25,7 +31,11 @@ func (r *stubRepo) InsertPending(_ int64, _ int, _, _ int64, _ bool, verdict dom
 	return 1, r.fresh, nil
 }
 func (r *stubRepo) SetIncidentState(_ int64, s domain.IncidentState) error { r.state = s; return nil }
-func (r *stubRepo) AddEvidence(int64, int64, []int) error                  { return nil }
+func (r *stubRepo) AddEvidence(_ int64, _ int64, ids []int) error {
+	r.evidenceCalls++
+	r.evidenceIDs = ids
+	return nil
+}
 func (r *stubRepo) SaveIncidentMessageIDs(_ int64, ids []int) error {
 	r.savedIDs = ids
 	return nil
@@ -216,6 +226,140 @@ func TestEvidenceFailureNotifiesAdminWhetherOrNotItActs(t *testing.T) {
 				t.Fatalf("failed evidence must still notify admin; calls=%v", f.Calls())
 			}
 		})
+	}
+}
+
+// TestSilentlyEmptyCopyIsAnEvidenceFailure covers the case Telegram reports
+// as success: copyMessages skips what it cannot copy — a quiz poll, whose
+// option texts the detectors do read — and returns an EMPTY id list with no
+// error. Read literally that is "evidence copied", and the machine used to
+// mark the incident evidenced and sanction on it, leaving the admin chat with
+// a card, undo buttons and nothing underneath to judge them by.
+func TestSilentlyEmptyCopyIsAnEvidenceFailure(t *testing.T) {
+	f := fake.New()
+	f.CopyOmit = 1 // one message asked for, none copied, no error
+	repo := &stubRepo{fresh: true}
+	m := New(f, repo, 999)
+	inc := liveIncident(false)
+	inc.Verdict.Signals = []domain.Signal{{Name: "bayes"}}
+
+	if err := m.Handle(context.Background(), inc); err == nil {
+		t.Fatal("a probabilistic verdict with no copied evidence must not be enforced")
+	}
+	for _, c := range f.Calls() {
+		if c == "BanMember" || c == "RestrictMember" || c == "DeleteMessages" {
+			t.Fatalf("must not act with no copied evidence; calls=%v", f.Calls())
+		}
+	}
+	if repo.state != domain.StateEvidenceFailed {
+		t.Fatalf("state = %v, want evidence_failed", repo.state)
+	}
+	// Nothing was copied, so nothing may be recorded as evidence: a stored
+	// empty row would let the admin buttons act as if there were something
+	// to review.
+	if repo.evidenceCalls != 0 {
+		t.Fatalf("AddEvidence called %d time(s) with nothing copied", repo.evidenceCalls)
+	}
+	var notified bool
+	for _, c := range f.Calls() {
+		if c == "SendAdmin" {
+			notified = true
+		}
+	}
+	if !notified {
+		t.Fatalf("an empty copy must still notify admin; calls=%v", f.Calls())
+	}
+}
+
+// TestSilentlyEmptyCopyBlocklistStillActs pins that the empty copy takes the
+// EXISTING no-evidence branch rather than a parallel one of its own: the same
+// externally verifiable verdict that survives a failed copy survives this too.
+func TestSilentlyEmptyCopyBlocklistStillActs(t *testing.T) {
+	f := fake.New()
+	f.CopyOmit = 1
+	repo := &stubRepo{fresh: true}
+	m := New(f, repo, 999)
+	inc := liveIncident(false)
+	inc.Verdict.Signals = []domain.Signal{{Name: "blocklist"}}
+
+	if err := m.Handle(context.Background(), inc); err != nil {
+		t.Fatalf("blocklist deny should proceed despite an empty copy, got err %v", err)
+	}
+	var banned bool
+	for _, c := range f.Calls() {
+		if c == "BanMember" {
+			banned = true
+		}
+	}
+	if !banned {
+		t.Fatalf("blocklist deny must act despite an empty copy; calls=%v", f.Calls())
+	}
+	if repo.state != domain.StateDone {
+		t.Fatalf("final state = %v, want done", repo.state)
+	}
+}
+
+// TestPartialCopySanctionsAndSaysSoOnTheCard covers the album whose parts did
+// not all copy. The sanction stands — what did copy is what the verdict was
+// reached on — but the card must not let a reviewer mistake the copies for
+// the whole message.
+func TestPartialCopySanctionsAndSaysSoOnTheCard(t *testing.T) {
+	f := fake.New()
+	f.CopyOmit = 1 // 3 parts asked for, 2 copied, no error
+	repo := &stubRepo{fresh: true}
+	m := New(f, repo, 999)
+	inc := liveIncident(false)
+	inc.MessageIDs = []int{55, 56, 57}
+	inc.Verdict.Signals = []domain.Signal{{Name: "bayes"}}
+
+	if err := m.Handle(context.Background(), inc); err != nil {
+		t.Fatalf("a partially copied incident must still be handled, got err %v", err)
+	}
+	var banned bool
+	for _, c := range f.Calls() {
+		if c == "BanMember" {
+			banned = true
+		}
+	}
+	if !banned {
+		t.Fatalf("partial evidence must not cancel the sanction; calls=%v", f.Calls())
+	}
+	if repo.state != domain.StateDone {
+		t.Fatalf("final state = %v, want done", repo.state)
+	}
+	if got := len(f.LastAdmin.CopyMessageIDs); got != 2 {
+		t.Fatalf("card carries %d copy ids, want the 2 that were copied", got)
+	}
+	// The stored evidence is the copies that exist, not the ids asked for:
+	// the buttons must not later reach for a copy Telegram never made.
+	if repo.evidenceCalls != 1 || len(repo.evidenceIDs) != 2 {
+		t.Fatalf("AddEvidence calls=%d ids=%v, want one call with the 2 real copies", repo.evidenceCalls, repo.evidenceIDs)
+	}
+	if !strings.Contains(f.LastAdmin.Text, "copied 2 of 3") {
+		t.Fatalf("card must say the evidence is incomplete, got:\n%s", f.LastAdmin.Text)
+	}
+}
+
+// TestCompleteCopyAddsNoIncompleteNote is the other half: the note must not
+// appear when everything copied, or it stops meaning anything.
+func TestCompleteCopyAddsNoIncompleteNote(t *testing.T) {
+	f := fake.New()
+	repo := &stubRepo{fresh: true}
+	m := New(f, repo, 999)
+	inc := liveIncident(false)
+	inc.MessageIDs = []int{55, 56}
+
+	if err := m.Handle(context.Background(), inc); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(f.LastAdmin.Text, "INCOMPLETE") {
+		t.Fatalf("a fully copied incident must not be flagged incomplete, got:\n%s", f.LastAdmin.Text)
+	}
+	if repo.evidenceCalls != 1 || len(repo.evidenceIDs) != 2 {
+		t.Fatalf("AddEvidence calls=%d ids=%v, want one call with both copies", repo.evidenceCalls, repo.evidenceIDs)
+	}
+	if repo.state != domain.StateDone {
+		t.Fatalf("final state = %v, want done", repo.state)
 	}
 }
 

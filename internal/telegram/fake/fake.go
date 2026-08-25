@@ -15,6 +15,13 @@ type Fake struct {
 
 	// knobs
 	CopyErr error
+	// CopyOmit drops that many ids from the END of what CopyMessages
+	// returns, WITHOUT returning an error. That is Telegram's real
+	// behaviour for a message it cannot copy (a quiz poll, say): the call
+	// succeeds and the skipped message simply is not in the result. Set it
+	// to len(ids) or more to get the empty result — the case where the
+	// admin chat ends up with a verdict card and nothing under it.
+	CopyOmit int
 	// SendAdminErr fails the admin-chat card, which ends the incident before
 	// any sanction: tests use it to cover that terminal branch.
 	SendAdminErr error
@@ -107,9 +114,10 @@ func (f *Fake) CopyMessages(_ context.Context, _, _ int64, ids []int) ([]int, er
 	if f.CopyErr != nil {
 		return nil, f.CopyErr
 	}
-	out := make([]int, len(ids))
-	for i := range ids {
-		out[i] = 100000 + ids[i]
+	n := min(max(len(ids)-f.CopyOmit, 0), len(ids))
+	out := make([]int, 0, n)
+	for _, id := range ids[:n] {
+		out = append(out, 100000+id)
 	}
 	return out, nil
 }

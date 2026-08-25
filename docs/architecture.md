@@ -89,6 +89,19 @@ stops without acting. Either way the admin chat is told what happened, because
 `Confidence`: every wired detector emits `1.0`, so a confidence threshold
 would let everything through.
 
+Copying can also fail without failing. `copyMessages` skips messages it cannot
+copy — a quiz poll, for instance, whose option texts the detectors do judge —
+and returns success regardless, so the id list can come back short or empty. An
+empty one is treated exactly like a failed copy (step 2 above never produced
+evidence, so the incident does not become `evidenced` and the rules of the
+previous paragraph apply). A short one still sanctions — dropping the action
+would let one uncopyable part shield the whole album — but the card carries
+`evidence INCOMPLETE: copied N of M messages — the part that triggered the
+verdict may be missing`. The wording is deliberate: an album is judged on the
+single part carrying its text, and the copy result is destination ids with no
+mapping back to the sources, so the count is known and the identity of the
+missing parts is not.
+
 Both outcomes are logged, and symmetrically: `internal/telegram` writes
 `observed` for a message that passed, `internal/incident` writes `enforced`
 (with `outcome=succeeded|partial|failed`, since `action_ok` and `deleted`
