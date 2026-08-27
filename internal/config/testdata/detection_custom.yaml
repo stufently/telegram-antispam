@@ -10,6 +10,8 @@ detection:
   rules:
     deny_stopwords: ["casino"]
     block_links_for_untrusted: false
+    banned_document_extensions: [".apk"]
+    banned_document_mime_types: ["application/vnd.android.package-archive"]
   behavior:
     dup_threshold: 2
     dup_window: 90s

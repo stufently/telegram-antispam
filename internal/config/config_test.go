@@ -122,6 +122,12 @@ func TestDetectionExplicitValuesNotOverridden(t *testing.T) {
 	if len(d.Rules.DenyStopwords) != 1 || d.Rules.DenyStopwords[0] != "casino" {
 		t.Errorf("DenyStopwords: want [casino], got %v", d.Rules.DenyStopwords)
 	}
+	if len(d.Rules.BannedDocumentExtensions) != 1 || d.Rules.BannedDocumentExtensions[0] != ".apk" {
+		t.Errorf("BannedDocumentExtensions: want [.apk], got %v", d.Rules.BannedDocumentExtensions)
+	}
+	if len(d.Rules.BannedDocumentMIMETypes) != 1 || d.Rules.BannedDocumentMIMETypes[0] != "application/vnd.android.package-archive" {
+		t.Errorf("BannedDocumentMIMETypes: unexpected %v", d.Rules.BannedDocumentMIMETypes)
+	}
 	if d.BayesEnabled == nil || *d.BayesEnabled {
 		t.Errorf("BayesEnabled: want explicit false, got %v", d.BayesEnabled)
 	}

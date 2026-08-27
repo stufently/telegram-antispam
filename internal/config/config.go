@@ -117,6 +117,11 @@ type DetectionRules struct {
 	DenyExact              []string `yaml:"deny_exact"`
 	BlockLinksForUntrusted *bool    `yaml:"block_links_for_untrusted"`
 	BannedDomains          []string `yaml:"banned_domains"`
+	// BannedDocumentExtensions and BannedDocumentMIMETypes reject document
+	// attachment types regardless of trust. Empty lists (the defaults) keep
+	// the feature disabled; administrators remain immune in the cascade.
+	BannedDocumentExtensions []string `yaml:"banned_document_extensions"`
+	BannedDocumentMIMETypes  []string `yaml:"banned_document_mime_types"`
 	// MaxLinks, MaxMentions and MaxEmoji cap occurrences in one message from
 	// an untrusted sender. 0 (the default) disables each: they are signals,
 	// not proof, and the right number is chat-specific.

@@ -95,7 +95,11 @@ func TestToDomainMessageCaptionEntities(t *testing.T) {
 		CaptionEntities: []models.MessageEntity{
 			{Type: models.MessageEntityTypeURL, Offset: 0, Length: 4},
 		},
-		Document: &models.Document{FileID: "doc1"},
+		Document: &models.Document{
+			FileID:   "doc1",
+			FileName: "Поиск Пропавших.APK",
+			MimeType: "Application/Vnd.Android.Package-Archive ",
+		},
 	}
 	got := ToDomainMessage(m)
 	if len(got.Entities) != 1 || got.Entities[0].Type != "url" {
@@ -103,6 +107,10 @@ func TestToDomainMessageCaptionEntities(t *testing.T) {
 	}
 	if !got.HasMedia() {
 		t.Fatalf("expected HasMedia true for document")
+	}
+	if len(got.DocumentExtensions) != 1 || got.DocumentExtensions[0] != ".apk" ||
+		len(got.DocumentMIMETypes) != 1 || got.DocumentMIMETypes[0] != "application/vnd.android.package-archive" {
+		t.Fatalf("document metadata = extensions %v MIME types %v", got.DocumentExtensions, got.DocumentMIMETypes)
 	}
 }
 

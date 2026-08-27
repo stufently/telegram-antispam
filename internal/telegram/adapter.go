@@ -1,6 +1,9 @@
 package telegram
 
 import (
+	"path"
+	"strings"
+
 	"github.com/go-telegram/bot/models"
 	"github.com/stufently/telegram-antispam/internal/detect"
 	"github.com/stufently/telegram-antispam/internal/domain"
@@ -48,6 +51,7 @@ func ToDomainMessage(m *models.Message) domain.Message {
 	}
 
 	mediaKinds := collectMediaKinds(m)
+	documentExtensions, documentMIMETypes := documentMetadata(m.Document)
 
 	// A forward is recorded as two facts, not one: that it IS a forward, and
 	// whether it came from a channel/group rather than a person. Only the
@@ -105,6 +109,8 @@ func ToDomainMessage(m *models.Message) domain.Message {
 		PollOptionTexts:    pollOptionTexts,
 		EditDate:           int64(m.EditDate),
 		MediaKinds:         mediaKinds,
+		DocumentExtensions: documentExtensions,
+		DocumentMIMETypes:  documentMIMETypes,
 		Forwarded:          forwarded,
 		ForwardedFromChat:  forwardedFromChat,
 		HasKeyboard:        hasKeyboard,
@@ -112,6 +118,23 @@ func ToDomainMessage(m *models.Message) domain.Message {
 		ServiceKind:        serviceKind,
 		ReplyTo:            replyTo,
 	}
+}
+
+// documentMetadata keeps only the type information needed for moderation.
+// The filename itself is attacker-controlled and may contain personal data;
+// retaining it would widen both persisted audit data and the optional LLM
+// payload for no detection benefit beyond its final extension.
+func documentMetadata(doc *models.Document) (extensions, mimeTypes []string) {
+	if doc == nil {
+		return nil, nil
+	}
+	if extension := strings.ToLower(path.Ext(strings.TrimSpace(doc.FileName))); extension != "" {
+		extensions = []string{extension}
+	}
+	if mimeType := strings.ToLower(strings.TrimSpace(doc.MimeType)); mimeType != "" {
+		mimeTypes = []string{mimeType}
+	}
+	return extensions, mimeTypes
 }
 
 // collectMediaKinds lists the attachment types present on a message, using

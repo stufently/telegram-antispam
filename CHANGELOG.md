@@ -8,6 +8,22 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-08-27
+
+### Added
+
+- Hard rules can now block Telegram documents by normalized extension and/or
+  MIME type (`detection.rules.banned_document_extensions` and
+  `banned_document_mime_types`). This closes the executable-attachment gap
+  where an `.apk` looked to every detector like an ordinary `document` with a
+  harmless caption. Only the extension and MIME type enter detection, audit
+  details, and optional LLM metadata; the user-controlled filename is discarded.
+
+### Changed
+
+- The built-in LLM prompt now explicitly includes unsolicited loan/credit
+  offers and vague or euphemistic job/earning offers in its spam definition.
+
 ## [0.14.2] - 2026-08-25
 
 ### Fixed

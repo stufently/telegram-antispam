@@ -181,5 +181,6 @@ func promptOr(prompts ...string) string {
 }
 
 const classifyPrompt = "You are a spam classifier for a Telegram group chat. " +
-	"Decide whether the following message is spam (scam, ad, flood, phishing, or unsolicited promotion). " +
+	"Decide whether the following message is spam (scam, ad, flood, phishing, unsolicited loans or credit, " +
+	"or vague job and earning offers even when phrased euphemistically). " +
 	"Reply with exactly one word: SPAM or HAM."

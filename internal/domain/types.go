@@ -43,6 +43,13 @@ type Message struct {
 	// from a captionless promo image, the one shape that reaches no text
 	// detector at all. Empty means no attachment.
 	MediaKinds []string
+	// DocumentExtensions and DocumentMIMETypes carry only the non-identifying
+	// type metadata of a Telegram document. The original filename is
+	// deliberately discarded: an operator can block executable attachment
+	// types and an LLM can understand the risk without sending or persisting a
+	// user-controlled filename. Slices preserve every type in a media group.
+	DocumentExtensions []string
+	DocumentMIMETypes  []string
 	// Forwarded is true when the message carries a forward_origin, i.e. it
 	// was forwarded from somewhere rather than typed here. It is a SIGNAL,
 	// not a verdict: forwarding is ordinary chat behavior, and the useful

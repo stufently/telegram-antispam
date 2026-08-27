@@ -152,6 +152,9 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
 - Downstream detectors consume the central normalized representation. Add new
   Telegram text surfaces in the adapter/normalizer instead of re-parsing raw
   library types inside detectors.
+- Document moderation retains only normalized extension and MIME type. Never
+  persist or send the attacker-controlled filename when its type is sufficient
+  to explain and enforce the decision.
 - Trust does not bypass the global blocklist or hard rules. It only skips the
   newcomer-oriented semantic stages such as fake-admin and Bayes checks.
 - `internal/telegram` is the only package allowed to depend on the Telegram

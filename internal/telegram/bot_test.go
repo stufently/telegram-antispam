@@ -50,3 +50,15 @@ func TestUnionMediaKindsOfATextOnlyAlbumIsEmpty(t *testing.T) {
 		t.Fatalf("got %v, want nil", got)
 	}
 }
+
+func TestUnionMessageMetadataKeepsDocumentTypeFromAnotherAlbumPart(t *testing.T) {
+	parts := []domain.Message{
+		{Text: "caption", MediaKinds: []string{"photo"}},
+		{MediaKinds: []string{"document"}, DocumentExtensions: []string{".apk"}, DocumentMIMETypes: []string{"application/vnd.android.package-archive"}},
+	}
+	exts := unionMessageMetadata(parts, func(m domain.Message) []string { return m.DocumentExtensions })
+	mimes := unionMessageMetadata(parts, func(m domain.Message) []string { return m.DocumentMIMETypes })
+	if len(exts) != 1 || exts[0] != ".apk" || len(mimes) != 1 || mimes[0] != "application/vnd.android.package-archive" {
+		t.Fatalf("extensions=%v MIME types=%v", exts, mimes)
+	}
+}

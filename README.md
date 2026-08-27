@@ -86,7 +86,8 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
   score that graduates real users out of the strict checks. Warming up an account is not
   free: only messages of a configurable minimum length count, and only DIFFERENT ones —
   repeating "привет" five times earns credit once.
-- **Occurrence limits and whole-message stop words** — caps on links, mentions and emoji per
+- **Attachment, occurrence and whole-message rules** — configurable blocked document
+  extensions/MIME types (the filename itself is discarded), caps on links, mentions and emoji per
   message from an untrusted sender (counting repeats, not distinct values), plus a
   `deny_exact` list that matches only when the entry IS the whole message, for words too
   ordinary to ban as substrings.

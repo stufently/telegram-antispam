@@ -161,6 +161,31 @@ func TestRulesCheck(t *testing.T) {
 			wantSignal: domain.Signal{},
 			wantHit:    false,
 		},
+		{
+			name: "banned document extension",
+			rules: Rules{
+				BannedDocumentExtensions: []string{"apk"},
+			},
+			msg: NormalizedMessage{
+				DocumentExtensions: []string{".APK"},
+				DocumentMIMETypes:  []string{"application/octet-stream"},
+			},
+			trusted:    true,
+			wantSignal: domain.Signal{Name: "banned_document_extension", Detail: ".apk"},
+			wantHit:    true,
+		},
+		{
+			name: "banned document MIME with parameters",
+			rules: Rules{
+				BannedDocumentMIMETypes: []string{"application/vnd.android.package-archive"},
+			},
+			msg: NormalizedMessage{
+				DocumentMIMETypes: []string{"Application/Vnd.Android.Package-Archive; charset=binary"},
+			},
+			trusted:    false,
+			wantSignal: domain.Signal{Name: "banned_document_mime", Detail: "application/vnd.android.package-archive"},
+			wantHit:    true,
+		},
 
 		// Deterministic order: deny before link policy before banned domain
 		{

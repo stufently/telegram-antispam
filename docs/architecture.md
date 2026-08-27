@@ -124,7 +124,7 @@ first-hit-wins ordering:
 
 1. current-admin immunity;
 2. global CAS/LOLS blocklist;
-3. hard rules (stopwords, links for untrusted users, banned domains);
+3. hard rules (stopwords, links for untrusted users, banned domains and document types);
 4. fake-admin detection for untrusted users;
 5. duplicate, short-flood, and edit behavior;
 6. naive Bayes for untrusted users;

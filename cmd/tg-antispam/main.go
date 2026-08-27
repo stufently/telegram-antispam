@@ -768,14 +768,16 @@ func main() {
 		Trust: db,
 		Hist:  hist,
 		Rules: detect.Rules{
-			DenyStopwords:          cfg.Detection.Rules.DenyStopwords,
-			AllowStopwords:         cfg.Detection.Rules.AllowStopwords,
-			DenyExact:              cfg.Detection.Rules.DenyExact,
-			BlockLinksForUntrusted: *cfg.Detection.Rules.BlockLinksForUntrusted,
-			BannedDomains:          cfg.Detection.Rules.BannedDomains,
-			MaxLinks:               cfg.Detection.Rules.MaxLinks,
-			MaxMentions:            cfg.Detection.Rules.MaxMentions,
-			MaxEmoji:               cfg.Detection.Rules.MaxEmoji,
+			DenyStopwords:            cfg.Detection.Rules.DenyStopwords,
+			AllowStopwords:           cfg.Detection.Rules.AllowStopwords,
+			DenyExact:                cfg.Detection.Rules.DenyExact,
+			BlockLinksForUntrusted:   *cfg.Detection.Rules.BlockLinksForUntrusted,
+			BannedDomains:            cfg.Detection.Rules.BannedDomains,
+			BannedDocumentExtensions: cfg.Detection.Rules.BannedDocumentExtensions,
+			BannedDocumentMIMETypes:  cfg.Detection.Rules.BannedDocumentMIMETypes,
+			MaxLinks:                 cfg.Detection.Rules.MaxLinks,
+			MaxMentions:              cfg.Detection.Rules.MaxMentions,
+			MaxEmoji:                 cfg.Detection.Rules.MaxEmoji,
 		},
 		Behavior:            behaviorCfg,
 		TrustThreshold:      *cfg.Detection.TrustThreshold,
@@ -1094,6 +1096,12 @@ func llmMessageText(m domain.Message) string {
 	var facts []string
 	if len(m.MediaKinds) > 0 {
 		facts = append(facts, "вложение: "+strings.Join(m.MediaKinds, ", "))
+	}
+	if len(m.DocumentExtensions) > 0 {
+		facts = append(facts, "расширения документов: "+strings.Join(m.DocumentExtensions, ", "))
+	}
+	if len(m.DocumentMIMETypes) > 0 {
+		facts = append(facts, "MIME документов: "+strings.Join(m.DocumentMIMETypes, ", "))
 	}
 	switch {
 	case m.ForwardedFromChat:

@@ -20,8 +20,8 @@ type NormalizedMessage struct {
 	HasCustomEmoji bool
 	SenderTagNorm  string
 	RawLen         int
-	// MediaKinds, Forwarded, ForwardedFromChat and HasKeyboard carry the
-	// message's non-text shape through to the detectors. They are copied
+	// MediaKinds, document type metadata, Forwarded, ForwardedFromChat and
+	// HasKeyboard carry the message's non-text shape through to the detectors. They are copied
 	// verbatim from domain.Message rather than derived here: normalization
 	// is about TEXT, and a detector that needs to know "photo with no
 	// caption" would otherwise have to reach around this type back to the
@@ -34,12 +34,14 @@ type NormalizedMessage struct {
 	LinkCount    int
 	MentionCount int
 	// EmojiCount counts emoji runes plus Telegram custom-emoji entities.
-	EmojiCount        int
-	MediaKinds        []string
-	Forwarded         bool
-	ForwardedFromChat bool
-	HasKeyboard       bool
-	ViaBot            bool
+	EmojiCount         int
+	MediaKinds         []string
+	DocumentExtensions []string
+	DocumentMIMETypes  []string
+	Forwarded          bool
+	ForwardedFromChat  bool
+	HasKeyboard        bool
+	ViaBot             bool
 }
 
 // urlRe matches http(s) URLs anywhere in raw text.
@@ -73,21 +75,36 @@ func Normalize(m domain.Message) NormalizedMessage {
 	}
 
 	return NormalizedMessage{
-		Text:              Deobfuscate(raw),
-		Links:             collectLinks(m.Entities, m.Text, raw),
-		Mentions:          collectMentions(raw),
-		HasCustomEmoji:    hasCustomEmoji,
-		SenderTagNorm:     Deobfuscate(m.SenderTag),
-		RawLen:            utf8.RuneCountInString(m.Text),
-		LinkCount:         len(urlRe.FindAllString(raw, -1)) + len(tMeRe.FindAllString(raw, -1)),
-		MentionCount:      len(mentionRe.FindAllString(raw, -1)),
-		EmojiCount:        countEmoji(raw) + countCustomEmoji(m.Entities),
-		MediaKinds:        m.MediaKinds,
-		Forwarded:         m.Forwarded,
-		ForwardedFromChat: m.ForwardedFromChat,
-		HasKeyboard:       m.HasKeyboard,
-		ViaBot:            m.ViaBot,
+		Text:               Deobfuscate(raw),
+		Links:              collectLinks(m.Entities, m.Text, raw),
+		Mentions:           collectMentions(raw),
+		HasCustomEmoji:     hasCustomEmoji,
+		SenderTagNorm:      Deobfuscate(m.SenderTag),
+		RawLen:             utf8.RuneCountInString(m.Text),
+		LinkCount:          len(urlRe.FindAllString(raw, -1)) + len(tMeRe.FindAllString(raw, -1)),
+		MentionCount:       len(mentionRe.FindAllString(raw, -1)),
+		EmojiCount:         countEmoji(raw) + countCustomEmoji(m.Entities),
+		MediaKinds:         m.MediaKinds,
+		DocumentExtensions: normalizedMetadata(m.DocumentExtensions),
+		DocumentMIMETypes:  normalizedMetadata(m.DocumentMIMETypes),
+		Forwarded:          m.Forwarded,
+		ForwardedFromChat:  m.ForwardedFromChat,
+		HasKeyboard:        m.HasKeyboard,
+		ViaBot:             m.ViaBot,
 	}
+}
+
+func normalizedMetadata(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = strings.ToLower(strings.TrimSpace(value)); value != "" {
+			out = append(out, value)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // countEmoji counts emoji runes in s. It works on Unicode ranges rather than

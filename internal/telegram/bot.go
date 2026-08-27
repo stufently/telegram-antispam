@@ -254,15 +254,22 @@ func trustThresholdOf(cfg *config.Config) int {
 // first-seen order and dropping duplicates (a five-photo album is "photo",
 // not "photo,photo,photo,photo,photo").
 func unionMediaKinds(parts []domain.Message) []string {
+	return unionMessageMetadata(parts, func(m domain.Message) []string { return m.MediaKinds })
+}
+
+// unionMessageMetadata preserves all non-identifying attachment type facts
+// when Telegram delivers a media group as separate messages. The part with
+// the caption is judged, but an executable may be attached to another part.
+func unionMessageMetadata(parts []domain.Message, values func(domain.Message) []string) []string {
 	seen := make(map[string]bool, 4)
 	var out []string
 	for _, m := range parts {
-		for _, k := range m.MediaKinds {
-			if seen[k] {
+		for _, value := range values(m) {
+			if seen[value] {
 				continue
 			}
-			seen[k] = true
-			out = append(out, k)
+			seen[value] = true
+			out = append(out, value)
 		}
 	}
 	return out
@@ -305,6 +312,8 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 	// at half the message.
 	if len(parts) > 1 {
 		judged.MediaKinds = unionMediaKinds(parts)
+		judged.DocumentExtensions = unionMessageMetadata(parts, func(m domain.Message) []string { return m.DocumentExtensions })
+		judged.DocumentMIMETypes = unionMessageMetadata(parts, func(m domain.Message) []string { return m.DocumentMIMETypes })
 		for _, m := range parts {
 			judged.Forwarded = judged.Forwarded || m.Forwarded
 			judged.ForwardedFromChat = judged.ForwardedFromChat || m.ForwardedFromChat

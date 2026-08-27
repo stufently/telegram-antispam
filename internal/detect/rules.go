@@ -25,6 +25,12 @@ type Rules struct {
 	DenyExact              []string
 	BlockLinksForUntrusted bool
 	BannedDomains          []string
+	// BannedDocumentExtensions and BannedDocumentMIMETypes are global hard
+	// rules, like BannedDomains. Values are operator-selected because an APK
+	// is ordinary in a developer chat and unacceptable in a classifieds chat.
+	// Current administrators remain immune at the earlier cascade gate.
+	BannedDocumentExtensions []string
+	BannedDocumentMIMETypes  []string
 	// MaxLinks, MaxMentions and MaxEmoji are OCCURRENCE limits, applied to
 	// untrusted senders only. Zero or negative disables each — these are
 	// signals, not proof (a legitimate ad has links; an excited member has
@@ -60,12 +66,55 @@ func (r Rules) Check(n NormalizedMessage, trusted bool) (domain.Signal, bool) {
 		return sig, true
 	}
 
+	// 3b. Check document types. Only the extension/MIME is retained in the
+	// signal; the attacker-controlled filename never enters the audit row.
+	if sig, hit := r.checkBannedDocument(n); hit {
+		return sig, true
+	}
+
 	// 4. Occurrence limits, untrusted senders only.
 	if sig, hit := r.checkLimits(n, trusted); hit {
 		return sig, true
 	}
 
 	return domain.Signal{}, false
+}
+
+func (r Rules) checkBannedDocument(n NormalizedMessage) (domain.Signal, bool) {
+	for _, extension := range n.DocumentExtensions {
+		ext := canonicalDocumentExtension(extension)
+		for _, banned := range r.BannedDocumentExtensions {
+			if ext == canonicalDocumentExtension(banned) {
+				return domain.Signal{Name: "banned_document_extension", Detail: ext}, true
+			}
+		}
+	}
+
+	for _, mime := range n.DocumentMIMETypes {
+		mimeType := canonicalMIMEType(mime)
+		for _, banned := range r.BannedDocumentMIMETypes {
+			if mimeType == canonicalMIMEType(banned) {
+				return domain.Signal{Name: "banned_document_mime", Detail: mimeType}, true
+			}
+		}
+	}
+	return domain.Signal{}, false
+}
+
+func canonicalDocumentExtension(extension string) string {
+	extension = strings.ToLower(strings.TrimSpace(extension))
+	if extension != "" && !strings.HasPrefix(extension, ".") {
+		extension = "." + extension
+	}
+	return extension
+}
+
+func canonicalMIMEType(mimeType string) string {
+	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
+	if base, _, found := strings.Cut(mimeType, ";"); found {
+		mimeType = strings.TrimSpace(base)
+	}
+	return mimeType
 }
 
 // checkLimits applies the occurrence caps. Trusted members are exempt for the
