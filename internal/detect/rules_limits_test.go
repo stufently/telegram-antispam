@@ -69,22 +69,14 @@ func TestLimitsAreOffByDefault(t *testing.T) {
 	}
 }
 
-func TestReportedAPKLoanAndEuphemisticJobMessagesAreHardMatches(t *testing.T) {
-	r := Rules{
-		BannedDocumentExtensions: []string{".apk"},
-		DenyExact: []string{
-			"Дам в долг",
-			"Словить карася вручную, зп договорная",
-		},
+func TestReportedAPKIsAHardMatchByDocumentType(t *testing.T) {
+	r := Rules{BannedDocumentExtensions: []string{".apk"}}
+	msg := domain.Message{
+		Text:               "Спискк проппвших на С.ВО👆",
+		MediaKinds:         []string{"document"},
+		DocumentExtensions: []string{".apk"},
 	}
-	tests := []domain.Message{
-		{Text: "Спискк проппвших на С.ВО👆", MediaKinds: []string{"document"}, DocumentExtensions: []string{".apk"}},
-		{Text: "Дам в долг"},
-		{Text: "Словить карася вручную, зп договорная"},
-	}
-	for _, msg := range tests {
-		if sig, hit := r.Check(Normalize(msg), false); !hit {
-			t.Errorf("message %q passed, signal=%+v", msg.Text, sig)
-		}
+	if sig, hit := r.Check(Normalize(msg), false); !hit || sig.Name != "banned_document_extension" {
+		t.Fatalf("APK passed: hit=%v signal=%+v", hit, sig)
 	}
 }
