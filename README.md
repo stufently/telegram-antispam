@@ -98,8 +98,10 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
   score that graduates real users out of the strict checks. Warming up an account is not
   free: only messages of a configurable minimum length count, and only DIFFERENT ones —
   repeating "привет" five times earns credit once.
-- **Attachment, occurrence and whole-message rules** — configurable blocked document
-  extensions/MIME types (the filename itself is discarded), caps on links, mentions and emoji per
+- **Attachment, occurrence and whole-message rules** — configurable blocked file
+  extensions/MIME types, read from every attachment kind that carries them (document, video,
+  animation, audio, voice) so the same `.apk` cannot slip past by being uploaded as a video;
+  the filename itself is discarded, and what is kept has to look like a type name. Plus caps on links, mentions and emoji per
   message from an untrusted sender (counting repeats, not distinct values), plus a
   `deny_exact` list that matches only when the entry IS the whole message, for words too
   ordinary to ban as substrings.

@@ -10,6 +10,38 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [0.16.0] - 2026-08-30
 
+### Fixed
+
+- A moderator's `/spam` or `/ban` is no longer discarded when the evidence copy
+  into the admin chat fails. Enforcement without evidence was limited to
+  externally verifiable verdicts, which was right for the detector and wrong
+  for a human: the copy exists so that a person can check a machine verdict,
+  and there is nothing to check when the person IS the verdict — they typed the
+  command as a reply, looking at the message. The failure was total and had no
+  way out: a quiz poll is not copyable (Telegram skips it and reports success),
+  so `/spam` on one produced no ban, no delete and no complaint, a repeated
+  `/spam` was rejected as already handled, and the evidence-failure card
+  carries no enforce button by design. Automatic verdicts still fail closed,
+  and the card still names an action only when one actually follows.
+- Attachment type rules — the `.apk` block among them — no longer depend on how
+  the sender chose to upload the file. Extensions and MIME types were read only
+  from Telegram's `document`, but the Bot API puts `file_name` and `mime_type`
+  on `video`, `animation` and `audio` as well, and `mime_type` on `voice`, so
+  the same `list.apk` sent as a video reached no rule at all while
+  `MediaKinds` had been listing those very types all along. All five fields are
+  now read, symmetrically for a message and for an `external_reply` parent.
+- The filename is now really discarded, not merely relabelled. `path.Ext`
+  returns everything after the last dot, so a file called
+  `отчёт.2 подробности в личку` yielded that whole sentence as its
+  "extension" — persisted in the audit row and, with the LLM stage enabled,
+  sent to the provider inside `[метаданные сообщения: ...]`, where
+  sender-controlled text reads as an authoritative fact about the message. An
+  extension is now kept only when it looks like one, and a MIME type only when
+  it parses as `type/subtype` after its parameters are cut. Both checks live in
+  the adapter, so the guarantee covers stored data and the LLM payload alike,
+  and the parameter-stripping no longer exists only inside the rule that
+  compares values.
+
 ### Changed
 
 - The optional LLM stage now also sees the attachment types of the message a

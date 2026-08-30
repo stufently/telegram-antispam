@@ -1090,7 +1090,17 @@ func senderKindFor(inc store.IncidentRow) domain.SenderKind {
 // The prefix IS new data leaving the process: attachment type names and two
 // booleans that were not sent before. They are structural, not personal — no
 // file, no name, no id — but the honest statement is "a little more metadata
-// now goes to the provider", not "nothing changed". It exists because those
+// now goes to the provider", not "nothing changed".
+//
+// "No name" is a property of what the adapter builds, not of anything done
+// here: this function renders the domain envelope as-is, so a filename that
+// survived into DocumentExtensions would be sent verbatim inside a line the
+// model reads as authoritative fact. That is why the extension and MIME type
+// are validated at the adapter (telegram.sanitizedExtension) rather than
+// where they are used — and why anything added to this prefix later must come
+// from a field with the same guarantee.
+//
+// It exists because those
 // facts change the reading of the same words: "подробности в лс" under a forwarded
 // channel post with an inline keyboard is a different message from the same
 // sentence typed by hand, and until now the model could not tell.

@@ -82,12 +82,22 @@ orders side effects as:
 8. mark the incident `done`.
 
 Dry-run stops after evidence and admin notification. If evidence copying
-fails, only an externally verifiable verdict — a CAS/LOLS blocklist hit — may
-still be enforced; everything probabilistic (rules, behavior, Bayes, LLM)
-stops without acting. Either way the admin chat is told what happened, because
-"detected but not acted on" must not be silent. The gate is the signal, not
-`Confidence`: every wired detector emits `1.0`, so a confidence threshold
+fails, only a verdict that does not rest on the bot's own judgement may still
+be enforced: an externally verifiable one — a CAS/LOLS blocklist hit — or a
+moderator's explicit `/spam` or `/ban`, which reach the machine as the
+`manual_spam` / `manual_ban` signals. Everything probabilistic (rules,
+behavior, Bayes, LLM) stops without acting. Either way the admin chat is told
+what happened, because "detected but not acted on" must not be silent, and the
+card names an action only when one actually follows. The gate is the signal,
+not `Confidence`: every wired detector emits `1.0`, so a confidence threshold
 would let everything through.
+
+The manual exception exists because the evidence copy is what lets a HUMAN
+check a machine verdict, so requiring it before obeying that same human is
+circular. It is not a small gap either: a quiz poll is uncopyable, so `/spam`
+on one used to do nothing at all — and nothing could be done afterwards, since
+a repeated `/spam` is rejected as already handled and the evidence-failure card
+deliberately carries no enforce button.
 
 Copying can also fail without failing. `copyMessages` skips messages it cannot
 copy — a quiz poll, for instance, whose option texts the detectors do judge —
@@ -124,11 +134,25 @@ first-hit-wins ordering:
 
 1. current-admin immunity;
 2. global CAS/LOLS blocklist;
-3. hard rules (stopwords, links for untrusted users, banned domains and document types);
+3. hard rules (stopwords, links for untrusted users, banned domains and file types);
 4. fake-admin detection for untrusted users;
 5. duplicate, short-flood, and edit behavior;
 6. naive Bayes for untrusted users;
 7. optional LLM adjudication in the wiring layer for a Bayes-borderline result.
+
+The file-type facts those rules read (and the LLM line below) are collected by
+the adapter from every attachment field that carries them — `document`,
+`video`, `animation`, `audio` and `voice`, plus the same five on
+`external_reply`. Which one a file arrives in is the sender's choice, not a
+property of the file, so a rule reading only `document` was bypassed by
+uploading the same `.apk` as a video. The filename is never kept, and that
+promise is enforced rather than assumed: `path.Ext` returns everything after
+the last dot, so an extension is kept only when it matches what an extension
+can look like, and a MIME type only when it parses as `type/subtype` once its
+parameters are cut. Anything else is dropped silently. The checks live in the
+adapter so they cover the persisted audit row as well as the LLM payload,
+where an unchecked filename would otherwise arrive as an authoritative-looking
+metadata fact — an injection channel on top of the privacy leak.
 
 Admin identities use a TTL cache, invalidated on `my_chat_member` updates and
 on the `chat_member` updates that actually touch the administrator roster

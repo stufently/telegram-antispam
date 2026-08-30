@@ -152,9 +152,18 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
 - Downstream detectors consume the central normalized representation. Add new
   Telegram text surfaces in the adapter/normalizer instead of re-parsing raw
   library types inside detectors.
-- Document moderation retains only normalized extension and MIME type. Never
+- Attachment moderation retains only a VALIDATED extension and MIME type. Never
   persist or send the attacker-controlled filename when its type is sufficient
-  to explain and enforce the decision.
+  to explain and enforce the decision — and note that deriving is not
+  validating: `path.Ext` returns everything after the last dot, so the name
+  itself passes through unless the result is checked against what an extension
+  can look like. Same for a MIME type: parameters are cut and the value must
+  parse as `type/subtype`. Both checks live in the adapter, so the guarantee
+  covers persisted rows as well as the LLM payload.
+- Read that metadata from EVERY attachment field that carries it — document,
+  video, animation, audio, voice — and symmetrically for `external_reply`.
+  Which field a file arrives in is the sender's choice, so a rule that reads
+  only `document` is bypassed by uploading the same file as a video.
 - Trust does not bypass the global blocklist or hard rules. It only skips the
   newcomer-oriented semantic stages such as fake-admin and Bayes checks.
 - `internal/telegram` is the only package allowed to depend on the Telegram
@@ -206,10 +215,19 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
 - An album is judged on the part that carries its text, not on `parts[0]`:
   Telegram allows the caption on any item and delivers parts unordered. Exactly
   one part is judged — `Decide` feeds the flood windows as a side effect.
-- Enforcement without evidence is limited to externally verifiable signals (a
-  CAS/LOLS blocklist hit). Everything probabilistic fails closed when the
-  evidence copy fails, because the buttons under that copy are the only way to
-  reverse the sanction. Either way the admin chat is told.
+- Enforcement without evidence is limited to verdicts that do not rest on our
+  own judgement: an externally verifiable signal (a CAS/LOLS blocklist hit) and
+  a moderator's explicit `/spam` or `/ban` (`manual_spam` / `manual_ban`).
+  Everything probabilistic fails closed when the evidence copy fails, because
+  the buttons under that copy are the only way to reverse the sanction. The
+  copy exists so a human can check a machine verdict, which is why it cannot be
+  a precondition for the human's OWN verdict — the moderator typed the command
+  as a reply, looking at the message, and failing closed there discards an
+  explicit order with no way back (a second `/spam` is "already handled", and
+  the evidence-failure card carries no enforce button). Either way the admin
+  chat is told, and the card names an action only when one follows. The axis is
+  who decided, never how sure: put a signal name here only if no detector can
+  emit it.
 - "No error from `copyMessages`" is NOT "the evidence is in the admin chat".
   Telegram silently skips messages it cannot copy (a quiz poll — whose option
   texts the detectors do read) and reports success, so the returned id list

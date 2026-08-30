@@ -54,10 +54,13 @@ detection:
     # Domains that are always treated as spam links, regardless of trust.
     # Default: [].
     banned_domains: []
-    # Document extensions and MIME types that are always treated as spam,
-    # regardless of trust. Store the type, never the filename, in audit data
-    # and optional LLM metadata. Useful for executable attachments in chats
-    # where members have no legitimate reason to share them. Default: [].
+    # File extensions and MIME types that are always treated as spam,
+    # regardless of trust. Matched against EVERY attachment kind that carries
+    # a name or MIME type — document, video, animation, audio, voice — because
+    # which one a file is uploaded as is the sender's choice. Store the type,
+    # never the filename, in audit data and optional LLM metadata. Useful for
+    # executable attachments in chats where members have no legitimate reason
+    # to share them. Default: [].
     banned_document_extensions: [] # e.g. [".apk", ".exe"]
     banned_document_mime_types: [] # e.g. ["application/vnd.android.package-archive"]
     # Entries that match only when they are the WHOLE message, after
