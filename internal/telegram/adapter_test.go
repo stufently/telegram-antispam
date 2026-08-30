@@ -357,6 +357,37 @@ func TestFileMetadataComesFromEveryAttachmentKind(t *testing.T) {
 			wantExt:  nil,
 			wantMIME: []string{apkMIME},
 		},
+		{
+			// Live photo, like voice, carries a MIME type and no file_name.
+			// collectMediaKinds has listed "live_photo" all along, so reading
+			// nothing off the field was the same gap as the video one.
+			name:     "live photo",
+			mutate:   func(m *models.Message) { m.LivePhoto = &models.LivePhoto{MimeType: apkMIME} },
+			external: func(r *models.ExternalReplyInfo) { r.LivePhoto = &models.LivePhoto{MimeType: apkMIME} },
+			wantExt:  nil,
+			wantMIME: []string{apkMIME},
+		},
+		{
+			// Paid media is the one attachment whose file sits one level down:
+			// the field is a LIST, and only its video variant carries
+			// file_name/mime_type. Nil-checking the top-level field alone sees
+			// the attachment and reads nothing out of it.
+			name:     "paid media video",
+			mutate:   func(m *models.Message) { m.PaidMedia = paidMediaWithVideo() },
+			external: func(r *models.ExternalReplyInfo) { r.PaidMedia = paidMediaWithVideo() },
+			wantExt:  []string{".apk"},
+			wantMIME: []string{apkMIME},
+		},
+		{
+			// The preview and photo variants carry no file metadata at all, so
+			// the walk must skip them and still reach the video behind them
+			// rather than stopping at the first item.
+			name:     "paid media video behind a preview and a photo",
+			mutate:   func(m *models.Message) { m.PaidMedia = paidMediaPreviewPhotoVideo() },
+			external: func(r *models.ExternalReplyInfo) { r.PaidMedia = paidMediaPreviewPhotoVideo() },
+			wantExt:  []string{".apk"},
+			wantMIME: []string{apkMIME},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &models.Message{
@@ -441,6 +472,53 @@ func TestFileMetadataRejectsWhatIsNotATypeName(t *testing.T) {
 			wantExt:  nil,
 			wantMIME: nil,
 		},
+		{
+			// The shape check alone accepts this: digits are legal in an
+			// extension. What it would emit as "extension" is the sender's
+			// phone number — exactly the personal data discarding the filename
+			// was meant to prevent, relabelled as a file type.
+			name:     "a phone number after the last dot is not an extension",
+			fileName: "report.66812345678",
+			mimeType: "application/pdf",
+			wantExt:  nil,
+			wantMIME: []string{"application/pdf"},
+		},
+		{
+			// The same trick without a pretext of a name.
+			name:     "a bare number after the last dot is not an extension",
+			fileName: "прайс.2026",
+			mimeType: "",
+			wantExt:  nil,
+			wantMIME: nil,
+		},
+		{
+			// A file type is a name, and every real one has a letter in it —
+			// including the ones that also have a digit.
+			name:     "digits are fine as long as the extension is still a name",
+			fileName: "архив.7Z",
+			mimeType: "video/mp4",
+			wantExt:  []string{".7z"},
+			wantMIME: []string{"video/mp4"},
+		},
+		{
+			// Two words joined by a slash satisfy the MIME token alphabet
+			// perfectly, and the sender picks this field: without a check on
+			// the top-level type, a link travels out labelled "MIME type".
+			name:     "a link is not a MIME type",
+			fileName: "list.apk",
+			mimeType: "t.me/joinchat",
+			wantExt:  []string{".apk"},
+			wantMIME: nil,
+		},
+		{
+			// ASCII, slash-shaped and entirely made up. Only the closed
+			// top-level registry can tell it from a media type.
+			name:     "an invented top-level type is not a MIME type",
+			fileName: "list.apk",
+			mimeType: "answer/ham",
+			wantExt:  []string{".apk"},
+			wantMIME: nil,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			doc := &models.Document{FileID: "doc1", FileName: tc.fileName, MimeType: tc.mimeType}
@@ -469,12 +547,45 @@ func TestFileMetadataRejectsWhatIsNotATypeName(t *testing.T) {
 			// expectations above: no fragment of the sender's own words may
 			// survive anywhere in the metadata.
 			for _, value := range append(append([]string{}, got.DocumentExtensions...), got.DocumentMIMETypes...) {
-				if strings.Contains(value, "подробности") || strings.Contains(value, "instructions") {
+				if strings.Contains(value, "подробности") || strings.Contains(value, "instructions") ||
+					strings.Contains(value, "66812345678") || strings.Contains(value, "t.me") {
 					t.Fatalf("filename or MIME text leaked into metadata: %q", value)
 				}
 			}
 		})
 	}
+}
+
+// paidMediaWithVideo builds the paid-media block Telegram delivers for a
+// single paid video: one item, typed "video", carrying a full models.Video.
+func paidMediaWithVideo() *models.PaidMediaInfo {
+	return &models.PaidMediaInfo{
+		StarCount: 25,
+		PaidMedia: []models.PaidMedia{{
+			Type: models.PaidMediaTypeVideo,
+			Video: &models.PaidMediaVideo{
+				Video: models.Video{
+					FileID:   "v1",
+					FileName: "list.APK",
+					MimeType: "application/vnd.android.package-archive",
+				},
+			},
+		}},
+	}
+}
+
+// paidMediaPreviewPhotoVideo puts the video last, behind the two variants that
+// carry no file metadata.
+func paidMediaPreviewPhotoVideo() *models.PaidMediaInfo {
+	info := &models.PaidMediaInfo{
+		StarCount: 25,
+		PaidMedia: []models.PaidMedia{
+			{Type: models.PaidMediaTypePreview, Preview: &models.PaidMediaPreview{Width: 4, Height: 4}},
+			{Type: models.PaidMediaTypePhoto, Photo: &models.PaidMediaPhoto{Photo: []models.PhotoSize{{FileID: "p"}}}},
+		},
+	}
+	info.PaidMedia = append(info.PaidMedia, paidMediaWithVideo().PaidMedia...)
+	return info
 }
 
 func assertStrings(t *testing.T, what string, got, want []string) {

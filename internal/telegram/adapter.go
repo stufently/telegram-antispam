@@ -145,10 +145,17 @@ func ToDomainMessage(m *models.Message) domain.Message {
 // Which field a file arrives in is the sender's choice, not a property of the
 // file: `list.apk` sent as a video is `video` with `file_name` and `mime_type`
 // exactly like the document version, and the Bot API puts `file_name` and
-// `mime_type` on video, animation and audio, and `mime_type` on voice. Reading
-// only `document` therefore made every attachment rule — the `.apk` block
-// among them — bypassable by changing how the client uploads the file, while
-// MediaKinds already listed those very types.
+// `mime_type` on video, animation and audio, and `mime_type` on voice and on
+// live_photo. Reading only `document` therefore made every attachment rule —
+// the `.apk` block among them — bypassable by changing how the client uploads
+// the file, while MediaKinds already listed those very types.
+//
+// paid_media is the one field whose file does not sit on the field itself: it
+// is a LIST of items, and the video variant carries a full `Video` (file_name
+// and mime_type included) one level down. A collector that only nil-checks the
+// top-level field sees "an attachment is here" and reads nothing from it,
+// which is the same bypass wearing a different hat — MediaKinds has listed
+// `paid_media` all along.
 //
 // The filename itself is never kept: it is attacker-controlled and may contain
 // personal data, and it would widen both the persisted audit row and the
@@ -162,6 +169,11 @@ func collectFileMetadata(m *models.Message) (extensions, mimeTypes []string) {
 		return nil, nil
 	}
 	var meta fileMetadataList
+	meta.addPaidMedia(m.PaidMedia)
+	if lp := m.LivePhoto; lp != nil {
+		// Live photo has no file_name in the Bot API — only a MIME type.
+		meta.add("", lp.MimeType)
+	}
 	if v := m.Video; v != nil {
 		meta.add(v.FileName, v.MimeType)
 	}
@@ -182,8 +194,9 @@ func collectFileMetadata(m *models.Message) (extensions, mimeTypes []string) {
 }
 
 // collectExternalReplyFileMetadata is collectFileMetadata for the parent of a
-// cross-chat reply. It reads the same five attachment fields in the same
-// order, for the same reason collectExternalReplyMediaKinds exists: an
+// cross-chat reply. It reads the same seven attachment fields in the same
+// order — `external_reply` carries paid_media and live_photo just as a full
+// message does — for the same reason collectExternalReplyMediaKinds exists: an
 // asymmetry between the two would mean the same `.apk` is seen when it is
 // replied to from inside the chat and missed when it is replied to from
 // outside — which is precisely the shape the carrier/comment spam pair takes.
@@ -192,6 +205,10 @@ func collectExternalReplyFileMetadata(r *models.ExternalReplyInfo) (extensions, 
 		return nil, nil
 	}
 	var meta fileMetadataList
+	meta.addPaidMedia(r.PaidMedia)
+	if lp := r.LivePhoto; lp != nil {
+		meta.add("", lp.MimeType)
+	}
 	if v := r.Video; v != nil {
 		meta.add(v.FileName, v.MimeType)
 	}
@@ -227,18 +244,71 @@ func (f *fileMetadataList) add(fileName, mimeType string) {
 	}
 }
 
+// addPaidMedia reads the attachments nested inside a paid-media block. Only
+// the video variant carries file metadata: `PaidMediaPreview` is a size/
+// duration stub and `PaidMediaPhoto` is a photo, neither of which has a
+// file_name or a mime_type to read. The list is walked in the order Telegram
+// sent it, so the resulting metadata is as reproducible as every other row.
+func (f *fileMetadataList) addPaidMedia(info *models.PaidMediaInfo) {
+	if info == nil {
+		return
+	}
+	for _, item := range info.PaidMedia {
+		if item.Video != nil {
+			f.add(item.Video.Video.FileName, item.Video.Video.MimeType)
+		}
+	}
+}
+
 func (f fileMetadataList) result() (extensions, mimeTypes []string) {
 	return f.extensions, f.mimeTypes
 }
 
 // extensionPattern is what an extension has to look like to be kept, and it is
 // deliberately strict: a short run of ASCII letters and digits after a dot.
+//
+// The two limits are a conscious trade, not an oversight, and they are drawn
+// on the side of never letting the sender's own words out. ASCII-only means a
+// non-Latin extension is dropped; 12 characters means `.sqlite-wal` (a hyphen,
+// so it fails the alphabet too) and any longer real suffix is dropped as well.
+// What is lost is a type name nobody moderates on; what is bought is that a
+// filename can never masquerade as one. MediaKinds still says what the
+// attachment IS, so a dropped extension costs no detection.
 var extensionPattern = regexp.MustCompile(`^\.[a-z0-9]{1,12}$`)
 
 // mimeTypePattern is type/subtype in the RFC 2045 token alphabet, which is
 // what "application/vnd.android.package-archive" and every real Telegram MIME
 // type look like. Anything else is not a MIME type, whatever it claims.
+//
+// The 64-character cap per component is below RFC 6838's 127, for the same
+// reason as the extension cap: the longest real Telegram MIME type is far
+// shorter, and the only thing the extra room could carry is sender text.
 var mimeTypePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}/[a-z0-9][a-z0-9!#$&^_.+-]{0,63}$`)
+
+// mimeTopLevelTypes is the complete IANA registry of top-level types (RFC 2046
+// plus the later additions). The registry is closed — new top-level types
+// require a standards action — so membership can be checked against a literal
+// list rather than a shape.
+//
+// This is what stops "t.me/joinchat" and friends: they satisfy the token
+// alphabet perfectly, so shape alone accepts any two words joined by a slash
+// and calls the result a MIME type. The subtype cannot be checked the same way
+// — it is an open registry with thousands of entries plus legal `x-`/`vnd.`
+// space — so a value like "text/answer_ham" still passes. What the closed
+// top-level list buys is that whatever passes is at least SHAPED like a media
+// type and cannot be an arbitrary phrase or a link.
+var mimeTopLevelTypes = map[string]struct{}{
+	"application": {},
+	"audio":       {},
+	"example":     {},
+	"font":        {},
+	"image":       {},
+	"message":     {},
+	"model":       {},
+	"multipart":   {},
+	"text":        {},
+	"video":       {},
+}
 
 // sanitizedExtension returns the file's extension, or "" when the trailing
 // part of the name is not one.
@@ -255,9 +325,21 @@ var mimeTypePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}/[a-z0
 // So the extension is not merely derived, it is checked, and anything that
 // does not look like one is dropped silently: a name with no usable extension
 // tells moderation nothing that MediaKinds has not already said.
+//
+// Shape alone is not enough, because digits are legal in an extension and
+// legal in far worse things: "report.66812345678" ends in a run of digits that
+// the pattern happily accepts, and what would then travel into the audit row
+// and the LLM line is a PHONE NUMBER the sender put in the filename — the
+// personal data the filename was discarded to avoid, re-emitted under the
+// label "extension". A file type is a NAME, so at least one ASCII letter is
+// required: every real extension has one (.apk, .mp4, .7z), and a pure number
+// after a dot is a version, a date, a serial or a contact — never a type.
 func sanitizedExtension(fileName string) string {
 	extension := strings.ToLower(path.Ext(strings.TrimSpace(fileName)))
 	if !extensionPattern.MatchString(extension) {
+		return ""
+	}
+	if !strings.ContainsFunc(extension, func(r rune) bool { return r >= 'a' && r <= 'z' }) {
 		return ""
 	}
 	return extension
@@ -270,12 +352,23 @@ func sanitizedExtension(fileName string) string {
 // (detect.canonicalMIMEType): a charset or boundary parameter is sender-
 // controlled free text, so leaving it on the value would carry it into the
 // audit row and the LLM payload even though no rule ever looks at it.
+//
+// The value is then checked twice, and the second check is the one that makes
+// it a TYPE rather than a string with a slash in it. The token alphabet is
+// permissive by design — it has to admit "application/vnd.android.package-
+// archive" — so on its own it accepts "t.me/joinchat" too, and the sender
+// picks this field. The top-level half is therefore matched against the closed
+// IANA registry; the subtype half cannot be (see mimeTopLevelTypes).
 func sanitizedMIMEType(mimeType string) string {
 	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
 	if base, _, found := strings.Cut(mimeType, ";"); found {
 		mimeType = strings.TrimSpace(base)
 	}
 	if !mimeTypePattern.MatchString(mimeType) {
+		return ""
+	}
+	topLevel, _, _ := strings.Cut(mimeType, "/")
+	if _, ok := mimeTopLevelTypes[topLevel]; !ok {
 		return ""
 	}
 	return mimeType
