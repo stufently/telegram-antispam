@@ -199,6 +199,70 @@ func TestReprocessGuardSkipsDuplicate(t *testing.T) {
 	}
 }
 
+// TestEvidenceFailureManualVerdictStillActs is the other half of the evidence
+// gate. The copy exists so a HUMAN can check a machine verdict, so there is
+// nothing left to check when the human IS the verdict: /spam and /ban are
+// typed as a reply, by someone looking at the message.
+//
+// The regression it pins was total and silent. A quiz poll is not copyable —
+// Telegram skips it and reports success — so an explicit /spam on one used to
+// end with no ban, no delete and no way back: a second /spam hits the
+// "already handled" branch, and the evidence-failure card is drawn without an
+// enforce button on purpose.
+//
+// The card is asserted too, not just the calls: the same branch also decides
+// whether the card claims the action, and a card reading "nothing applied"
+// over a real mute is the mirror-image defect.
+func TestEvidenceFailureManualVerdictStillActs(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		signal   string
+		action   domain.Action
+		sanction string
+	}{
+		// The two shapes a moderator command takes; see internal/admin.
+		{"manual spam mutes", "manual_spam", domain.ActionDeleteMute, "RestrictMember"},
+		{"manual ban bans", "manual_ban", domain.ActionBan, "BanMember"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := fake.New()
+			// The production case: copyMessages succeeds and copies nothing.
+			f.CopyOmit = 1
+			repo := &stubRepo{fresh: true}
+			m := New(f, repo, 999)
+			inc := liveIncident(false)
+			inc.Verdict.Action = tc.action
+			inc.Verdict.Reason = tc.signal
+			inc.Verdict.Signals = []domain.Signal{{Name: tc.signal, Detail: "by=1 cmd_msg=2"}}
+
+			if err := m.Handle(context.Background(), inc); err != nil {
+				t.Fatalf("a moderator's order must be carried out, got err %v", err)
+			}
+			var sanctioned, deleted bool
+			for _, c := range f.Calls() {
+				if c == tc.sanction {
+					sanctioned = true
+				}
+				if c == "DeleteMessages" {
+					deleted = true
+				}
+			}
+			if !sanctioned || !deleted {
+				t.Fatalf("manual verdict must %s and delete despite the failed copy; calls=%v", tc.sanction, f.Calls())
+			}
+			if repo.state != domain.StateDone {
+				t.Fatalf("final state = %v, want done", repo.state)
+			}
+			if !strings.Contains(f.LastAdmin.Text, "applying "+string(tc.action)) {
+				t.Fatalf("card must name the action it is applying, got %q", f.LastAdmin.Text)
+			}
+			if strings.Contains(f.LastAdmin.Text, "not acting") {
+				t.Fatalf("card must not say the verdict was dropped, got %q", f.LastAdmin.Text)
+			}
+		})
+	}
+}
+
 func TestEvidenceFailureNotifiesAdminWhetherOrNotItActs(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

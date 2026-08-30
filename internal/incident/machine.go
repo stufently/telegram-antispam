@@ -172,9 +172,13 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 			Text: formatCard(id, inc, chatTitle, fmt.Sprintf("evidence copy failed: %v; %s", copyErr, tail), acting && !inc.DryRun),
 		}
 		if m.buttonsFor != nil {
-			// No enforce button on this card, even in dry-run: the evidence
-			// copy is what failed, so the moderator is being asked to act on
-			// a message they cannot see. Undo and evidence buttons stay.
+			// No enforce button on this card, in either branch. When the
+			// verdict is not acted on, the moderator would be asked to act
+			// on a message they cannot see; when it IS acted on (a blocklist
+			// hit, or the moderator's own /spam — see actsWithoutEvidence)
+			// the sanction happens right below and the button would only
+			// re-apply it. Undo and evidence buttons stay either way, so an
+			// acting card is still reversible.
 			msg.Buttons = m.buttonsFor(key, false)
 		}
 		_, sendErr := m.port.SendAdmin(ctx, m.adminChatID, msg)
@@ -271,14 +275,31 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 // message, so acting with no evidence produces a mute nobody can review.
 //
 // Confidence is not the right axis either. What matters is whether the
-// verdict rests on OUR judgement or on an external fact: a CAS/LOLS
+// verdict rests on OUR judgement or on a fact outside it: a CAS/LOLS
 // blocklist hit is a globally published ban that an admin can verify
 // without the copied message, while bayes / llm / behavior are exactly the
-// calls a human is supposed to double-check. So only the blocklist acts
-// blind; everything else fails closed and merely reports.
+// calls a human is supposed to double-check. Those fail closed and merely
+// report.
+//
+// A moderator's /spam or /ham is the same kind of exception as the
+// blocklist, arriving from the other direction: the evidence copy exists so
+// that a HUMAN can check a machine verdict, and there is nothing to check
+// when the human is the one who issued it. They typed the command as a reply
+// to the message, looking at it — the copy would only be showing them back
+// what they had already read. Failing closed here does not protect anyone;
+// it silently discards an explicit order, and leaves no way out: a second
+// /spam hits the "already handled" branch, and the evidence-failure card is
+// drawn without an enforce button on purpose. So a manual verdict acts, and
+// the card says it acted.
+//
+// The boundary is exactly "who decided", not "how sure": every detector,
+// including the LLM, stamps Confidence 1.0, so nothing but the signal name
+// distinguishes a probabilistic guess from a human decision. Only signal
+// names that no detector can produce belong in this list.
 func actsWithoutEvidence(v domain.Verdict) bool {
 	for _, s := range v.Signals {
-		if s.Name == "blocklist" {
+		switch s.Name {
+		case "blocklist", "manual_spam", "manual_ban":
 			return true
 		}
 	}
