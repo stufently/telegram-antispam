@@ -157,6 +157,19 @@ successful source can advance independently. The LLM stage is disabled by
 default, bounded by a timeout, and errors toward not-spam. No message text is
 sent to an LLM unless the stage is explicitly enabled.
 
+What that stage is shown is assembled by `llmMessageText` in the wiring layer,
+not by the cascade: the message text, one line of the message's own structural
+facts (attachment kinds, document extension/MIME, forwarded, inline keyboard),
+and — when the message is a reply and `domain.Message.ReplyTo` carries an
+attachment — a second, separately labelled line with that parent's attachment
+types. The parent's TEXT is not sent: it is another person's message, and the
+signal a carrier/comment pair produces lives in the type of the file, not in
+its caption. The reply parent stops there. It is deliberately NOT threaded into
+`detect.Normalize` or `NormalizedMessage`, so no hard rule, behavioral window or
+Bayes score can fire on an attachment the sender did not post — replying to a
+malicious file is what a warning looks like, and only the fail-open, advisory
+LLM stage is allowed to weigh that context.
+
 The audit row records a verdict, not an outcome: it is written at the pending
 stage, before the dry-run gate and before anything is applied. The daily
 digest therefore joins each audit row to its incident's `dry_run` (immutable

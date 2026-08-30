@@ -114,6 +114,38 @@ func TestToDomainMessageCaptionEntities(t *testing.T) {
 	}
 }
 
+// The LLM stage reads the reply parent's attachment type to make sense of a
+// bare comment under a carrier message, so the adapter must carry that type
+// across — and, as everywhere else, only the type: the filename stays out.
+func TestToDomainMessageReplyParentCarriesDocumentMetadata(t *testing.T) {
+	m := &models.Message{
+		ID:   8,
+		Chat: models.Chat{ID: -100123, Type: models.ChatTypeSupergroup},
+		From: &models.User{ID: 7},
+		Text: "Обновили наконец !",
+		ReplyToMessage: &models.Message{
+			ID:   7,
+			Chat: models.Chat{ID: -100123, Type: models.ChatTypeSupergroup},
+			From: &models.User{ID: 7},
+			Document: &models.Document{
+				FileID:   "doc1",
+				FileName: "Play VPN.apk",
+				MimeType: "application/vnd.android.package-archive",
+			},
+		},
+	}
+	got := ToDomainMessage(m)
+	if got.ReplyTo == nil {
+		t.Fatal("reply parent dropped")
+	}
+	if len(got.ReplyTo.MediaKinds) != 1 || got.ReplyTo.MediaKinds[0] != "document" {
+		t.Fatalf("parent media kinds = %v, want [document]", got.ReplyTo.MediaKinds)
+	}
+	if len(got.ReplyTo.DocumentExtensions) != 1 || got.ReplyTo.DocumentExtensions[0] != ".apk" {
+		t.Fatalf("parent document extensions = %v, want [.apk]", got.ReplyTo.DocumentExtensions)
+	}
+}
+
 func TestToDomainMessageMediaKindsAreNamedNotJustCounted(t *testing.T) {
 	m := &models.Message{
 		ID:    9,

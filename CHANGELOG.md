@@ -8,6 +8,25 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-08-30
+
+### Changed
+
+- The optional LLM stage now also sees the attachment types of the message a
+  reply points at. A spammer split the payload from the pitch: the `.apk` went
+  out alone, and a separate one-line reply ("Обновили наконец !") sold it. That
+  reply carried no attachment, no link and no known words, so it reached the
+  model as three innocuous words with nothing to point at and came back HAM.
+  The judged message's own metadata line is unchanged; a second line
+  (`[сообщение, на которое отвечают: ...]`) is added only when the parent
+  actually carries an attachment. The parent's TEXT is never sent — it belongs
+  to another person, and what makes the comment spam is the kind of file above
+  it, not the words in it.
+- Hard rules deliberately still ignore the reply parent: replying to an `.apk`
+  is also what someone warning "не ставьте, это вирус" does, so an automatic
+  `delete_mute` on such a reply would be a false ban. The reply context reaches
+  only the advisory, fail-open LLM stage.
+
 ## [0.15.0] - 2026-08-27
 
 ### Added

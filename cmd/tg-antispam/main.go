@@ -1083,7 +1083,9 @@ func senderKindFor(inc store.IncidentRow) domain.SenderKind {
 }
 
 // llmMessageText renders what the LLM is asked to judge: the message text,
-// prefixed by one line of structural facts when the message has any.
+// prefixed by one line of structural facts when the message has any, and by a
+// second line describing the message it REPLIES to when that one carries an
+// attachment.
 //
 // The prefix IS new data leaving the process: attachment type names and two
 // booleans that were not sent before. They are structural, not personal — no
@@ -1092,7 +1094,41 @@ func senderKindFor(inc store.IncidentRow) domain.SenderKind {
 // facts change the reading of the same words: "подробности в лс" under a forwarded
 // channel post with an inline keyboard is a different message from the same
 // sentence typed by hand, and until now the model could not tell.
+//
+// The reply line widens that statement again, and the honest version is that
+// the attachment TYPES of another person's message now go to the provider too.
+// Its TEXT deliberately does not. The gap this closes is a carrier/comment
+// pair: the spammer posts the .apk alone and sells it from a separate short
+// reply ("Обновили наконец !"), which reaches the model as three innocuous
+// words with nothing to point at. What makes those words spam is the KIND of
+// file above them, not the sentence in it — so sending the parent's words
+// would enlarge the third-party payload of every reply in the chat and buy
+// nothing the type does not already say.
+//
+// The parent's shape flags (forwarded, keyboard) are left out for the same
+// reason: replying under a forwarded channel post is ordinary chat behavior
+// and would tag most replies in an active chat, while an attachment type is
+// rare and sharp.
 func llmMessageText(m domain.Message) string {
+	var lines []string
+	if facts := structuralFacts(m); len(facts) > 0 {
+		lines = append(lines, "[метаданные сообщения: "+strings.Join(facts, "; ")+"]")
+	}
+	if m.ReplyTo != nil {
+		if facts := attachmentFacts(*m.ReplyTo); len(facts) > 0 {
+			lines = append(lines, "[сообщение, на которое отвечают: "+strings.Join(facts, "; ")+"]")
+		}
+	}
+	if len(lines) == 0 {
+		return m.Text
+	}
+	return strings.Join(lines, "\n") + "\n" + m.Text
+}
+
+// attachmentFacts renders the attachment type metadata of a message. It is
+// shared between the judged message and its reply parent so the two can never
+// describe the same attachment in two different wordings.
+func attachmentFacts(m domain.Message) []string {
 	var facts []string
 	if len(m.MediaKinds) > 0 {
 		facts = append(facts, "вложение: "+strings.Join(m.MediaKinds, ", "))
@@ -1103,6 +1139,14 @@ func llmMessageText(m domain.Message) string {
 	if len(m.DocumentMIMETypes) > 0 {
 		facts = append(facts, "MIME документов: "+strings.Join(m.DocumentMIMETypes, ", "))
 	}
+	return facts
+}
+
+// structuralFacts renders everything the LLM is told about the judged message
+// itself: its attachment types plus the shape flags that only make sense for
+// the message actually under judgement.
+func structuralFacts(m domain.Message) []string {
+	facts := attachmentFacts(m)
 	switch {
 	case m.ForwardedFromChat:
 		facts = append(facts, "переслано из канала или группы")
@@ -1118,10 +1162,7 @@ func llmMessageText(m domain.Message) string {
 			facts = append(facts, "кнопки под сообщением: такое может прислать только бот")
 		}
 	}
-	if len(facts) == 0 {
-		return m.Text
-	}
-	return "[метаданные сообщения: " + strings.Join(facts, "; ") + "]\n" + m.Text
+	return facts
 }
 
 // hasBorderline reports whether a verdict carries the cascade's

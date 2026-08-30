@@ -49,7 +49,12 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
   any chat mode** — a picture is a hint, not proof. Off by default (`media_caption_min_len`).
 - **Message shape as an LLM signal** — attachment kinds, "forwarded from a channel" and
   "carries an inline keyboard" are passed to the LLM alongside the text, because the same
-  words read differently under a relayed channel post than typed by hand.
+  words read differently under a relayed channel post than typed by hand. When the message
+  is a reply and the message it answers carries an attachment, the LLM is also told what
+  KIND of attachment that was — a bare "обновили наконец" reads differently under an `.apk`
+  than under a holiday photo. Only the attachment type crosses; the other person's text
+  never does, and the hard rules keep judging attachments on their own message only, so
+  warning someone off a malicious file is not itself punishable.
 - **Evidence-backed moderation** — evidence is copied to a private admin chat, followed by a
   card **posted as a reply to that copy**, so the pairing survives interleaving: incidents from
   different chats are processed in parallel and an album copies several messages per card, which

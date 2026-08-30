@@ -80,3 +80,26 @@ func TestReportedAPKIsAHardMatchByDocumentType(t *testing.T) {
 		t.Fatalf("APK passed: hit=%v signal=%+v", hit, sig)
 	}
 }
+
+// A banned attachment condemns its own message and no other. Replying to an
+// .apk is exactly what the person warning "не ставьте, это вирус" does, and an
+// automatic delete_mute on that reply would be a false ban with no text
+// evidence behind it — so the reply parent must stay out of detection, and the
+// context it carries goes only to the (advisory, fail-open) LLM stage.
+func TestReplyToABannedDocumentIsNotItselfAHardMatch(t *testing.T) {
+	r := Rules{
+		BannedDocumentExtensions: []string{".apk"},
+		BannedDocumentMIMETypes:  []string{"application/vnd.android.package-archive"},
+	}
+	msg := domain.Message{
+		Text: "не ставьте это, вирус",
+		ReplyTo: &domain.Message{
+			MediaKinds:         []string{"document"},
+			DocumentExtensions: []string{".apk"},
+			DocumentMIMETypes:  []string{"application/vnd.android.package-archive"},
+		},
+	}
+	if sig, hit := r.Check(Normalize(msg), false); hit {
+		t.Fatalf("the reply carries no attachment of its own, got signal %+v", sig)
+	}
+}
