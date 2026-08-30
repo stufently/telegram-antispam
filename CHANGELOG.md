@@ -22,10 +22,26 @@ Entries start life under **Unreleased** and are moved under a version heading wh
   actually carries an attachment. The parent's TEXT is never sent — it belongs
   to another person, and what makes the comment spam is the kind of file above
   it, not the words in it.
-- Hard rules deliberately still ignore the reply parent: replying to an `.apk`
-  is also what someone warning "не ставьте, это вирус" does, so an automatic
-  `delete_mute` on such a reply would be a false ban. The reply context reaches
-  only the advisory, fail-open LLM stage.
+- That covers BOTH shapes of reply, which matters because the case that got
+  through was the second one: the `.apk` had been posted in a private channel,
+  and a reply across chats arrives with `reply_to_message` EMPTY, the parent
+  described in `external_reply` instead. Reading only `reply_to_message` would
+  have fixed a case that was never the problem. The external parent's
+  attachment types are carried on their own `domain.Message` fields
+  (`ExternalReplyMediaKinds`, `ExternalReplyDocumentExtensions`,
+  `ExternalReplyDocumentMIMETypes`) and rendered by the same function as the
+  in-chat one, so the two can never describe the same `.apk` differently.
+  Exactly one parent line is emitted, whichever way the parent arrived.
+- The external parent is deliberately NOT reconstructed into `ReplyTo`, even
+  though that would have been the shorter patch. `ReplyTo` is what a
+  moderator's `/spam` and `/ham` act on — it names the message to delete and
+  the author to ban — and an external reply points at a message id in a chat
+  the bot does not moderate. A synthetic parent there would silently re-aim an
+  admin command outside the chat.
+- Hard rules deliberately still ignore the reply parent, in-chat or external:
+  replying to an `.apk` is also what someone warning "не ставьте, это вирус"
+  does, so an automatic `delete_mute` on such a reply would be a false ban. The
+  reply context reaches only the advisory, fail-open LLM stage.
 
 ## [0.15.0] - 2026-08-27
 

@@ -103,3 +103,28 @@ func TestReplyToABannedDocumentIsNotItselfAHardMatch(t *testing.T) {
 		t.Fatalf("the reply carries no attachment of its own, got signal %+v", sig)
 	}
 }
+
+// Same rule for the cross-chat form of a reply, which arrives on different
+// fields entirely (external_reply, not reply_to_message) and so could easily
+// have been wired into detection while the in-chat one stayed out. Warning
+// people off a file posted in some channel is, if anything, MORE ordinary than
+// warning them off one posted here.
+func TestExternalReplyToABannedDocumentIsNotItselfAHardMatch(t *testing.T) {
+	r := Rules{
+		BannedDocumentExtensions: []string{".apk"},
+		BannedDocumentMIMETypes:  []string{"application/vnd.android.package-archive"},
+	}
+	msg := domain.Message{
+		Text:                            "не ставьте это, вирус",
+		ExternalReplyMediaKinds:         []string{"document"},
+		ExternalReplyDocumentExtensions: []string{".apk"},
+		ExternalReplyDocumentMIMETypes:  []string{"application/vnd.android.package-archive"},
+	}
+	n := Normalize(msg)
+	if len(n.MediaKinds) != 0 || len(n.DocumentExtensions) != 0 || len(n.DocumentMIMETypes) != 0 {
+		t.Fatalf("the external reply's attachment reached normalization: %+v", n)
+	}
+	if sig, hit := r.Check(n, false); hit {
+		t.Fatalf("the reply carries no attachment of its own, got signal %+v", sig)
+	}
+}

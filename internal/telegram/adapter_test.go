@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/go-telegram/bot/models"
@@ -143,6 +144,92 @@ func TestToDomainMessageReplyParentCarriesDocumentMetadata(t *testing.T) {
 	}
 	if len(got.ReplyTo.DocumentExtensions) != 1 || got.ReplyTo.DocumentExtensions[0] != ".apk" {
 		t.Fatalf("parent document extensions = %v, want [.apk]", got.ReplyTo.DocumentExtensions)
+	}
+}
+
+// The actual 2026-08-29 miss: the .apk was posted in a private channel and the
+// selling one-liner replied to it from the group. Telegram delivers that as an
+// EMPTY reply_to_message plus an external_reply, so a fix that reads only
+// reply_to_message would have left the real case uncovered.
+func TestToDomainMessageExternalReplyCarriesDocumentMetadata(t *testing.T) {
+	m := &models.Message{
+		ID:   9,
+		Chat: models.Chat{ID: -100123, Type: models.ChatTypeSupergroup},
+		From: &models.User{ID: 7},
+		Text: "Обновили наконец !",
+		ExternalReply: &models.ExternalReplyInfo{
+			Origin:    models.MessageOrigin{Type: models.MessageOriginTypeChannel},
+			Chat:      &models.Chat{ID: -100999, Type: models.ChatTypeChannel},
+			MessageID: 42,
+			Document: &models.Document{
+				FileID:   "doc1",
+				FileName: "Play VPN.apk",
+				MimeType: "Application/Vnd.Android.Package-Archive ",
+			},
+		},
+	}
+	got := ToDomainMessage(m)
+	if len(got.ExternalReplyMediaKinds) != 1 || got.ExternalReplyMediaKinds[0] != "document" {
+		t.Fatalf("external reply media kinds = %v, want [document]", got.ExternalReplyMediaKinds)
+	}
+	if len(got.ExternalReplyDocumentExtensions) != 1 || got.ExternalReplyDocumentExtensions[0] != ".apk" {
+		t.Fatalf("external reply extensions = %v, want [.apk]", got.ExternalReplyDocumentExtensions)
+	}
+	if len(got.ExternalReplyDocumentMIMETypes) != 1 ||
+		got.ExternalReplyDocumentMIMETypes[0] != "application/vnd.android.package-archive" {
+		t.Fatalf("external reply MIME types = %v", got.ExternalReplyDocumentMIMETypes)
+	}
+}
+
+// An external reply must NOT be reconstructed into ReplyTo, however convenient
+// that would be for the LLM prefix. ReplyTo is what internal/admin resolves as
+// the TARGET of a moderator's /spam and /ham: whatever sits there gets deleted
+// and its author banned. An external reply names a message id in ANOTHER chat
+// — here a private channel the bot does not moderate — so a synthetic parent
+// would silently re-aim the admin's command outside the moderated chat.
+func TestExternalReplyDoesNotBecomeTheAdminCommandTarget(t *testing.T) {
+	m := &models.Message{
+		ID:   9,
+		Chat: models.Chat{ID: -100123, Type: models.ChatTypeSupergroup},
+		From: &models.User{ID: 7},
+		Text: "Обновили наконец !",
+		ExternalReply: &models.ExternalReplyInfo{
+			Origin:    models.MessageOrigin{Type: models.MessageOriginTypeChannel},
+			Chat:      &models.Chat{ID: -100999, Type: models.ChatTypeChannel},
+			MessageID: 42,
+			Document:  &models.Document{FileID: "doc1", FileName: "Play VPN.apk"},
+		},
+	}
+	if got := ToDomainMessage(m); got.ReplyTo != nil {
+		t.Fatalf("external reply leaked into ReplyTo (chat %d, message %d): /spam would target another chat",
+			got.ReplyTo.ChatID, got.ReplyTo.MessageID)
+	}
+}
+
+// The parent's filename is as attacker-controlled here as anywhere else, and
+// its text belongs to someone in a chat the bot does not even moderate.
+func TestExternalReplyKeepsFilenameAndTextOut(t *testing.T) {
+	m := &models.Message{
+		ID:   9,
+		Chat: models.Chat{ID: -100123, Type: models.ChatTypeSupergroup},
+		From: &models.User{ID: 7},
+		Text: "ага",
+		ExternalReply: &models.ExternalReplyInfo{
+			Origin:   models.MessageOrigin{Type: models.MessageOriginTypeChannel},
+			Document: &models.Document{FileID: "doc1", FileName: "Play VPN.apk"},
+		},
+	}
+	got := ToDomainMessage(m)
+	for _, value := range append(append([]string{}, got.ExternalReplyMediaKinds...),
+		append(got.ExternalReplyDocumentExtensions, got.ExternalReplyDocumentMIMETypes...)...) {
+		if strings.Contains(strings.ToLower(value), "play vpn") {
+			t.Fatalf("filename retained in %q", value)
+		}
+	}
+	// No Quote means the replier chose to include no excerpt, so nothing of
+	// the parent's own text may appear.
+	if got.ExternalReplyText != "" {
+		t.Fatalf("external reply text = %q, want empty without a quote", got.ExternalReplyText)
 	}
 }
 

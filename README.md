@@ -52,9 +52,16 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
   words read differently under a relayed channel post than typed by hand. When the message
   is a reply and the message it answers carries an attachment, the LLM is also told what
   KIND of attachment that was — a bare "обновили наконец" reads differently under an `.apk`
-  than under a holiday photo. Only the attachment type crosses; the other person's text
-  never does, and the hard rules keep judging attachments on their own message only, so
-  warning someone off a malicious file is not itself punishable.
+  than under a holiday photo. This covers a reply to a message **in this chat** and a reply
+  **across chats** alike: when the parent lives in a channel or a group the bot is not in,
+  Telegram sends no `reply_to_message` at all and describes the parent in `external_reply`
+  instead, which is precisely the shape a carrier posted to a private channel takes. Either
+  way the LLM gets one parent line, worded identically. The external parent is kept on its
+  own fields and never folded into the in-chat reply, because that one is the target a
+  moderator's `/spam` and `/ham` act on and it must never point at a message outside the
+  moderated chat. Only the attachment type crosses; the other person's text never does, and
+  the hard rules keep judging attachments on their own message only, so warning someone off
+  a malicious file is not itself punishable.
 - **Evidence-backed moderation** — evidence is copied to a private admin chat, followed by a
   card **posted as a reply to that copy**, so the pairing survives interleaving: incidents from
   different chats are processed in parallel and an album copies several messages per card, which

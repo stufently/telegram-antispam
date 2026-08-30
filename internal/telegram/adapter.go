@@ -43,6 +43,18 @@ func ToDomainMessage(m *models.Message) domain.Message {
 		externalReplyText = m.Quote.Text
 	}
 
+	// A reply whose parent lives in another chat (a channel, a group the bot
+	// is not in) arrives with reply_to_message EMPTY and the parent described
+	// in external_reply instead. Its attachment types are read here so the
+	// LLM stage sees the same context it gets for an in-chat reply; the parent
+	// itself is NOT reconstructed into ReplyTo, because that field is what
+	// /spam and /ham act on and it must never point outside this chat.
+	var externalReplyMediaKinds, externalReplyDocumentExtensions, externalReplyDocumentMIMETypes []string
+	if m.ExternalReply != nil {
+		externalReplyMediaKinds = collectExternalReplyMediaKinds(m.ExternalReply)
+		externalReplyDocumentExtensions, externalReplyDocumentMIMETypes = documentMetadata(m.ExternalReply.Document)
+	}
+
 	var pollOptionTexts []string
 	if m.Poll != nil {
 		for _, opt := range m.Poll.Options {
@@ -106,6 +118,11 @@ func ToDomainMessage(m *models.Message) domain.Message {
 		Entities:           entities,
 		SenderTag:          m.SenderTag,
 		ExternalReplyText:  externalReplyText,
+
+		ExternalReplyMediaKinds:         externalReplyMediaKinds,
+		ExternalReplyDocumentExtensions: externalReplyDocumentExtensions,
+		ExternalReplyDocumentMIMETypes:  externalReplyDocumentMIMETypes,
+
 		PollOptionTexts:    pollOptionTexts,
 		EditDate:           int64(m.EditDate),
 		MediaKinds:         mediaKinds,
@@ -146,35 +163,84 @@ func documentMetadata(doc *models.Document) (extensions, mimeTypes []string) {
 // message with no text a text detector can read, which is the whole point of
 // tracking media at all.
 func collectMediaKinds(m *models.Message) []string {
-	kinds := make([]string, 0, 2)
-	add := func(present bool, name string) {
-		if present {
-			kinds = append(kinds, name)
-		}
-	}
-	add(m.Photo != nil, "photo")
-	add(m.PaidMedia != nil, "paid_media")
-	add(m.LivePhoto != nil, "live_photo")
-	add(m.Video != nil, "video")
-	add(m.VideoNote != nil, "video_note")
-	add(m.Animation != nil, "animation")
-	add(m.Audio != nil, "audio")
-	add(m.Voice != nil, "voice")
-	add(m.Document != nil, "document")
-	add(m.Sticker != nil, "sticker")
-	add(m.Story != nil, "story")
-	add(m.Contact != nil, "contact")
-	add(m.Poll != nil, "poll")
-	add(m.Dice != nil, "dice")
-	add(m.Game != nil, "game")
-	add(m.Venue != nil, "venue")
-	add(m.Location != nil, "location")
-	add(m.Invoice != nil, "invoice")
-	add(m.Checklist != nil, "checklist")
-	if len(kinds) == 0 {
+	var kinds mediaKindList
+	kinds.add(m.Photo != nil, "photo")
+	kinds.add(m.PaidMedia != nil, "paid_media")
+	kinds.add(m.LivePhoto != nil, "live_photo")
+	kinds.add(m.Video != nil, "video")
+	kinds.add(m.VideoNote != nil, "video_note")
+	kinds.add(m.Animation != nil, "animation")
+	kinds.add(m.Audio != nil, "audio")
+	kinds.add(m.Voice != nil, "voice")
+	kinds.add(m.Document != nil, "document")
+	kinds.add(m.Sticker != nil, "sticker")
+	kinds.add(m.Story != nil, "story")
+	kinds.add(m.Contact != nil, "contact")
+	kinds.add(m.Poll != nil, "poll")
+	kinds.add(m.Dice != nil, "dice")
+	kinds.add(m.Game != nil, "game")
+	kinds.add(m.Venue != nil, "venue")
+	kinds.add(m.Location != nil, "location")
+	kinds.add(m.Invoice != nil, "invoice")
+	kinds.add(m.Checklist != nil, "checklist")
+	return kinds.result()
+}
+
+// collectExternalReplyMediaKinds is collectMediaKinds for the parent of a
+// cross-chat reply, which Telegram delivers as external_reply rather than as a
+// full message. The names and the order are deliberately identical to
+// collectMediaKinds: the two lists end up in the same sentence template, and
+// a "photo" here against a "picture" there would make the same attachment read
+// as two different things depending on where the parent happened to live.
+//
+// external_reply also carries giveaway and giveaway_winners, which a full
+// message has too and collectMediaKinds does not list; they stay out here for
+// the same reason, so the two functions keep describing the same vocabulary.
+func collectExternalReplyMediaKinds(r *models.ExternalReplyInfo) []string {
+	if r == nil {
 		return nil
 	}
-	return kinds
+	var kinds mediaKindList
+	kinds.add(r.Photo != nil, "photo")
+	kinds.add(r.PaidMedia != nil, "paid_media")
+	kinds.add(r.LivePhoto != nil, "live_photo")
+	kinds.add(r.Video != nil, "video")
+	kinds.add(r.VideoNote != nil, "video_note")
+	kinds.add(r.Animation != nil, "animation")
+	kinds.add(r.Audio != nil, "audio")
+	kinds.add(r.Voice != nil, "voice")
+	kinds.add(r.Document != nil, "document")
+	kinds.add(r.Sticker != nil, "sticker")
+	kinds.add(r.Story != nil, "story")
+	kinds.add(r.Contact != nil, "contact")
+	kinds.add(r.Poll != nil, "poll")
+	kinds.add(r.Dice != nil, "dice")
+	kinds.add(r.Game != nil, "game")
+	kinds.add(r.Venue != nil, "venue")
+	kinds.add(r.Location != nil, "location")
+	kinds.add(r.Invoice != nil, "invoice")
+	kinds.add(r.Checklist != nil, "checklist")
+	return kinds.result()
+}
+
+// mediaKindList is the shared accumulator behind both collectors, so the
+// "append this name when the field is set" mechanics exist once and the two
+// lists differ only in the fields they read.
+type mediaKindList []string
+
+func (k *mediaKindList) add(present bool, name string) {
+	if present {
+		*k = append(*k, name)
+	}
+}
+
+// result returns nil rather than an empty slice, so "no attachment" is one
+// value everywhere instead of two.
+func (k mediaKindList) result() []string {
+	if len(k) == 0 {
+		return nil
+	}
+	return k
 }
 
 // toDomainEntities maps library message entities to domain entities. Type is

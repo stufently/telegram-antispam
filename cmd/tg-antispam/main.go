@@ -1105,6 +1105,13 @@ func senderKindFor(inc store.IncidentRow) domain.SenderKind {
 // would enlarge the third-party payload of every reply in the chat and buy
 // nothing the type does not already say.
 //
+// "The message it replies to" covers BOTH ways Telegram delivers a parent.
+// The real 2026-08-29 miss was a cross-chat reply — the .apk sat in a private
+// channel — and for those reply_to_message is empty, the parent arriving in
+// external_reply instead. Reading only reply_to_message would have described
+// exactly the in-chat case that was never the problem. Either way exactly one
+// parent line is emitted; see replyParentFacts.
+//
 // The parent's shape flags (forwarded, keyboard) are left out for the same
 // reason: replying under a forwarded channel post is ordinary chat behavior
 // and would tag most replies in an active chat, while an attachment type is
@@ -1114,10 +1121,8 @@ func llmMessageText(m domain.Message) string {
 	if facts := structuralFacts(m); len(facts) > 0 {
 		lines = append(lines, "[метаданные сообщения: "+strings.Join(facts, "; ")+"]")
 	}
-	if m.ReplyTo != nil {
-		if facts := attachmentFacts(*m.ReplyTo); len(facts) > 0 {
-			lines = append(lines, "[сообщение, на которое отвечают: "+strings.Join(facts, "; ")+"]")
-		}
+	if facts := replyParentFacts(m); len(facts) > 0 {
+		lines = append(lines, "[сообщение, на которое отвечают: "+strings.Join(facts, "; ")+"]")
 	}
 	if len(lines) == 0 {
 		return m.Text
@@ -1125,19 +1130,38 @@ func llmMessageText(m domain.Message) string {
 	return strings.Join(lines, "\n") + "\n" + m.Text
 }
 
-// attachmentFacts renders the attachment type metadata of a message. It is
-// shared between the judged message and its reply parent so the two can never
-// describe the same attachment in two different wordings.
-func attachmentFacts(m domain.Message) []string {
+// replyParentFacts describes the ONE message this one answers, whichever of
+// the two ways Telegram delivered it: reply_to_message for a parent in this
+// chat, external_reply for a parent in another one (a channel, a group the bot
+// is not in), where reply_to_message is empty and the domain envelope carries
+// the parent's attachment types in its ExternalReply* fields instead.
+//
+// The two sources are read in that order and only one is ever used, so no
+// combination of update fields can produce two parent lines. In-chat wins
+// because it is the richer record; in practice Telegram populates one or the
+// other, not both.
+func replyParentFacts(m domain.Message) []string {
+	if m.ReplyTo != nil {
+		return attachmentFacts(m.ReplyTo.MediaKinds, m.ReplyTo.DocumentExtensions, m.ReplyTo.DocumentMIMETypes)
+	}
+	return attachmentFacts(m.ExternalReplyMediaKinds, m.ExternalReplyDocumentExtensions, m.ExternalReplyDocumentMIMETypes)
+}
+
+// attachmentFacts renders attachment type metadata. It takes the three slices
+// rather than a domain.Message so that the judged message, an in-chat reply
+// parent and a cross-chat one all pass through this one function: an external
+// reply is not a domain.Message and never becomes one, and a second renderer
+// for it would be free to drift into a second wording for the same .apk.
+func attachmentFacts(mediaKinds, documentExtensions, documentMIMETypes []string) []string {
 	var facts []string
-	if len(m.MediaKinds) > 0 {
-		facts = append(facts, "вложение: "+strings.Join(m.MediaKinds, ", "))
+	if len(mediaKinds) > 0 {
+		facts = append(facts, "вложение: "+strings.Join(mediaKinds, ", "))
 	}
-	if len(m.DocumentExtensions) > 0 {
-		facts = append(facts, "расширения документов: "+strings.Join(m.DocumentExtensions, ", "))
+	if len(documentExtensions) > 0 {
+		facts = append(facts, "расширения документов: "+strings.Join(documentExtensions, ", "))
 	}
-	if len(m.DocumentMIMETypes) > 0 {
-		facts = append(facts, "MIME документов: "+strings.Join(m.DocumentMIMETypes, ", "))
+	if len(documentMIMETypes) > 0 {
+		facts = append(facts, "MIME документов: "+strings.Join(documentMIMETypes, ", "))
 	}
 	return facts
 }
@@ -1146,7 +1170,7 @@ func attachmentFacts(m domain.Message) []string {
 // itself: its attachment types plus the shape flags that only make sense for
 // the message actually under judgement.
 func structuralFacts(m domain.Message) []string {
-	facts := attachmentFacts(m)
+	facts := attachmentFacts(m.MediaKinds, m.DocumentExtensions, m.DocumentMIMETypes)
 	switch {
 	case m.ForwardedFromChat:
 		facts = append(facts, "переслано из канала или группы")

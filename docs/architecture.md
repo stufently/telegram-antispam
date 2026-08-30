@@ -160,11 +160,31 @@ sent to an LLM unless the stage is explicitly enabled.
 What that stage is shown is assembled by `llmMessageText` in the wiring layer,
 not by the cascade: the message text, one line of the message's own structural
 facts (attachment kinds, document extension/MIME, forwarded, inline keyboard),
-and — when the message is a reply and `domain.Message.ReplyTo` carries an
-attachment — a second, separately labelled line with that parent's attachment
-types. The parent's TEXT is not sent: it is another person's message, and the
-signal a carrier/comment pair produces lives in the type of the file, not in
-its caption. The reply parent stops there. It is deliberately NOT threaded into
+and — when the message is a reply whose parent carries an attachment — a
+second, separately labelled line with that parent's attachment types. The
+parent's TEXT is not sent: it is another person's message, and the signal a
+carrier/comment pair produces lives in the type of the file, not in its
+caption.
+
+Telegram delivers that parent in one of two ways, and `llmMessageText` reads
+both. A reply within the chat arrives as `reply_to_message` and reaches the
+domain envelope as `domain.Message.ReplyTo`. A reply **across chats** — the
+parent lives in a channel or a group the bot is not in — arrives with
+`reply_to_message` EMPTY and the parent described in `external_reply`; the
+adapter reads its attachment types into the separate
+`ExternalReplyMediaKinds` / `ExternalReplyDocumentExtensions` /
+`ExternalReplyDocumentMIMETypes` fields. `replyParentFacts` picks whichever of
+the two is present (in-chat first, as the richer record) and renders it through
+the same `attachmentFacts` helper as the judged message itself, so exactly one
+parent line is emitted and the same `.apk` cannot be described in two wordings.
+
+The external parent stays out of `ReplyTo` on purpose. `ReplyTo` is what
+`internal/admin` resolves as the TARGET of a moderator's `/spam` and `/ham` —
+the message to delete, the author to ban — and an external reply names a
+message id in a chat this bot does not moderate; a synthetic parent there would
+silently re-aim an admin command outside the chat.
+
+The reply parent stops at the LLM stage. Neither form is threaded into
 `detect.Normalize` or `NormalizedMessage`, so no hard rule, behavioral window or
 Bayes score can fire on an attachment the sender did not post — replying to a
 malicious file is what a warning looks like, and only the fail-open, advisory

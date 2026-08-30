@@ -34,8 +34,25 @@ type Message struct {
 	Entities           []Entity
 	SenderTag          string
 	ExternalReplyText  string
-	PollOptionTexts    []string
-	EditDate           int64
+	// ExternalReplyMediaKinds, ExternalReplyDocumentExtensions and
+	// ExternalReplyDocumentMIMETypes describe the attachment of a message that
+	// is replied to from ANOTHER chat (Telegram's external_reply). Telegram
+	// leaves reply_to_message empty in that case and hands the parent over in
+	// external_reply instead, so without these fields a cross-chat reply looks
+	// like a message with no parent at all — which is exactly the shape the
+	// carrier/comment spam pair takes when the file sits in a channel.
+	//
+	// They are deliberately NOT folded into ReplyTo: that field is the target
+	// of the moderator's /spam and /ham commands, and a synthetic parent would
+	// aim those commands at a message id in a chat the bot does not moderate.
+	// Only the attachment TYPES cross; the parent's text is not carried here
+	// (ExternalReplyText above predates this and carries only the quote the
+	// replier chose to include).
+	ExternalReplyMediaKinds         []string
+	ExternalReplyDocumentExtensions []string
+	ExternalReplyDocumentMIMETypes  []string
+	PollOptionTexts                 []string
+	EditDate                        int64
 	// MediaKinds lists the attachment types this message carries, by their
 	// Bot API field names ("photo", "video", "voice", ...). It replaces the
 	// earlier single HasMedia flag, which told a detector that SOMETHING was

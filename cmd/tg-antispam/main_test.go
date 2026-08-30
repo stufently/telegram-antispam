@@ -98,3 +98,51 @@ func TestLLMMessageTextKeepsBothLinesSeparate(t *testing.T) {
 		t.Fatalf("got:\n%q\nwant:\n%q", got, want)
 	}
 }
+
+// The production miss as it ACTUALLY arrived: the .apk sat in a private
+// channel, so Telegram sent no reply_to_message at all and described the
+// parent in external_reply. The parent line must read identically to the
+// in-chat case — the model is being told the same fact either way.
+func TestLLMMessageTextDescribesACrossChatReplyParent(t *testing.T) {
+	got := llmMessageText(domain.Message{
+		Text:                            "Обновили наконец !",
+		ExternalReplyMediaKinds:         []string{"document"},
+		ExternalReplyDocumentExtensions: []string{".apk"},
+	})
+	const want = "[сообщение, на которое отвечают: вложение: document; расширения документов: .apk]\n" +
+		"Обновили наконец !"
+	if got != want {
+		t.Fatalf("got:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+// One parent, one line. The two sources are alternatives, not additions, and
+// no combination of fields may produce a second "на которое отвечают" line for
+// the model to reconcile.
+func TestLLMMessageTextEmitsOneParentLineAtMost(t *testing.T) {
+	got := llmMessageText(domain.Message{
+		Text: "ага",
+		ReplyTo: &domain.Message{
+			MediaKinds:         []string{"document"},
+			DocumentExtensions: []string{".apk"},
+		},
+		ExternalReplyMediaKinds:         []string{"photo"},
+		ExternalReplyDocumentExtensions: []string{".exe"},
+	})
+	if n := strings.Count(got, "[сообщение, на которое отвечают:"); n != 1 {
+		t.Fatalf("parent lines = %d, want exactly 1:\n%q", n, got)
+	}
+	if strings.Contains(got, ".exe") {
+		t.Fatalf("the in-chat parent is the richer record and must win:\n%q", got)
+	}
+}
+
+func TestLLMMessageTextIgnoresACrossChatReplyWithoutAttachment(t *testing.T) {
+	got := llmMessageText(domain.Message{
+		Text:              "согласен",
+		ExternalReplyText: "погода сегодня отличная",
+	})
+	if got != "согласен" {
+		t.Fatalf("a quoted parent with no attachment must add no line at all, got %q", got)
+	}
+}
