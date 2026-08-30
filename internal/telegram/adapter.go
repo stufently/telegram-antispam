@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"path"
+	"regexp"
 	"strings"
 
 	"github.com/go-telegram/bot/models"
@@ -52,7 +53,7 @@ func ToDomainMessage(m *models.Message) domain.Message {
 	var externalReplyMediaKinds, externalReplyDocumentExtensions, externalReplyDocumentMIMETypes []string
 	if m.ExternalReply != nil {
 		externalReplyMediaKinds = collectExternalReplyMediaKinds(m.ExternalReply)
-		externalReplyDocumentExtensions, externalReplyDocumentMIMETypes = documentMetadata(m.ExternalReply.Document)
+		externalReplyDocumentExtensions, externalReplyDocumentMIMETypes = collectExternalReplyFileMetadata(m.ExternalReply)
 	}
 
 	var pollOptionTexts []string
@@ -63,7 +64,7 @@ func ToDomainMessage(m *models.Message) domain.Message {
 	}
 
 	mediaKinds := collectMediaKinds(m)
-	documentExtensions, documentMIMETypes := documentMetadata(m.Document)
+	documentExtensions, documentMIMETypes := collectFileMetadata(m)
 
 	// A forward is recorded as two facts, not one: that it IS a forward, and
 	// whether it came from a channel/group rather than a person. Only the
@@ -137,21 +138,147 @@ func ToDomainMessage(m *models.Message) domain.Message {
 	}
 }
 
-// documentMetadata keeps only the type information needed for moderation.
-// The filename itself is attacker-controlled and may contain personal data;
-// retaining it would widen both persisted audit data and the optional LLM
-// payload for no detection benefit beyond its final extension.
-func documentMetadata(doc *models.Document) (extensions, mimeTypes []string) {
-	if doc == nil {
+// collectFileMetadata keeps only the type information needed for moderation,
+// from EVERY attachment that carries a filename or a MIME type — not just
+// document.
+//
+// Which field a file arrives in is the sender's choice, not a property of the
+// file: `list.apk` sent as a video is `video` with `file_name` and `mime_type`
+// exactly like the document version, and the Bot API puts `file_name` and
+// `mime_type` on video, animation and audio, and `mime_type` on voice. Reading
+// only `document` therefore made every attachment rule — the `.apk` block
+// among them — bypassable by changing how the client uploads the file, while
+// MediaKinds already listed those very types.
+//
+// The filename itself is never kept: it is attacker-controlled and may contain
+// personal data, and it would widen both the persisted audit row and the
+// optional LLM payload for no detection benefit beyond its final extension.
+// What is kept is validated, not merely trimmed — see sanitizedExtension.
+//
+// Order is fixed (and matches collectMediaKinds) so an audit row and a signal
+// detail stay stable across restarts and diffable.
+func collectFileMetadata(m *models.Message) (extensions, mimeTypes []string) {
+	if m == nil {
 		return nil, nil
 	}
-	if extension := strings.ToLower(path.Ext(strings.TrimSpace(doc.FileName))); extension != "" {
-		extensions = []string{extension}
+	var meta fileMetadataList
+	if v := m.Video; v != nil {
+		meta.add(v.FileName, v.MimeType)
 	}
-	if mimeType := strings.ToLower(strings.TrimSpace(doc.MimeType)); mimeType != "" {
-		mimeTypes = []string{mimeType}
+	if a := m.Animation; a != nil {
+		meta.add(a.FileName, a.MimeType)
 	}
-	return extensions, mimeTypes
+	if a := m.Audio; a != nil {
+		meta.add(a.FileName, a.MimeType)
+	}
+	if v := m.Voice; v != nil {
+		// Voice has no file_name in the Bot API — only a MIME type.
+		meta.add("", v.MimeType)
+	}
+	if d := m.Document; d != nil {
+		meta.add(d.FileName, d.MimeType)
+	}
+	return meta.result()
+}
+
+// collectExternalReplyFileMetadata is collectFileMetadata for the parent of a
+// cross-chat reply. It reads the same five attachment fields in the same
+// order, for the same reason collectExternalReplyMediaKinds exists: an
+// asymmetry between the two would mean the same `.apk` is seen when it is
+// replied to from inside the chat and missed when it is replied to from
+// outside — which is precisely the shape the carrier/comment spam pair takes.
+func collectExternalReplyFileMetadata(r *models.ExternalReplyInfo) (extensions, mimeTypes []string) {
+	if r == nil {
+		return nil, nil
+	}
+	var meta fileMetadataList
+	if v := r.Video; v != nil {
+		meta.add(v.FileName, v.MimeType)
+	}
+	if a := r.Animation; a != nil {
+		meta.add(a.FileName, a.MimeType)
+	}
+	if a := r.Audio; a != nil {
+		meta.add(a.FileName, a.MimeType)
+	}
+	if v := r.Voice; v != nil {
+		meta.add("", v.MimeType)
+	}
+	if d := r.Document; d != nil {
+		meta.add(d.FileName, d.MimeType)
+	}
+	return meta.result()
+}
+
+// fileMetadataList is the shared accumulator behind both collectors, so the
+// "sanitize, then append when non-empty" mechanics exist once and the two
+// functions differ only in the fields they read.
+type fileMetadataList struct {
+	extensions []string
+	mimeTypes  []string
+}
+
+func (f *fileMetadataList) add(fileName, mimeType string) {
+	if extension := sanitizedExtension(fileName); extension != "" {
+		f.extensions = append(f.extensions, extension)
+	}
+	if mt := sanitizedMIMEType(mimeType); mt != "" {
+		f.mimeTypes = append(f.mimeTypes, mt)
+	}
+}
+
+func (f fileMetadataList) result() (extensions, mimeTypes []string) {
+	return f.extensions, f.mimeTypes
+}
+
+// extensionPattern is what an extension has to look like to be kept, and it is
+// deliberately strict: a short run of ASCII letters and digits after a dot.
+var extensionPattern = regexp.MustCompile(`^\.[a-z0-9]{1,12}$`)
+
+// mimeTypePattern is type/subtype in the RFC 2045 token alphabet, which is
+// what "application/vnd.android.package-archive" and every real Telegram MIME
+// type look like. Anything else is not a MIME type, whatever it claims.
+var mimeTypePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}/[a-z0-9][a-z0-9!#$&^_.+-]{0,63}$`)
+
+// sanitizedExtension returns the file's extension, or "" when the trailing
+// part of the name is not one.
+//
+// path.Ext is not a validator: it returns EVERYTHING after the last dot, so a
+// file named "отчёт.2 подробности в личку" yields an "extension" of
+// ".2 подробности в личку" — the attacker-controlled filename, unchanged and
+// merely relabelled. That string is persisted in the audit row and, when the
+// LLM stage is on, sent to the provider inside the metadata line, where it
+// reads as an authoritative fact about the message rather than as text its
+// sender chose. Both are exactly what discarding the filename was supposed to
+// prevent, and the second is a prompt-injection channel on top.
+//
+// So the extension is not merely derived, it is checked, and anything that
+// does not look like one is dropped silently: a name with no usable extension
+// tells moderation nothing that MediaKinds has not already said.
+func sanitizedExtension(fileName string) string {
+	extension := strings.ToLower(path.Ext(strings.TrimSpace(fileName)))
+	if !extensionPattern.MatchString(extension) {
+		return ""
+	}
+	return extension
+}
+
+// sanitizedMIMEType returns the attachment's MIME type without its parameters,
+// or "" when what arrived is not a MIME type at all.
+//
+// The parameters are cut here rather than only in the rule that compares them
+// (detect.canonicalMIMEType): a charset or boundary parameter is sender-
+// controlled free text, so leaving it on the value would carry it into the
+// audit row and the LLM payload even though no rule ever looks at it.
+func sanitizedMIMEType(mimeType string) string {
+	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
+	if base, _, found := strings.Cut(mimeType, ";"); found {
+		mimeType = strings.TrimSpace(base)
+	}
+	if !mimeTypePattern.MatchString(mimeType) {
+		return ""
+	}
+	return mimeType
 }
 
 // collectMediaKinds lists the attachment types present on a message, using

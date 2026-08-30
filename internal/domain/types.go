@@ -61,10 +61,23 @@ type Message struct {
 	// detector at all. Empty means no attachment.
 	MediaKinds []string
 	// DocumentExtensions and DocumentMIMETypes carry only the non-identifying
-	// type metadata of a Telegram document. The original filename is
+	// type metadata of a file attachment. The original filename is
 	// deliberately discarded: an operator can block executable attachment
 	// types and an LLM can understand the risk without sending or persisting a
 	// user-controlled filename. Slices preserve every type in a media group.
+	//
+	// Despite the names they are NOT limited to Telegram's `document`: the Bot
+	// API puts file_name and mime_type on video, animation and audio too, and
+	// mime_type on voice, and WHICH of those a file arrives in is the sender's
+	// choice rather than a property of the file. The names are kept because
+	// the operator-facing config keys (banned_document_extensions,
+	// banned_document_mime_types) are part of the published interface.
+	//
+	// The values are validated, not merely lowercased: an extension is kept
+	// only when it looks like one and a MIME type only when it parses as
+	// type/subtype, because path.Ext returns everything after the last dot and
+	// would otherwise smuggle the whole filename through under a type's name.
+	// See telegram.sanitizedExtension.
 	DocumentExtensions []string
 	DocumentMIMETypes  []string
 	// Forwarded is true when the message carries a forward_origin, i.e. it
