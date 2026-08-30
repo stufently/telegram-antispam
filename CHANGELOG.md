@@ -41,6 +41,25 @@ Entries start life under **Unreleased** and are moved under a version heading wh
   the adapter, so the guarantee covers stored data and the LLM payload alike,
   and the parameter-stripping no longer exists only inside the rule that
   compares values.
+- A validated shape was still not a type, and the sender picks the shape.
+  Digits are legal in an extension, so `report.66812345678` passed validation
+  and emitted a PHONE NUMBER as the file's "extension" — into the audit row and
+  the LLM metadata line, which is the exact leak discarding the filename was
+  meant to prevent. An extension now has to contain at least one ASCII letter,
+  which every real one does (`.apk`, `.mp4`, `.7z`) and no version, date or
+  contact number can. The MIME token alphabet is equally permissive: two words
+  joined by a slash satisfy it, so `t.me/joinchat` passed as a "MIME type". The
+  top-level half is now matched against IANA's closed registry of ten
+  top-level types. The subtype cannot be checked this way — that registry is
+  open — so the boundary guarantees a value shaped like a media type, not a
+  true one.
+- Two more attachment fields are now read for file types: `live_photo` (a MIME
+  type, no file name, like `voice`) and the videos nested inside `paid_media`,
+  which is a LIST whose video items carry `file_name` and `mime_type` one level
+  down — a nil check on the field saw the attachment and read nothing out of
+  it. `MediaKinds` had been listing both all along, so this was the same
+  "the sender chooses which field the file arrives in" bypass as the video one.
+  Both are read symmetrically for a message and for an `external_reply` parent.
 
 ### Changed
 
@@ -74,6 +93,19 @@ Entries start life under **Unreleased** and are moved under a version heading wh
   replying to an `.apk` is also what someone warning "не ставьте, это вирус"
   does, so an automatic `delete_mute` on such a reply would be a false ban. The
   reply context reaches only the advisory, fail-open LLM stage.
+- Documentation corrected where it contradicted the code. `README.md` no longer
+  claims that a failed evidence copy always means "nothing applied";
+  `AGENTS.md` and the `admin.Commands` comment no longer promise the same
+  fail-closed behaviour for a human and for a detector, which the manual
+  exception directly below them already denied; `docs/architecture.md` no
+  longer denies that any part of a reply reaches `detect.Normalize` (the
+  quote the REPLIER attached does, and always did), and its
+  "current implementation boundaries" no longer describe the admin buttons as
+  acknowledging without unmuting, unbanning, deleting evidence or training —
+  they have done all four for some time. The deliberate narrowness of the
+  extension and MIME patterns (ASCII, 12 characters, 64 per MIME component
+  against RFC 6838's 127) is now stated where the contract is described, so it
+  reads as the privacy trade it is rather than as a bug.
 
 ## [0.15.0] - 2026-08-27
 

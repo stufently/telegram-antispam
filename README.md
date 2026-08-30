@@ -70,8 +70,10 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
   between the copy and the card, the card is still sent, just unthreaded.) The card says what
   the copy cannot: `copyMessage` strips the origin by design, so the card
   carries the incident id, the reason, whether a sanction is being applied at all (a dry-run
-  chat, a review-only verdict and a failed evidence copy all say "nothing applied"), the chat (title and id), the
-  message id and the author (`@tag`, numeric id, display name). Attacker-controlled fields are
+  chat and a review-only verdict always say "nothing applied"; a failed evidence copy says it
+  only for a verdict that rests on the bot's own judgement, because a blocklist hit and a
+  moderator's own `/spam` or `/ban` still act and the card names the action), the chat (title
+  and id), the message id and the author (`@tag`, numeric id, display name). Attacker-controlled fields are
   sanitized and clipped — a newline or a right-to-left override in a display name would
   otherwise let a spammer forge a line of the card. Telegram silently skips messages it
   cannot copy (a quiz poll, say) and calls that a success, so "copied" is verified by

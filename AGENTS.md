@@ -109,7 +109,13 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   of the chat. `/spam` must build a `domain.Incident` and go through
   `incident.Machine`, never delete/mute on its own — a second implementation of
   "moderate" is how the manual and automatic paths drift apart (evidence order,
-  fail-closed-on-copy-failure and the undo buttons all live in the machine).
+  the evidence-copy-failure branch and the undo buttons all live in the
+  machine). One place to decide is not one outcome: that branch deliberately
+  treats the two differently — a probabilistic verdict stops without evidence,
+  a moderator's own `/spam` or `/ban` still acts (see "Enforcement without
+  evidence" below). The exception lives inside the machine too
+  (`actsWithoutEvidence`), keyed on the signal name, so it stays one
+  implementation rather than two.
   Command authorization is `admin.Handler.Authorized` (operators + a LIVE
   admin list), not the TTL `AdminCache`: a stale cache is fine for detection
   immunity and unacceptable for a destructive action. An unresolvable admin
@@ -157,13 +163,33 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   to explain and enforce the decision — and note that deriving is not
   validating: `path.Ext` returns everything after the last dot, so the name
   itself passes through unless the result is checked against what an extension
-  can look like. Same for a MIME type: parameters are cut and the value must
-  parse as `type/subtype`. Both checks live in the adapter, so the guarantee
-  covers persisted rows as well as the LLM payload.
+  can look like. Shape alone is not enough either, because the sender picks the
+  shape too: a run of digits after a dot satisfies any extension pattern and
+  can be a phone number, so an extension is kept only if it contains at least
+  one ASCII letter; and two tokens joined by a slash satisfy any MIME pattern
+  (`t.me/joinchat` does), so after the parameters are cut the top-level type is
+  matched against the closed IANA registry. Both checks live in the adapter, so
+  the guarantee covers persisted rows as well as the LLM payload.
+- Those checks are deliberately narrower than the specs allow, and the trade is
+  the point, not an oversight: extensions are ASCII-only and at most 12
+  characters (so `.sqlite-wal` and non-Latin suffixes are dropped), and each
+  MIME component is capped at 64 characters where RFC 6838 permits 127. What is
+  rejected is a type name no rule moderates on, and `MediaKinds` still says
+  what the attachment IS, so dropping it costs no detection — while every
+  character of extra room is room for sender-chosen text to leave the process
+  labelled as a type. Widen them only for a reason better than "the standard
+  allows it". The subtype half is unconstrained on purpose (its registry is
+  open), so a value like `text/answer_ham` does get through. What the boundary
+  guarantees is a value SHAPED like a media type, not a true one — the metadata
+  line stays sender-reported, so do not put anything in it that a reader, or a
+  model, would be entitled to trust absolutely.
 - Read that metadata from EVERY attachment field that carries it — document,
-  video, animation, audio, voice — and symmetrically for `external_reply`.
-  Which field a file arrives in is the sender's choice, so a rule that reads
-  only `document` is bypassed by uploading the same file as a video.
+  video, animation, audio, voice, live_photo, and the videos nested inside
+  paid_media — and symmetrically for `external_reply`, which carries the same
+  fields. Which field a file arrives in is the sender's choice, so a rule that
+  reads only `document` is bypassed by uploading the same file as a video. A
+  nil check on the top-level field is not reading it: paid_media is a LIST
+  whose video items carry file_name and mime_type one level down.
 - Trust does not bypass the global blocklist or hard rules. It only skips the
   newcomer-oriented semantic stages such as fake-admin and Bayes checks.
 - `internal/telegram` is the only package allowed to depend on the Telegram

@@ -142,17 +142,35 @@ first-hit-wins ordering:
 
 The file-type facts those rules read (and the LLM line below) are collected by
 the adapter from every attachment field that carries them — `document`,
-`video`, `animation`, `audio` and `voice`, plus the same five on
-`external_reply`. Which one a file arrives in is the sender's choice, not a
-property of the file, so a rule reading only `document` was bypassed by
-uploading the same `.apk` as a video. The filename is never kept, and that
-promise is enforced rather than assumed: `path.Ext` returns everything after
-the last dot, so an extension is kept only when it matches what an extension
-can look like, and a MIME type only when it parses as `type/subtype` once its
-parameters are cut. Anything else is dropped silently. The checks live in the
-adapter so they cover the persisted audit row as well as the LLM payload,
-where an unchecked filename would otherwise arrive as an authoritative-looking
-metadata fact — an injection channel on top of the privacy leak.
+`video`, `animation`, `audio`, `voice`, `live_photo`, and the videos nested
+inside `paid_media` — plus the same set on `external_reply`. Which one a file
+arrives in is the sender's choice, not a property of the file, so a rule
+reading only `document` was bypassed by uploading the same `.apk` as a video;
+and `paid_media` needs a walk rather than a nil check, because it is a list
+whose video items hold the `file_name` and `mime_type` one level down.
+
+The filename is never kept, and that promise is enforced rather than assumed.
+`path.Ext` returns everything after the last dot, so an extension is kept only
+when it matches what an extension can look like — and shape alone is not
+enough, since the sender picks the shape too: a trailing run of digits passes
+any pattern and may be a phone number, so at least one ASCII letter is
+required. A MIME type must parse as `type/subtype` once its parameters are cut,
+AND its top-level half must be one of the ten in IANA's closed registry;
+without that, `t.me/joinchat` is a perfectly well-formed "MIME type". Anything
+else is dropped silently. The checks live in the adapter so they cover the
+persisted audit row as well as the LLM payload, where an unchecked filename
+would otherwise arrive as an authoritative-looking metadata fact — an injection
+channel on top of the privacy leak.
+
+Both patterns are narrower than the standards allow, deliberately: extensions
+are ASCII-only and at most 12 characters, so `.sqlite-wal` and non-Latin
+suffixes are dropped, and each MIME component is capped at 64 characters where
+RFC 6838 permits 127. The values lost are type names no rule moderates on and
+`MediaKinds` still names the attachment, so the cost is nil and the gain is
+that no extra room exists for sender text to travel out labelled as a type. The
+subtype is not constrained the same way — that registry is open — so
+`text/answer_ham` still passes the boundary; metadata is reported, never
+established.
 
 Admin identities use a TTL cache, invalidated on `my_chat_member` updates and
 on the `chat_member` updates that actually touch the administrator roster
@@ -208,11 +226,20 @@ the message to delete, the author to ban — and an external reply names a
 message id in a chat this bot does not moderate; a synthetic parent there would
 silently re-aim an admin command outside the chat.
 
-The reply parent stops at the LLM stage. Neither form is threaded into
-`detect.Normalize` or `NormalizedMessage`, so no hard rule, behavioral window or
-Bayes score can fire on an attachment the sender did not post — replying to a
-malicious file is what a warning looks like, and only the fail-open, advisory
-LLM stage is allowed to weigh that context.
+The reply parent's ATTACHMENTS stop at the LLM stage. Neither form of them is
+threaded into `detect.Normalize` or `NormalizedMessage`, so no hard rule,
+behavioral window or Bayes score can fire on a file the sender did not post —
+replying to a malicious file is what a warning looks like, and only the
+fail-open, advisory LLM stage is allowed to weigh that context.
+
+Text is the older and narrower exception, and predates the attachment work:
+`Normalize` does concatenate `ExternalReplyText` into the blob it judges. That
+field is not the parent's message. The adapter fills it only when the parent is
+external AND the sender attached a quote (`m.Quote`), i.e. from the excerpt the
+REPLIER chose and shipped inside their own message — which is why it is judged
+like the rest of their text rather than as someone else's. The parent's own
+unquoted text is never read, in either reply form, and neither is an in-chat
+parent's text.
 
 The audit row records a verdict, not an outcome: it is written at the pending
 stage, before the dry-run gate and before anything is applied. The daily
@@ -264,11 +291,17 @@ what `main` wires today:
 
 - `chats.mode: owners_only` is validated but currently follows the same
   admission path as `auto`; no owner-registration gate is wired.
-- Admin buttons are RBAC-gated. `Confirm spam` and `False positive` record
-  idempotent incident labels, but production callbacks do not currently carry
-  evidence text, so online Bayes training is skipped. `Lift (no learn)` and
-  `Delete evidence` currently acknowledge the callback without unmuting,
-  unbanning, or deleting copied evidence.
+- Admin buttons are RBAC-gated and are real moderation, not bookkeeping:
+  `False positive` and `Lift (no learn)` call Telegram to unban or fully unmute
+  (`UnrestrictMember`, not a permissive `RestrictMember`), `Delete evidence`
+  deletes the copied messages, and `Confirm spam` / `False positive` /
+  `Enforce` train Bayes. Training reads the tokens captured at detection time
+  and stored with the incident, so the callback payload carries no evidence
+  text and does not need to; `Lift (no learn)` drops those tokens instead of
+  feeding them. Each incident admits one decision, so a press on an old card
+  answers "already decided" rather than issuing a fresh unban that might lift a
+  later, unrelated sanction. The one thing no button can do is restore deleted
+  messages — Telegram offers no such call — and the toast says so.
 - The store exposes chat disable and dry-run lifecycle primitives, but there is
   no operator command or HTTP admin surface wired to change them.
 - `quarantine`, sender-chat bans, and admin-markup editing exist in domain/port

@@ -77,10 +77,19 @@ func ParseCommand(text, botUsername string) (Command, bool) {
 // Commands executes moderator commands. It deliberately owns no moderation
 // logic of its own: /spam builds the same domain.Incident the cascade would
 // have built and hands it to the incident machine, so evidence copying,
-// fail-closed-on-copy-failure, sanction order and the admin-chat undo
-// buttons all behave identically whether a human or the detector found the
-// spam. A second, parallel implementation of "delete and mute" is exactly
+// sanction order, the evidence-copy-failure branch and the admin-chat undo
+// buttons are all decided in ONE place whether a human or the detector found
+// the spam. A second, parallel implementation of "delete and mute" is exactly
 // how the two paths would drift apart.
+//
+// One place is not one outcome. The machine treats a failed evidence copy
+// differently depending on who decided: a probabilistic verdict stops there,
+// because the copy is what would let a human overturn it, while a manual
+// /spam or /ban goes ahead, because the human IS that check and the copy would
+// only show them back the message they were replying to. The machine tells the
+// two apart by the signal name (incident.actsWithoutEvidence), which is why
+// the manual_spam / manual_ban reasons stamped below are load-bearing and not
+// merely descriptive.
 type Commands struct {
 	h           *Handler
 	botUsername string
