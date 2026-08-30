@@ -56,8 +56,9 @@ detection:
     banned_domains: []
     # File extensions and MIME types that are always treated as spam,
     # regardless of trust. Matched against EVERY attachment kind that carries
-    # a name or MIME type — document, video, animation, audio, voice — because
-    # which one a file is uploaded as is the sender's choice. Store the type,
+    # a name or MIME type — document, video, animation, audio, voice, live
+    # photo, and the videos inside a paid-media block — because which one a
+    # file is uploaded as is the sender's choice. Store the type,
     # never the filename, in audit data and optional LLM metadata. Useful for
     # executable attachments in chats where members have no legitimate reason
     # to share them. Default: [].

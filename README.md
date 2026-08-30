@@ -102,7 +102,8 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
   repeating "привет" five times earns credit once.
 - **Attachment, occurrence and whole-message rules** — configurable blocked file
   extensions/MIME types, read from every attachment kind that carries them (document, video,
-  animation, audio, voice) so the same `.apk` cannot slip past by being uploaded as a video;
+  animation, audio, voice, live photo, and the videos inside a paid-media block) so the same
+  `.apk` cannot slip past by being uploaded as a video;
   the filename itself is discarded, and what is kept has to look like a type name. Plus caps on links, mentions and emoji per
   message from an untrusted sender (counting repeats, not distinct values), plus a
   `deny_exact` list that matches only when the entry IS the whole message, for words too

@@ -122,9 +122,10 @@ type DetectionRules struct {
 	// the feature disabled; administrators remain immune in the cascade.
 	//
 	// The keys say "document" for compatibility, but the adapter feeds them
-	// the types of video, animation, audio and voice attachments too: which
-	// field a file arrives in is the sender's choice, so matching only
-	// `document` would make the block optional.
+	// the types of video, animation, audio, voice and live-photo attachments
+	// too, and of the videos nested inside a paid-media block: which field a
+	// file arrives in is the sender's choice, so matching only `document`
+	// would make the block optional.
 	BannedDocumentExtensions []string `yaml:"banned_document_extensions"`
 	BannedDocumentMIMETypes  []string `yaml:"banned_document_mime_types"`
 	// MaxLinks, MaxMentions and MaxEmoji cap occurrences in one message from
