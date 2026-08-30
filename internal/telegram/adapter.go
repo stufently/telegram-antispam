@@ -267,13 +267,14 @@ func (f fileMetadataList) result() (extensions, mimeTypes []string) {
 // extensionPattern is what an extension has to look like to be kept, and it is
 // deliberately strict: a short run of ASCII letters and digits after a dot.
 //
-// The two limits are a conscious trade, not an oversight, and they are drawn
-// on the side of never letting the sender's own words out. ASCII-only means a
-// non-Latin extension is dropped; 12 characters means `.sqlite-wal` (a hyphen,
-// so it fails the alphabet too) and any longer real suffix is dropped as well.
-// What is lost is a type name nobody moderates on; what is bought is that a
-// filename can never masquerade as one. MediaKinds still says what the
-// attachment IS, so a dropped extension costs no detection.
+// Both limits are a conscious trade, not an oversight, and both are drawn on
+// the side of never letting the sender's own words out. The alphabet excludes
+// non-Latin suffixes and punctuation, so `.sqlite-wal` (hyphen) is dropped;
+// the 12-character cap drops anything longer than a real type name. What is
+// lost is a type nobody moderates on; what is bought is that a filename cannot
+// masquerade as one, since every character of extra room is room for the
+// sender's text. MediaKinds still says what the attachment IS, so a dropped
+// extension costs no detection.
 var extensionPattern = regexp.MustCompile(`^\.[a-z0-9]{1,12}$`)
 
 // mimeTypePattern is type/subtype in the RFC 2045 token alphabet, which is
