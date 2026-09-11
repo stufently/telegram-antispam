@@ -8,6 +8,8 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-11
+
 ### Added
 
 - Optional `detection.rules.allow_google_maps_links` (default false). When
