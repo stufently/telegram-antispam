@@ -159,7 +159,7 @@ func collectLinks(entities []domain.Entity, entityText, raw string) []string {
 	var out []string
 	seen := make(map[string]bool)
 	add := func(s string) {
-		s = strings.TrimRight(s, ".,;:!?)\"'")
+		s = trimCollectedLink(s)
 		if s == "" || seen[s] {
 			return
 		}
@@ -181,6 +181,28 @@ func collectLinks(entities []domain.Entity, entityText, raw string) []string {
 		add(s)
 	}
 	return out
+}
+
+// trimCollectedLink strips trailing sentence punctuation from a collected
+// URL. A trailing period is punctuation ("see https://example.com."); a
+// ".." path segment is not, and must be kept so Maps matching cannot treat
+// https://google.com/maps/.. as the allowed /maps/ root.
+func trimCollectedLink(s string) string {
+	for s != "" {
+		last := s[len(s)-1]
+		switch last {
+		case ',', ';', ':', '!', '?', ')', '"', '\'':
+			s = s[:len(s)-1]
+		case '.':
+			if strings.HasSuffix(s, "..") {
+				return s
+			}
+			s = s[:len(s)-1]
+		default:
+			return s
+		}
+	}
+	return s
 }
 
 // collectMentions scans the raw text for @handle tokens. Order is

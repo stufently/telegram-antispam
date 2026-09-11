@@ -28,3 +28,29 @@ func TestNormalizeKeepsUnfoldedLookalikeHostsInLinks(t *testing.T) {
 		}
 	}
 }
+
+func TestCollectLinksKeepsDotDotPathSegment(t *testing.T) {
+	const raw = "https://google.com/maps/.."
+	n := Normalize(domain.Message{Text: "see " + raw})
+	if !contains(n.Links, raw) {
+		t.Fatalf("dot-dot path must not be trimmed to /maps/: %v", n.Links)
+	}
+	hidden := Normalize(domain.Message{
+		Text:     "here",
+		Entities: []domain.Entity{{Type: "text_link", URL: raw, Offset: 0, Length: 4}},
+	})
+	if !contains(hidden.Links, raw) {
+		t.Fatalf("text_link dot-dot path must be kept: %v", hidden.Links)
+	}
+	r := Rules{BlockLinksForUntrusted: true, AllowGoogleMapsLinks: true}
+	if sig, hit := r.Check(n, false); !hit || sig.Name != "link_from_untrusted" {
+		t.Fatalf("trimmed-away .. would exempt google.com root, got hit=%v sig=%+v", hit, sig)
+	}
+}
+
+func TestCollectLinksStillTrimsSentencePeriod(t *testing.T) {
+	n := Normalize(domain.Message{Text: "see https://google.com/maps."})
+	if !contains(n.Links, "https://google.com/maps") {
+		t.Fatalf("sentence period must still be trimmed: %v", n.Links)
+	}
+}

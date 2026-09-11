@@ -122,6 +122,9 @@ func TestLinkPolicyGoogleMapsRejectsSpoofs(t *testing.T) {
 		"https://google.com/MAPS",
 		"https://maps.google.com.evil.com/maps",
 		"ftp://maps.google.com/maps",
+		`https://google.com/maps/..\url`,
+		"https://google.com:/maps",
+		"https://google.com/maps/..",
 	}
 	for _, link := range spoofs {
 		sig, hit := r.Check(NormalizedMessage{Links: []string{link}}, false)

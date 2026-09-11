@@ -21,6 +21,9 @@ func allowedGoogleMapsURL(link string) bool {
 	}
 	decoded := u.Path
 	escaped := u.EscapedPath()
+	if hasBackslashPath(decoded, escaped) {
+		return false
+	}
 	switch host {
 	case "maps.app.goo.gl":
 		return gooGlShortPath(decoded)
@@ -52,10 +55,21 @@ func parseMapsURL(link string) (*url.URL, bool) {
 	} else if u.Scheme != "http" && u.Scheme != "https" {
 		return nil, false
 	}
-	if u.Host == "" || u.User != nil || u.Port() != "" {
+	if u.Host == "" || u.User != nil || hasExplicitPort(u) {
 		return nil, false
 	}
 	return u, true
+}
+
+// hasExplicitPort rejects any ":" in the authority after IPv6 brackets,
+// including empty (`google.com:`) and non-numeric (`google.com:foo`) ports.
+// URL.Port() is empty for those, and the spec forbids an explicit port.
+func hasExplicitPort(u *url.URL) bool {
+	host := u.Host
+	if i := strings.LastIndex(host, "]"); i >= 0 {
+		host = host[i+1:]
+	}
+	return strings.Contains(host, ":")
 }
 
 func asciiHost(host string) bool {
@@ -68,6 +82,13 @@ func asciiHost(host string) bool {
 		}
 	}
 	return true
+}
+
+func hasBackslashPath(decoded, escaped string) bool {
+	if strings.Contains(decoded, `\`) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(escaped), "%5c")
 }
 
 func googleMapsPath(decoded, escaped string, allowRoot bool) bool {
