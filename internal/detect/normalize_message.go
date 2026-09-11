@@ -158,8 +158,10 @@ func countCustomEmoji(entities []domain.Entity) int {
 func collectLinks(entities []domain.Entity, entityText, raw string) []string {
 	var out []string
 	seen := make(map[string]bool)
-	add := func(s string) {
-		s = trimCollectedLink(s)
+	add := func(s string, trimPunct bool) {
+		if trimPunct {
+			s = trimCollectedLink(s)
+		}
 		if s == "" || seen[s] {
 			return
 		}
@@ -169,24 +171,27 @@ func collectLinks(entities []domain.Entity, entityText, raw string) []string {
 	for _, e := range entities {
 		switch {
 		case e.Type == "text_link" && e.URL != "":
-			add(e.URL)
+			// Bot API URL/span bytes are authoritative; do not strip
+			// punctuation that is part of the path (https://google.com/maps.).
+			add(e.URL, false)
 		case e.Type == "url":
-			add(entitySpan(entityText, e.Offset, e.Length))
+			add(entitySpan(entityText, e.Offset, e.Length), false)
 		}
 	}
 	for _, s := range urlRe.FindAllString(raw, -1) {
-		add(s)
+		add(s, true)
 	}
 	for _, s := range tMeRe.FindAllString(raw, -1) {
-		add(s)
+		add(s, true)
 	}
 	return out
 }
 
-// trimCollectedLink strips trailing sentence punctuation from a collected
-// URL. A trailing period is punctuation ("see https://example.com."); a
-// ".." path segment is not, and must be kept so Maps matching cannot treat
-// https://google.com/maps/.. as the allowed /maps/ root.
+// trimCollectedLink strips trailing sentence punctuation from a URL token
+// discovered in raw text. It is not applied to text_link URLs or url-entity
+// spans, whose bytes come from Telegram. A trailing period is punctuation
+// ("see https://example.com."); a ".." path segment is not, and must be
+// kept so Maps matching cannot treat https://google.com/maps/.. as /maps/.
 func trimCollectedLink(s string) string {
 	for s != "" {
 		last := s[len(s)-1]

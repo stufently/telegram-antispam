@@ -14,7 +14,10 @@ Entries start life under **Unreleased** and are moved under a version heading wh
   enabled, recognized Google Maps URLs alone no longer trigger
   `link_from_untrusted`. Other detectors still see the original links and can
   still sanction the message. Backslash path tricks, empty/non-numeric ports
-  and a `..` path segment are not recognized as Maps.
+  and a `..` path segment are not recognized as Maps. Trailing punctuation is
+  stripped only from regex-discovered URLs in the message text, not from
+  `text_link` / `url` entity bytes, so `https://google.com/maps.` stays
+  outside the exception.
 
 ## [0.16.0] - 2026-08-30
 

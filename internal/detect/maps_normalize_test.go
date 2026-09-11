@@ -54,3 +54,76 @@ func TestCollectLinksStillTrimsSentencePeriod(t *testing.T) {
 		t.Fatalf("sentence period must still be trimmed: %v", n.Links)
 	}
 }
+
+func TestCollectLinksKeepsAuthoritativeEntityPunctuation(t *testing.T) {
+	r := Rules{BlockLinksForUntrusted: true, AllowGoogleMapsLinks: true}
+	for _, punct := range []string{".", ":", "!"} {
+		raw := "https://google.com/maps" + punct
+		hidden := Normalize(domain.Message{
+			Text:     "here",
+			Entities: []domain.Entity{{Type: "text_link", URL: raw, Offset: 0, Length: 4}},
+		})
+		if !contains(hidden.Links, raw) {
+			t.Fatalf("text_link %q must keep original bytes, got %v", raw, hidden.Links)
+		}
+		if contains(hidden.Links, "https://google.com/maps") {
+			t.Fatalf("text_link %q must not be rewritten to /maps, got %v", raw, hidden.Links)
+		}
+		if sig, hit := r.Check(hidden, false); !hit || sig.Name != "link_from_untrusted" {
+			t.Fatalf("text_link %q must not be Maps-exempt, got hit=%v sig=%+v", raw, hit, sig)
+		}
+
+		span := Normalize(domain.Message{
+			Text:     raw,
+			Entities: []domain.Entity{{Type: "url", Offset: 0, Length: len(raw)}},
+		})
+		if !contains(span.Links, raw) {
+			t.Fatalf("url entity %q must keep original bytes, got %v", raw, span.Links)
+		}
+		if sig, hit := r.Check(span, false); !hit || sig.Name != "link_from_untrusted" {
+			t.Fatalf("url entity %q must not be Maps-exempt, got hit=%v sig=%+v", raw, hit, sig)
+		}
+	}
+}
+
+func TestCollectLinksPunctuationOutsideEntityStillMaps(t *testing.T) {
+	r := Rules{BlockLinksForUntrusted: true, AllowGoogleMapsLinks: true}
+	const maps = "https://google.com/maps"
+	hidden := Normalize(domain.Message{
+		Text:     "here.",
+		Entities: []domain.Entity{{Type: "text_link", URL: maps, Offset: 0, Length: 4}},
+	})
+	if !contains(hidden.Links, maps) {
+		t.Fatalf("good Maps text_link must be kept: %v", hidden.Links)
+	}
+	if sig, hit := r.Check(hidden, false); hit {
+		t.Fatalf("punctuation outside the entity must not poison a good Maps URL, got %+v", sig)
+	}
+
+	text := "see " + maps + "."
+	span := Normalize(domain.Message{
+		Text:     text,
+		Entities: []domain.Entity{{Type: "url", Offset: 4, Length: len(maps)}},
+	})
+	if !contains(span.Links, maps) {
+		t.Fatalf("url span excluding the period must keep %q, got %v", maps, span.Links)
+	}
+	if sig, hit := r.Check(span, false); hit {
+		t.Fatalf("period outside url entity must still be Maps-exempt, got %+v links=%v", sig, span.Links)
+	}
+}
+
+func TestCollectLinksRegexCannotOverrideNonexemptEntity(t *testing.T) {
+	r := Rules{BlockLinksForUntrusted: true, AllowGoogleMapsLinks: true}
+	const entityURL = "https://google.com/maps."
+	n := Normalize(domain.Message{
+		Text:     "click https://google.com/maps",
+		Entities: []domain.Entity{{Type: "text_link", URL: entityURL, Offset: 0, Length: 5}},
+	})
+	if !contains(n.Links, entityURL) {
+		t.Fatalf("authoritative entity URL must stay in Links, got %v", n.Links)
+	}
+	if sig, hit := r.Check(n, false); !hit || sig.Name != "link_from_untrusted" {
+		t.Fatalf("regex Maps candidate must not override a nonexempt entity, got hit=%v sig=%+v links=%v", hit, sig, n.Links)
+	}
+}
