@@ -648,3 +648,53 @@ func TestCascadeAlwaysBorderline(t *testing.T) {
 		t.Fatalf("trusted sender must not reach the paid stage, got %+v", v)
 	}
 }
+
+func TestCascadeDecide_GoogleMapsExceptionIsNotWholesale(t *testing.T) {
+	msg := domain.Message{
+		ChatID: -500,
+		Sender: domain.Sender{UserID: 9},
+		Text:   "meet here https://maps.google.com/maps",
+	}
+	benign := Cascade{
+		Trust:          &fakeTrustSource{counts: map[[2]int64]int{}},
+		Hist:           &fakeHistory{},
+		Rules:          Rules{BlockLinksForUntrusted: true, AllowGoogleMapsLinks: true},
+		TrustThreshold: 5,
+		DefaultAction:  domain.ActionDeleteMute,
+		DefaultScope:   domain.ScopeChat,
+	}
+	v, actionable := benign.Decide(msg, false)
+	if actionable {
+		t.Fatalf("Maps-only with benign downstream must not be actionable, got %+v", v)
+	}
+
+	blocked := benign
+	blocked.Rules.AllowGoogleMapsLinks = false
+	v, actionable = blocked.Decide(msg, false)
+	if !actionable || v.Reason != "link_from_untrusted" {
+		t.Fatalf("flag off must still sanction Maps, got actionable=%v %+v", actionable, v)
+	}
+
+	flood := benign
+	flood.Hist = &fakeHistory{defaultDupCount: 5}
+	flood.Behavior = BehaviorCfg{DupThreshold: 5, DupWindow: time.Minute}
+	v, actionable = flood.Decide(msg, false)
+	if !actionable || v.Reason != "duplicate_flood" {
+		t.Fatalf("Maps exception must still reach behavior, got actionable=%v %+v", actionable, v)
+	}
+
+	borderline := benign
+	borderline.Bayes = emptyBayes{}
+	borderline.BayesEnabled = true
+	borderline.BayesScope = globalScope
+	borderline.BayesThreshold = 1.0
+	borderline.BayesVocabGuess = 5000
+	borderline.BayesBorderlineBand = 0.5
+	v, actionable = borderline.Decide(msg, false)
+	if actionable {
+		t.Fatalf("Maps + untrained Bayes must stay non-actionable, got %+v", v)
+	}
+	if len(v.Signals) != 1 || v.Signals[0].Name != "bayes_borderline" {
+		t.Fatalf("Maps exception must still reach Bayes/LLM borderline, got %+v", v.Signals)
+	}
+}

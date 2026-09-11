@@ -116,7 +116,12 @@ type DetectionRules struct {
 	// words too ordinary to ban as substrings (see detect.Rules.DenyExact).
 	DenyExact              []string `yaml:"deny_exact"`
 	BlockLinksForUntrusted *bool    `yaml:"block_links_for_untrusted"`
-	BannedDomains          []string `yaml:"banned_domains"`
+	// AllowGoogleMapsLinks is a *bool so Defaults can tell "unset" (nil,
+	// default false) from an explicit true. When true, recognized Google
+	// Maps URLs alone do not trigger link_from_untrusted; other detectors
+	// still see the original links. Default: false.
+	AllowGoogleMapsLinks *bool    `yaml:"allow_google_maps_links"`
+	BannedDomains        []string `yaml:"banned_domains"`
 	// BannedDocumentExtensions and BannedDocumentMIMETypes reject file
 	// attachment types regardless of trust. Empty lists (the defaults) keep
 	// the feature disabled; administrators remain immune in the cascade.
@@ -500,7 +505,8 @@ func Parse(b []byte) (*Config, error) {
 
 // applyDetectionDefaults fills in sane defaults for any Detection field left
 // unset in the YAML. Pointer fields (TrustThreshold, DupThreshold,
-// ShortLen, ShortFloodThreshold, BlockLinksForUntrusted, BayesEnabled,
+// ShortLen, ShortFloodThreshold, BlockLinksForUntrusted,
+// AllowGoogleMapsLinks, BayesEnabled,
 // BayesThreshold, FakeAdminEnabled, ReactionCleanupEnabled,
 // EphemeralNoticeEnabled) are treated as unset only when nil, so an
 // explicit "0" (or "false"/"true") in the config file is always honored
@@ -522,6 +528,10 @@ func (c *Config) applyDetectionDefaults() {
 	if c.Detection.Rules.BlockLinksForUntrusted == nil {
 		def := true
 		c.Detection.Rules.BlockLinksForUntrusted = &def
+	}
+	if c.Detection.Rules.AllowGoogleMapsLinks == nil {
+		def := false
+		c.Detection.Rules.AllowGoogleMapsLinks = &def
 	}
 	b := &c.Detection.Behavior
 	if b.DupThreshold == nil {

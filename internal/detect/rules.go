@@ -24,7 +24,11 @@ type Rules struct {
 	// one-word bait.
 	DenyExact              []string
 	BlockLinksForUntrusted bool
-	BannedDomains          []string
+	// AllowGoogleMapsLinks, when true, suppresses link_from_untrusted only
+	// if every collected URL is a recognized Google Maps link. Other rules
+	// still see the original URLs. Default false: no behavior change.
+	AllowGoogleMapsLinks bool
+	BannedDomains        []string
 	// BannedDocumentExtensions and BannedDocumentMIMETypes are global hard
 	// rules, like BannedDomains. Values are operator-selected because an APK
 	// is ordinary in a developer chat and unacceptable in a classifieds chat.
@@ -206,21 +210,38 @@ func (r Rules) checkDenyExact(n NormalizedMessage) (domain.Signal, bool) {
 }
 
 // checkLinkPolicy checks the link policy rule:
-// BlockLinksForUntrusted && !trusted && len(n.Links) > 0
+// BlockLinksForUntrusted && !trusted && len(n.Links) > 0.
+// When AllowGoogleMapsLinks is set, every collected URL must be a
+// recognized Maps link or the rule still fires; Detail names the first
+// nonexempt host, never a path or query.
 func (r Rules) checkLinkPolicy(n NormalizedMessage, trusted bool) (domain.Signal, bool) {
-	if r.BlockLinksForUntrusted && !trusted && len(n.Links) > 0 {
-		return domain.Signal{
-			Name: "link_from_untrusted",
-			// Host only, never the full URL. Signals are serialized into the
-			// audit table, which has no retention, so a full link would
-			// persist its path and query string indefinitely — and those
-			// routinely carry invite codes, referral ids and session tokens
-			// belonging to a user who was merely observed. The host is what
-			// an admin needs to judge the call.
-			Detail: strings.ToLower(extractHost(n.Links[0])),
-		}, true
+	if !r.BlockLinksForUntrusted || trusted || len(n.Links) == 0 {
+		return domain.Signal{}, false
 	}
-	return domain.Signal{}, false
+	offending := n.Links[0]
+	if r.AllowGoogleMapsLinks {
+		offending = ""
+		for _, link := range n.Links {
+			if allowedGoogleMapsURL(link) {
+				continue
+			}
+			offending = link
+			break
+		}
+		if offending == "" {
+			return domain.Signal{}, false
+		}
+	}
+	return domain.Signal{
+		Name: "link_from_untrusted",
+		// Host only, never the full URL. Signals are serialized into the
+		// audit table, which has no retention, so a full link would
+		// persist its path and query string indefinitely — and those
+		// routinely carry invite codes, referral ids and session tokens
+		// belonging to a user who was merely observed. The host is what
+		// an admin needs to judge the call.
+		Detail: strings.ToLower(extractHost(offending)),
+	}, true
 }
 
 // checkBannedDomain checks if any link's host is in BannedDomains

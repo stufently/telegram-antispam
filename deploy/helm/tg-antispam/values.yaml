@@ -107,3 +107,8 @@ config: |
     enforce: []
     # Chats pinned to dry-run no matter what; wins over enforce.
     force_dry_run: []
+  detection:
+    rules:
+      # Opt-in. Recognized Maps URLs alone skip link_from_untrusted; other
+      # detectors still run. See config.example.yaml for the exact shapes.
+      allow_google_maps_links: false

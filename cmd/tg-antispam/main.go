@@ -153,6 +153,22 @@ func bayesScopeResolver(cfg *config.Config) func(chatID int64) string {
 	}
 }
 
+func rulesFromConfig(cfg *config.Config) detect.Rules {
+	return detect.Rules{
+		DenyStopwords:            cfg.Detection.Rules.DenyStopwords,
+		AllowStopwords:           cfg.Detection.Rules.AllowStopwords,
+		DenyExact:                cfg.Detection.Rules.DenyExact,
+		BlockLinksForUntrusted:   *cfg.Detection.Rules.BlockLinksForUntrusted,
+		AllowGoogleMapsLinks:     *cfg.Detection.Rules.AllowGoogleMapsLinks,
+		BannedDomains:            cfg.Detection.Rules.BannedDomains,
+		BannedDocumentExtensions: cfg.Detection.Rules.BannedDocumentExtensions,
+		BannedDocumentMIMETypes:  cfg.Detection.Rules.BannedDocumentMIMETypes,
+		MaxLinks:                 cfg.Detection.Rules.MaxLinks,
+		MaxMentions:              cfg.Detection.Rules.MaxMentions,
+		MaxEmoji:                 cfg.Detection.Rules.MaxEmoji,
+	}
+}
+
 // TokenCounts reads a scope's token counts, LAYERED on the shared corpus
 // when the scope is a per-chat one.
 //
@@ -765,20 +781,9 @@ func main() {
 	}
 
 	cascade := detect.Cascade{
-		Trust: db,
-		Hist:  hist,
-		Rules: detect.Rules{
-			DenyStopwords:            cfg.Detection.Rules.DenyStopwords,
-			AllowStopwords:           cfg.Detection.Rules.AllowStopwords,
-			DenyExact:                cfg.Detection.Rules.DenyExact,
-			BlockLinksForUntrusted:   *cfg.Detection.Rules.BlockLinksForUntrusted,
-			BannedDomains:            cfg.Detection.Rules.BannedDomains,
-			BannedDocumentExtensions: cfg.Detection.Rules.BannedDocumentExtensions,
-			BannedDocumentMIMETypes:  cfg.Detection.Rules.BannedDocumentMIMETypes,
-			MaxLinks:                 cfg.Detection.Rules.MaxLinks,
-			MaxMentions:              cfg.Detection.Rules.MaxMentions,
-			MaxEmoji:                 cfg.Detection.Rules.MaxEmoji,
-		},
+		Trust:               db,
+		Hist:                hist,
+		Rules:               rulesFromConfig(cfg),
 		Behavior:            behaviorCfg,
 		TrustThreshold:      *cfg.Detection.TrustThreshold,
 		DefaultAction:       cfg.Action,

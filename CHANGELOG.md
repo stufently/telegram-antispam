@@ -8,6 +8,13 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+### Added
+
+- Optional `detection.rules.allow_google_maps_links` (default false). When
+  enabled, recognized Google Maps URLs alone no longer trigger
+  `link_from_untrusted`. Other detectors still see the original links and can
+  still sanction the message.
+
 ## [0.16.0] - 2026-08-30
 
 ### Fixed

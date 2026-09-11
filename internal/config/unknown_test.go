@@ -22,3 +22,10 @@ func TestUnknownKeysAcceptsAValidConfig(t *testing.T) {
 		t.Fatalf("valid config reported as unknown: %v", err)
 	}
 }
+
+func TestUnknownKeysAcceptsAllowGoogleMapsLinks(t *testing.T) {
+	err := UnknownKeys([]byte("bot_token: t\nadmin_chat_id: -1\naction: ban\nchats:\n  mode: auto\ndetection:\n  rules:\n    allow_google_maps_links: true\n"))
+	if err != nil {
+		t.Fatalf("new Maps key must be known, got: %v", err)
+	}
+}

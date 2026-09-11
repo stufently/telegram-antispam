@@ -51,6 +51,22 @@ detection:
     # Block messages containing links from users who are not yet
     # trusted (see trust_threshold). Default: true.
     block_links_for_untrusted: true
+    # Opt-in exception to block_links_for_untrusted only. Default: false.
+    # When true, a message whose collected URLs are all recognized Google
+    # Maps links does not emit link_from_untrusted. The original URLs stay
+    # on the message: banned_domains, deny_stopwords, occurrence limits,
+    # behavior, Bayes and the optional LLM stage still run, and a Maps URL
+    # mixed with any other URL still fires. Not a general Google allowlist.
+    #
+    # Recognized shapes (http/https, no userinfo, no explicit port;
+    # hostname ASCII case-insensitive; path case-sensitive):
+    #   maps.app.goo.gl/<nonempty short path>
+    #   maps.google.com/            (root)
+    #   maps.google.com/maps[/...]
+    #   google.com/maps[/...]  and  www.google.com/maps[/...]
+    # Redirects are not followed. /maps-evil, /url, other Google services,
+    # lookalike hosts and encoded path traversal stay blocked.
+    allow_google_maps_links: false
     # Domains that are always treated as spam links, regardless of trust.
     # Default: [].
     banned_domains: []

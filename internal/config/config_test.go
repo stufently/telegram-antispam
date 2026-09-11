@@ -58,6 +58,9 @@ func TestDetectionDefaultsAppliedWhenUnset(t *testing.T) {
 	if d.Rules.BlockLinksForUntrusted == nil || !*d.Rules.BlockLinksForUntrusted {
 		t.Errorf("BlockLinksForUntrusted: want default true, got %v", d.Rules.BlockLinksForUntrusted)
 	}
+	if d.Rules.AllowGoogleMapsLinks == nil || *d.Rules.AllowGoogleMapsLinks {
+		t.Errorf("AllowGoogleMapsLinks: want default false, got %v", d.Rules.AllowGoogleMapsLinks)
+	}
 	if d.BayesEnabled == nil || !*d.BayesEnabled {
 		t.Errorf("BayesEnabled: want default true, got %v", d.BayesEnabled)
 	}
@@ -177,6 +180,40 @@ func TestDetectionExplicitZeroThresholdsHonored(t *testing.T) {
 	}
 	if d.BayesVocabGuess != 5000 {
 		t.Errorf("BayesVocabGuess: want default 5000 (unset in this file), got %v", d.BayesVocabGuess)
+	}
+}
+
+func TestAllowGoogleMapsLinksExplicitTrueNotOverridden(t *testing.T) {
+	c, err := Parse([]byte(`bot_token: "12345:AA"
+admin_chat_id: -1
+action: mute
+chats:
+  mode: auto
+detection:
+  rules:
+    allow_google_maps_links: true
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Detection.Rules.AllowGoogleMapsLinks == nil || !*c.Detection.Rules.AllowGoogleMapsLinks {
+		t.Fatalf("explicit true must be honored, got %v", c.Detection.Rules.AllowGoogleMapsLinks)
+	}
+
+	off, err := Parse([]byte(`bot_token: "12345:AA"
+admin_chat_id: -1
+action: mute
+chats:
+  mode: auto
+detection:
+  rules:
+    allow_google_maps_links: false
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if off.Detection.Rules.AllowGoogleMapsLinks == nil || *off.Detection.Rules.AllowGoogleMapsLinks {
+		t.Fatalf("explicit false must be honored, got %v", off.Detection.Rules.AllowGoogleMapsLinks)
 	}
 }
 
