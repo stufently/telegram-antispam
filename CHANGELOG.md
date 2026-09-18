@@ -22,6 +22,10 @@ Entries start life under **Unreleased** and are moved under a version heading wh
   to every recorded part of the message, and a new card in the admin chat says
   so. An incident that did sanction, or one another moderator is deciding right
   now, is still refused with "already handled", so no second sanction follows.
+- Admin-chat buttons re-read the incident after claiming their decision, so a
+  press whose row was loaded before a concurrent `/spam` override (or another
+  enforce) finished no longer acts on the stale copy — no second sanction, and
+  no undo skipped for a sanction that had just become live.
 
 ## [0.17.0] - 2026-09-11
 

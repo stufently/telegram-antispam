@@ -57,3 +57,37 @@ func TestInsertPendingDedupAndAdvance(t *testing.T) {
 		t.Fatalf("duplicate InsertPending wrote %d audit rows, want 1", auditRows)
 	}
 }
+
+// A sanction that landed must make the incident ineligible for another
+// override even when the machine's own state write was lost: otherwise the
+// row still reads evidence_failed and the next /spam sanctions again.
+func TestFinishManualOverrideRecordsTheSanctionInTheState(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+	id, _, err := db.InsertPending(-100123, 55, 7, 0, false, domain.Verdict{
+		Action: domain.ActionDeleteMute, Reason: "bayes", Signals: []domain.Signal{{Name: "bayes"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetIncidentState(id, domain.StateEvidenceFailed); err != nil {
+		t.Fatal(err)
+	}
+	if claimed, _, _, err := db.ClaimManualOverride(id); err != nil || !claimed {
+		t.Fatalf("claim=%v err=%v", claimed, err)
+	}
+	// The machine's StateActed write is simulated as lost: nothing sets it.
+	if err := db.FinishManualOverride(id, domain.Verdict{Action: domain.ActionDeleteMute, Reason: "manual_spam"}, true); err != nil {
+		t.Fatal(err)
+	}
+	row, err := db.GetIncident(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.State != domain.StateActed || !row.Sanctioned() {
+		t.Fatalf("row = %+v, want state acted and a liftable sanction", row)
+	}
+	if claimed, _, _, err := db.ClaimManualOverride(id); err != nil || claimed {
+		t.Fatalf("second claim=%v err=%v, want refused", claimed, err)
+	}
+}

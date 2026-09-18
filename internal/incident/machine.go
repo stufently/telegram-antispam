@@ -34,7 +34,7 @@ type Repo interface {
 	// ClaimManualOverride / FinishManualOverride let a moderator's /spam or
 	// /ban act on an incident that already exists but never applied a
 	// sanction. The claim is the atomic eligibility check; see store.
-	ClaimManualOverride(id int64) (claimed bool, messageIDs []int, err error)
+	ClaimManualOverride(id int64) (claimed bool, messageIDs, evidenceIDs []int, err error)
 	FinishManualOverride(id int64, verdict domain.Verdict, sanctioned bool) error
 }
 
@@ -349,7 +349,7 @@ func isManual(v domain.Verdict) bool {
 // copied again: it is either already in the admin chat or it already failed
 // to arrive, and the moderator typed the command looking at the message.
 func (m *Machine) manualOverride(ctx context.Context, id int64, inc domain.Incident, freshOut *bool) error {
-	claimed, ids, err := m.repo.ClaimManualOverride(id)
+	claimed, ids, evidenceIDs, err := m.repo.ClaimManualOverride(id)
 	if err != nil {
 		return fmt.Errorf("claim manual override: %w", err)
 	}
@@ -384,6 +384,10 @@ func (m *Machine) manualOverride(ctx context.Context, id int64, inc domain.Incid
 		IncidentKey:      key,
 		SourceChatID:     inc.ChatID,
 		CopiedFromChatID: inc.ChatID,
+		// Threaded under the evidence when there is any (a dry-run or
+		// review-only incident), so the card cannot be paired with the
+		// wrong message; an evidence_failed incident has none.
+		CopyMessageIDs: evidenceIDs,
 		Text: formatCard(id, inc, "", fmt.Sprintf("manual override of an incident that applied no sanction: %s",
 			outcomeOf(out)), out.Sanctioned),
 	}
