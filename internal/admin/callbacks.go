@@ -226,6 +226,18 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 		if !claimed {
 			return "already decided: " + decisionLabel(existing), nil
 		}
+		// Re-read now that the claim is ours. The row Handle loaded was read
+		// BEFORE the claim, and a claim released in between — the enforce
+		// button's, or a moderator's /spam that took the incident over —
+		// may have changed it: acting on the stale copy would enforce a
+		// second time, or skip an undo of a sanction that is now live.
+		// While we hold the claim nothing else can change it.
+		fresh, err := h.db.GetIncident(inc.ID)
+		if err != nil {
+			h.releaseClaim(inc.ID, act)
+			return "", err
+		}
+		inc = fresh
 	}
 
 	switch act {

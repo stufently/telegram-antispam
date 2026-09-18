@@ -47,7 +47,9 @@ func (r *stubRepo) SaveIncidentTokens(_ int64, tokens []string) error {
 
 // The stub never has an earlier incident to take over; the override is
 // exercised against the real store in override_test.go.
-func (r *stubRepo) ClaimManualOverride(int64) (bool, []int, error) { return false, nil, nil }
+func (r *stubRepo) ClaimManualOverride(int64) (bool, []int, []int, error) {
+	return false, nil, nil, nil
+}
 func (r *stubRepo) FinishManualOverride(int64, domain.Verdict, bool) error {
 	return nil
 }

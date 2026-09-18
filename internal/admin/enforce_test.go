@@ -239,3 +239,39 @@ func TestEnforceReplySaysWhatActuallyHappened(t *testing.T) {
 		t.Fatalf("a failed sanction must be stated: %q", got)
 	}
 }
+
+// The row a button press acts on is loaded before the decision is claimed.
+// A moderator's /spam that took the incident over and released its claim in
+// between must not leave the press working from the stale copy: the enforce
+// button would sanction a second time.
+func TestEnforceRereadsTheIncidentAfterClaiming(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+	incidentID := reportedIncident(t, db, nil)
+
+	stale, err := db.GetIncident(incidentID)
+	if err != nil || !stale.DryRun {
+		t.Fatalf("precondition: stale row %+v err=%v", stale, err)
+	}
+	// The override, completed while the press was between load and claim.
+	if claimed, _, _, err := db.ClaimManualOverride(incidentID); err != nil || !claimed {
+		t.Fatalf("override claim=%v err=%v", claimed, err)
+	}
+	if err := db.FinishManualOverride(incidentID, domain.Verdict{Action: domain.ActionDeleteMute, Reason: "manual_spam"}, true); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewHandler(fake.New(), db, map[int64]bool{7: true})
+	called := false
+	h.SetEnforcer(func(context.Context, store.IncidentRow) (bool, bool, error) {
+		called = true
+		return true, true, nil
+	})
+	reply, err := h.dispatch(context.Background(), ActEnforce, stale, Callback{ID: "cb", PresserID: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if called || reply != "already enforced" {
+		t.Fatalf("enforce on a stale row: called=%v reply=%q, want no second sanction", called, reply)
+	}
+}

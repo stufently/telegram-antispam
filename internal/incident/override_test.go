@@ -197,6 +197,11 @@ func TestManualBanOverridesDryRunIncident(t *testing.T) {
 	if row.DryRun || row.Action != domain.ActionBan {
 		t.Fatalf("row = %+v, want a live ban", row)
 	}
+	// The dry-run incident's evidence is in the admin chat; the new card
+	// must be threaded under it, not float free.
+	if got := f.LastAdmin.CopyMessageIDs; len(got) != 1 || got[0] <= 0 {
+		t.Fatalf("override card must reply to the stored evidence, got %v", got)
+	}
 
 	fresh, err = m.HandleReport(context.Background(), manualIncident("manual_ban", domain.ActionBan))
 	if err != nil || fresh {

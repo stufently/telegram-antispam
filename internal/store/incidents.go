@@ -99,7 +99,8 @@ const ManualOverrideClaim = "enf"
 // ClaimManualOverride atomically takes over an existing incident for a
 // moderator's manual verdict, if — and only if — that incident never applied
 // a sanction. It reports whether the claim was taken and, when it was, every
-// source message id of the incident (all parts of an album).
+// source message id of the incident (all parts of an album) and the admin-chat
+// ids of its copied evidence, if any (the new card replies to them).
 //
 // "Never applied a sanction" is the whole point, and it is decided in the
 // same conditional UPDATE that takes the claim, so a second /spam, or the
@@ -119,7 +120,7 @@ const ManualOverrideClaim = "enf"
 // Everything else — an incident that did ban, mute or delete — is refused,
 // as is one that already carries a moderator decision: a second sanction on
 // top of the first would re-mute someone an admin may since have unmuted.
-func (db *DB) ClaimManualOverride(id int64) (claimed bool, messageIDs []int, err error) {
+func (db *DB) ClaimManualOverride(id int64) (claimed bool, messageIDs, evidenceIDs []int, err error) {
 	err = db.Write(func(tx *sql.Tx) error {
 		res, execErr := tx.Exec(`
 UPDATE incidents SET decision=?
@@ -151,18 +152,33 @@ WHERE id=? AND decision=''
 			return execErr
 		}
 		messageIDs = parseMessageIDs(list, keyed)
-		return nil
+		rows, execErr := tx.Query("SELECT admin_message_id FROM evidence WHERE incident_id=? ORDER BY admin_message_id", id)
+		if execErr != nil {
+			return execErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var mid int
+			if execErr := rows.Scan(&mid); execErr != nil {
+				return execErr
+			}
+			evidenceIDs = append(evidenceIDs, mid)
+		}
+		return rows.Err()
 	})
 	if err != nil {
-		return false, nil, err
+		return false, nil, nil, err
 	}
-	return claimed, messageIDs, nil
+	return claimed, messageIDs, evidenceIDs, nil
 }
 
 // FinishManualOverride closes a claim taken by ClaimManualOverride.
 //
 // When the sanction landed, the incident is rewritten to say what actually
-// happened, in one transaction with the release: dry_run=0 (so the undo
+// happened, in one transaction with the release: state at least acted (the
+// machine's own state write is separate and may have failed; without this an
+// incident left in evidence_failed would be claimable again and sanctioned a
+// second time), dry_run=0 (so the undo
 // buttons, which refuse to lift a dry-run incident, can lift it, and so a
 // later /spam is refused as already handled), and the audit row's action,
 // scope, reason and signals replaced by the moderator's verdict (so the
@@ -176,7 +192,12 @@ func (db *DB) FinishManualOverride(id int64, verdict domain.Verdict, sanctioned 
 	}
 	return db.Write(func(tx *sql.Tx) error {
 		if sanctioned {
-			if _, err := tx.Exec("UPDATE incidents SET dry_run=0 WHERE id=?", id); err != nil {
+			if _, err := tx.Exec(`
+UPDATE incidents SET dry_run=0,
+  state=CASE WHEN state IN (?,?,?) THEN state ELSE ? END
+WHERE id=?`,
+				string(domain.StateActed), string(domain.StateCleaned), string(domain.StateDone), string(domain.StateActed), id,
+			); err != nil {
 				return err
 			}
 			if _, err := tx.Exec(
