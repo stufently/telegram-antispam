@@ -87,3 +87,106 @@ func (db *DB) GetIncidentChat(id int64) (int64, error) {
 	err := db.Read().QueryRow("SELECT chat_id FROM incidents WHERE id=?", id).Scan(&chatID)
 	return chatID, err
 }
+
+// ManualOverrideClaim is the decision value held on an incident while a
+// moderator's /spam or /ban is being applied to it. It is deliberately the
+// same value the admin chat's enforce button claims (admin.ActEnforce): both
+// mean "a moderator is applying the sanction right now", so the enforce button
+// pressed during an override answers "already decided: enforced" instead of
+// sanctioning a second time.
+const ManualOverrideClaim = "enf"
+
+// ClaimManualOverride atomically takes over an existing incident for a
+// moderator's manual verdict, if — and only if — that incident never applied
+// a sanction. It reports whether the claim was taken and, when it was, every
+// source message id of the incident (all parts of an album).
+//
+// "Never applied a sanction" is the whole point, and it is decided in the
+// same conditional UPDATE that takes the claim, so a second /spam, or the
+// admin chat's enforce button, cannot slip in between the check and the act:
+//
+//   - dry_run=1: the chat was observing, or the verdict was review-only;
+//     nothing was done to the sender.
+//   - state pending / evidenced / evidence_failed: the machine stopped
+//     before the sanction landed (a failed evidence copy on a probabilistic
+//     verdict, the production case; or a failed sanction or admin notice).
+//     Enforce moves the state to acted the moment the sanction succeeds, so
+//     none of these states can hide a live one. Moderator commands run on the
+//     same per-chat sequencer as the automatic path, so none of them is an
+//     incident still in flight either.
+//   - the stored action never sanctions anything (quarantine / none).
+//
+// Everything else — an incident that did ban, mute or delete — is refused,
+// as is one that already carries a moderator decision: a second sanction on
+// top of the first would re-mute someone an admin may since have unmuted.
+func (db *DB) ClaimManualOverride(id int64) (claimed bool, messageIDs []int, err error) {
+	err = db.Write(func(tx *sql.Tx) error {
+		res, execErr := tx.Exec(`
+UPDATE incidents SET decision=?
+WHERE id=? AND decision=''
+  AND (dry_run=1
+       OR state IN (?,?,?)
+       OR NOT EXISTS (SELECT 1 FROM audit a WHERE a.incident_id=incidents.id
+                      AND a.action IN (?,?,?,?)))`,
+			ManualOverrideClaim, id,
+			string(domain.StatePending), string(domain.StateEvidenced), string(domain.StateEvidenceFailed),
+			string(domain.ActionBan), string(domain.ActionMute), string(domain.ActionDeleteMute), string(domain.ActionDeleteOnly),
+		)
+		if execErr != nil {
+			return execErr
+		}
+		n, execErr := res.RowsAffected()
+		if execErr != nil {
+			return execErr
+		}
+		if n != 1 {
+			return nil
+		}
+		claimed = true
+		var (
+			keyed int
+			list  string
+		)
+		if execErr := tx.QueryRow("SELECT message_id, message_ids FROM incidents WHERE id=?", id).Scan(&keyed, &list); execErr != nil {
+			return execErr
+		}
+		messageIDs = parseMessageIDs(list, keyed)
+		return nil
+	})
+	if err != nil {
+		return false, nil, err
+	}
+	return claimed, messageIDs, nil
+}
+
+// FinishManualOverride closes a claim taken by ClaimManualOverride.
+//
+// When the sanction landed, the incident is rewritten to say what actually
+// happened, in one transaction with the release: dry_run=0 (so the undo
+// buttons, which refuse to lift a dry-run incident, can lift it, and so a
+// later /spam is refused as already handled), and the audit row's action,
+// scope, reason and signals replaced by the moderator's verdict (so the
+// digest counts a real mute rather than the observation or the dropped
+// probabilistic verdict it started as). When it did not land, only the claim
+// is released, leaving the incident eligible for another try.
+func (db *DB) FinishManualOverride(id int64, verdict domain.Verdict, sanctioned bool) error {
+	signals, err := json.Marshal(verdict.Signals)
+	if err != nil {
+		return err
+	}
+	return db.Write(func(tx *sql.Tx) error {
+		if sanctioned {
+			if _, err := tx.Exec("UPDATE incidents SET dry_run=0 WHERE id=?", id); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(
+				"UPDATE audit SET action=?, scope=?, reason=?, signals=? WHERE incident_id=?",
+				string(verdict.Action), string(verdict.Scope), verdict.Reason, string(signals), id,
+			); err != nil {
+				return err
+			}
+		}
+		_, err := tx.Exec("UPDATE incidents SET decision='' WHERE id=? AND decision=?", id, ManualOverrideClaim)
+		return err
+	})
+}

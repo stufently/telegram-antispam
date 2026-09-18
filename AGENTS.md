@@ -254,6 +254,12 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   chat is told, and the card names an action only when one follows. The axis is
   who decided, never how sure: put a signal name here only if no detector can
   emit it.
+- A moderator's `/spam` or `/ban` on a message that already has an incident
+  takes that incident over only if it never sanctioned anyone (dry-run,
+  review-only, or stopped before the sanction landed, e.g. `evidence_failed`).
+  Eligibility and the claim are one conditional UPDATE
+  (`store.ClaimManualOverride`); an incident that did sanction, or one holding a
+  moderator decision, is refused as "already handled" — never sanctioned twice.
 - "No error from `copyMessages`" is NOT "the evidence is in the admin chat".
   Telegram silently skips messages it cannot copy (a quiz poll — whose option
   texts the detectors do read) and reports success, so the returned id list

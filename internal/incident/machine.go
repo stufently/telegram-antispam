@@ -31,6 +31,11 @@ type Repo interface {
 	// so a sanction applied later from the admin chat removes the whole
 	// album rather than the one part the row is keyed on.
 	SaveIncidentMessageIDs(id int64, ids []int) error
+	// ClaimManualOverride / FinishManualOverride let a moderator's /spam or
+	// /ban act on an incident that already exists but never applied a
+	// sanction. The claim is the atomic eligibility check; see store.
+	ClaimManualOverride(id int64) (claimed bool, messageIDs []int, err error)
+	FinishManualOverride(id int64, verdict domain.Verdict, sanctioned bool) error
 }
 
 type Machine struct {
@@ -95,6 +100,14 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 		*freshOut = fresh
 	}
 	if !fresh {
+		// A moderator's /spam or /ban on a message the detector already
+		// recorded. If that incident never sanctioned anyone — its evidence
+		// copy failed on a probabilistic verdict, or the chat was observing,
+		// or the verdict was review-only — the moderator's order still has
+		// to be carried out; see manualOverride.
+		if isManual(inc.Verdict) {
+			return m.manualOverride(ctx, id, inc, freshOut)
+		}
 		// reprocess guard: this incident was already recorded, so evidence
 		// was already copied and any action already taken. Skip entirely.
 		return nil
@@ -287,10 +300,11 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 // when the human is the one who issued it. They typed the command as a reply
 // to the message, looking at it — the copy would only be showing them back
 // what they had already read. Failing closed here does not protect anyone;
-// it silently discards an explicit order, and leaves no way out: a second
-// /spam hits the "already handled" branch, and the evidence-failure card is
+// it silently discards an explicit order, and the evidence-failure card is
 // drawn without an enforce button on purpose. So a manual verdict acts, and
-// the card says it acted.
+// the card says it acted. (A /spam that arrives AFTER an automatic verdict
+// already failed closed on the same message takes the other route to the same
+// end: manualOverride.)
 //
 // The boundary is exactly "who decided", not "how sure": every detector,
 // including the LLM, stamps Confidence 1.0, so nothing but the signal name
@@ -304,6 +318,89 @@ func actsWithoutEvidence(v domain.Verdict) bool {
 		}
 	}
 	return false
+}
+
+// isManual reports whether a verdict is a moderator's /spam or /ban. The
+// signal names are stamped only by package admin; no detector produces them.
+func isManual(v domain.Verdict) bool {
+	for _, s := range v.Signals {
+		switch s.Name {
+		case "manual_spam", "manual_ban":
+			return true
+		}
+	}
+	return false
+}
+
+// manualOverride applies a moderator's /spam or /ban to an incident that was
+// recorded earlier but never sanctioned anyone.
+//
+// Without it the most common manual case did nothing at all: the detector
+// flags a message, the evidence copy fails (a quiz poll — Telegram skips it
+// and reports success), a probabilistic verdict fails closed, and the
+// moderator who then types /spam hit the duplicate guard and was told the
+// message was "already handled". The same held for dry-run and review-only
+// incidents.
+//
+// The eligibility check and the claim are one conditional write
+// (store.ClaimManualOverride), so an incident that DID sanction — or that
+// another moderator is acting on right now — is never sanctioned twice; for
+// those this returns with fresh=false, exactly as before. Evidence is not
+// copied again: it is either already in the admin chat or it already failed
+// to arrive, and the moderator typed the command looking at the message.
+func (m *Machine) manualOverride(ctx context.Context, id int64, inc domain.Incident, freshOut *bool) error {
+	claimed, ids, err := m.repo.ClaimManualOverride(id)
+	if err != nil {
+		return fmt.Errorf("claim manual override: %w", err)
+	}
+	if !claimed {
+		return nil
+	}
+	if freshOut != nil {
+		*freshOut = true
+	}
+	// The stored ids, not the command's single reply target: an album's
+	// other parts were recorded when the incident was raised.
+	if len(ids) > 0 {
+		inc.MessageIDs = ids
+	}
+	log.Printf("incident %d: manual override (%s) of an incident that applied no sanction", id, inc.Verdict.Reason)
+	out := m.Enforce(ctx, id, inc)
+	if ferr := m.repo.FinishManualOverride(id, inc.Verdict, out.Sanctioned); ferr != nil {
+		// The claim stays taken, and with it the only guard against a
+		// second sanction; the cost is undo buttons that answer "already
+		// decided" until an operator looks.
+		log.Printf("incident %d: recording manual override failed: %v", id, ferr)
+	}
+	if out.Sanctioned && out.Err == nil {
+		m.setState(id, domain.StateDone)
+	}
+
+	// The card already in the admin chat says nothing was done; this one
+	// says what was, and carries the undo buttons for it. Best-effort: the
+	// sanction has happened, and the old card's buttons can lift it too.
+	key := fmt.Sprintf("%d", id)
+	msg := telegram.AdminMessage{
+		IncidentKey:      key,
+		SourceChatID:     inc.ChatID,
+		CopiedFromChatID: inc.ChatID,
+		Text: formatCard(id, inc, "", fmt.Sprintf("manual override of an incident that applied no sanction: %s",
+			outcomeOf(out)), out.Sanctioned),
+	}
+	if m.buttonsFor != nil {
+		msg.Buttons = m.buttonsFor(key, false)
+	}
+	if _, sendErr := m.port.SendAdmin(ctx, m.adminChatID, msg); sendErr != nil {
+		log.Printf("incident %d: manual override card not sent: %v", id, sendErr)
+	}
+
+	if out.Err != nil {
+		return out.Err
+	}
+	if m.EphemeralNotice && m.EphemeralText != "" && inc.Sender.UserID != 0 {
+		_, _ = m.port.SendEphemeral(ctx, inc.ChatID, inc.Sender.UserID, m.EphemeralText)
+	}
+	return nil
 }
 
 // setState records how far the incident got, logging a write failure rather

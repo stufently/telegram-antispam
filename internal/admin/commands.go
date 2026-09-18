@@ -260,9 +260,11 @@ func (c *Commands) handleSpam(ctx context.Context, cmdMsg domain.Message, target
 		c.notify(ctx, cmdMsg, "Не смог обработать сообщение: "+err.Error())
 		return
 	case !fresh:
-		// The detector already handled this exact message. Training still
-		// runs below: the moderator's label is new information even when the
-		// sanction is not.
+		// The detector already handled this exact message AND sanctioned
+		// its author (an incident that applied no sanction — failed evidence
+		// copy, dry-run, review-only — is taken over by the machine and
+		// reported as fresh). Training still runs below: the moderator's
+		// label is new information even when the sanction is not.
 		c.counted(CmdSpam, "duplicate")
 		c.notify(ctx, cmdMsg, "Это сообщение уже обработано ботом — карточка есть в админ-чате.")
 	default:
