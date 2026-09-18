@@ -99,6 +99,17 @@ on one used to do nothing at all — and nothing could be done afterwards, since
 a repeated `/spam` is rejected as already handled and the evidence-failure card
 deliberately carries no enforce button.
 
+The same order must also survive arriving SECOND. When the detector recorded
+the message first and did not sanction it — its evidence copy failed on a
+probabilistic verdict, or the chat was observing, or the verdict was
+review-only — the moderator's `/spam` / `/ban` finds the row through the
+`(chat_id, message_id)` dedup. Instead of stopping there, the machine claims the
+row with one conditional UPDATE that is also the eligibility check
+(`store.ClaimManualOverride`), applies the sanction to every recorded part,
+rewrites the audit verdict to the moderator's and flips `dry_run` off
+(`FinishManualOverride`), and posts a new card. A row that did sanction, or one
+whose decision is claimed by the enforce button, is refused as already handled.
+
 Copying can also fail without failing. `copyMessages` skips messages it cannot
 copy — a quiz poll, for instance, whose option texts the detectors do judge —
 and returns success regardless, so the id list can come back short or empty. An

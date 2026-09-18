@@ -8,6 +8,21 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-09-18
+
+### Fixed
+
+- A moderator's `/spam` or `/ban` now acts on a message the detector had
+  already recorded but never sanctioned. Previously the command hit the
+  duplicate guard and answered "already handled" while nothing had been done —
+  in the most common manual case (an automatic verdict whose evidence copy
+  failed, e.g. a quiz poll) and for dry-run and review-only incidents alike.
+  The existing incident is now claimed atomically, its stored action, reason
+  and signals are replaced by the moderator's verdict, the sanction is applied
+  to every recorded part of the message, and a new card in the admin chat says
+  so. An incident that did sanction, or one another moderator is deciding right
+  now, is still refused with "already handled", so no second sanction follows.
+
 ## [0.17.0] - 2026-09-11
 
 ### Added
