@@ -708,9 +708,6 @@ func (c *Config) applyOpsDefaults() {
 	}
 }
 
-// applyLLMDefaults fills LLM fields left unset. Enabled defaults to FALSE
-// (external calls are opt-in), so — unlike the other blocks — a nil Enabled
-// stays disabled.
 // applyWelcomeDefaults fills Welcome fields left unset. Enabled defaults
 // to false (a greeting is opt-in) and MaxPerMinute to 20. An explicit
 // value, including false and 0, is left alone so Validate can reject 0.
@@ -728,6 +725,9 @@ func (c *Config) applyWelcomeDefaults() {
 	}
 }
 
+// applyLLMDefaults fills LLM fields left unset. Enabled defaults to FALSE
+// (external calls are opt-in), so — unlike the other blocks — a nil Enabled
+// stays disabled.
 func (c *Config) applyLLMDefaults() {
 	if c.LLM.Enabled == nil {
 		def := false

@@ -129,3 +129,25 @@ func TestConfigExampleParsesWithWelcomeOff(t *testing.T) {
 		t.Fatal("example must not greet any chat")
 	}
 }
+
+func TestWelcomeForTrimsGlobalText(t *testing.T) {
+	w := Welcome{Enabled: bp(true), Text: " \tобщий\n "}
+	text, ok := w.For(-100)
+	if !ok || text != "общий" {
+		t.Fatalf("For(-100)=(%q, %v), want (%q, true)", text, ok, "общий")
+	}
+}
+
+func TestWelcomeChatTextAtLimit(t *testing.T) {
+	text := strings.Repeat("я", 4096)
+	base := "bot_token: t\nadmin_chat_id: -1\naction: ban\nchats:\n  mode: auto\n"
+	yaml := base + "welcome:\n  enabled: false\n  chats:\n    -100:\n      enabled: true\n      text: \"" + text + "\"\n"
+	c, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("4096-rune per-chat welcome rejected: %v", err)
+	}
+	got, ok := c.Welcome.For(-100)
+	if !ok || got != text {
+		t.Fatalf("For(-100)=(%q, %v), want full 4096-rune text and true", got, ok)
+	}
+}

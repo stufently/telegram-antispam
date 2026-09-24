@@ -205,3 +205,69 @@ func TestSendWelcomeUsesEphemeralParameters(t *testing.T) {
 		t.Fatalf("prio=%v", *prios)
 	}
 }
+
+func TestSendEphemeralWrapsDeleteError(t *testing.T) {
+	p, _, stop := startLivePort(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/sendMessage"):
+			writeJSON(w, `{"ok":true,"result":{"message_id":77,"date":1,"chat":{"id":-100,"type":"supergroup"}}}`)
+		case strings.HasSuffix(r.URL.Path, "/deleteMessages"):
+			writeJSON(w, `{"ok":false,"error_code":400,"description":"Bad Request: message can't be deleted"}`)
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := p.SendEphemeral(ctx, -100, 7, "should have been private")
+	if !errors.Is(err, ErrEphemeralNotHonored) {
+		t.Fatalf("err=%v, want ErrEphemeralNotHonored in error chain", err)
+	}
+	if !errors.Is(err, tgbot.ErrorBadRequest) {
+		t.Fatalf("err=%v, want Telegram ErrorBadRequest in error chain", err)
+	}
+}
+
+func TestSendEphemeralDeletesExactFallbackID(t *testing.T) {
+	var mu sync.Mutex
+	var deleteIDs string
+	var deleteCalls int
+	p, _, stop := startLivePort(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/sendMessage"):
+			writeJSON(w, `{"ok":true,"result":{"message_id":77,"date":1,"chat":{"id":-100,"type":"supergroup"}}}`)
+		case strings.HasSuffix(r.URL.Path, "/deleteMessages"):
+			form := formOf(t, r)
+			mu.Lock()
+			deleteIDs = form["message_ids"]
+			deleteCalls++
+			mu.Unlock()
+			writeJSON(w, `{"ok":true,"result":true}`)
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	id, err := p.SendEphemeral(ctx, -100, 7, "should have been private")
+	if id != 0 || !errors.Is(err, ErrEphemeralNotHonored) {
+		t.Fatalf("id=%d err=%v, want 0 and ErrEphemeralNotHonored", id, err)
+	}
+	mu.Lock()
+	raw, calls := deleteIDs, deleteCalls
+	mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("delete calls=%d, want 1", calls)
+	}
+	var ids []int
+	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+		t.Fatalf("decode message_ids=%q: %v", raw, err)
+	}
+	if len(ids) != 1 || ids[0] != 77 {
+		t.Fatalf("deleted message_ids=%v, want exactly [77]", ids)
+	}
+}

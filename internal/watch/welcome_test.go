@@ -280,3 +280,105 @@ func TestWelcomerFollowsConfigReload(t *testing.T) {
 		t.Fatalf("sends=%d, want 1", sends(port.Calls()))
 	}
 }
+
+func TestWelcomerRateCapInsideWindow(t *testing.T) {
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	port := fake.New()
+	w := newW(welcomeCfg("auto", nil, config.Welcome{
+		Enabled: boolPtr(true), Text: "hello", MaxPerMinute: intPtr(1),
+	}), &memWelcome{}, port, nil)
+	w.Now = func() time.Time { return now }
+	out, err := w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 1})
+	if err != nil || out != OutcomeSent || sends(port.Calls()) != 1 {
+		t.Fatalf("initial send=%q err=%v sends=%d, want sent and 1 send", out, err, sends(port.Calls()))
+	}
+	now = now.Add(59*time.Second + 500*time.Millisecond)
+	out, err = w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 2})
+	if err != nil || out != OutcomeSkipRateCapped || sends(port.Calls()) != 1 {
+		t.Fatalf("at 59.5s=%q err=%v sends=%d, want skip_rate_capped and 1 send", out, err, sends(port.Calls()))
+	}
+}
+
+func TestWelcomerRateCapWindowEdge(t *testing.T) {
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	port := fake.New()
+	w := newW(welcomeCfg("auto", nil, config.Welcome{
+		Enabled: boolPtr(true), Text: "hello", MaxPerMinute: intPtr(1),
+	}), &memWelcome{}, port, nil)
+	w.Now = func() time.Time { return now }
+	out, err := w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 1})
+	if err != nil || out != OutcomeSent || sends(port.Calls()) != 1 {
+		t.Fatalf("initial send=%q err=%v sends=%d, want sent and 1 send", out, err, sends(port.Calls()))
+	}
+	now = now.Add(60 * time.Second)
+	out, err = w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 2})
+	if err != nil || out != OutcomeSent || sends(port.Calls()) != 2 {
+		t.Fatalf("at 60s=%q err=%v sends=%d, want sent and 2 sends", out, err, sends(port.Calls()))
+	}
+}
+
+func TestWelcomerNotAdmittedBeforeDisabled(t *testing.T) {
+	port := fake.New()
+	cfg := welcomeCfg("allowlist", []int64{-200}, config.Welcome{Enabled: boolPtr(false), Text: "hello"})
+	out, err := newW(cfg, &memWelcome{}, port, nil).
+		Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 7})
+	if err != nil || out != OutcomeSkipNotAdmitted || sends(port.Calls()) != 0 {
+		t.Fatalf("out=%q err=%v sends=%d, want skip_not_admitted and no sends", out, err, sends(port.Calls()))
+	}
+}
+
+func TestWelcomerDisabledBeforeChatRow(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		store *memWelcome
+	}{
+		{"disabled row", disabledRow()},
+		{"chat read error", &memWelcome{errChat: errors.New("chat read failed")}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			port := fake.New()
+			cfg := welcomeCfg("auto", nil, config.Welcome{Enabled: boolPtr(false), Text: "hello"})
+			out, err := newW(cfg, tt.store, port, nil).
+				Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 7})
+			if err != nil || out != OutcomeSkipDisabled || sends(port.Calls()) != 0 {
+				t.Fatalf("out=%q err=%v sends=%d, want skip_disabled, nil error and no sends", out, err, sends(port.Calls()))
+			}
+		})
+	}
+}
+
+func TestWelcomerChatRowBeforeBlocklist(t *testing.T) {
+	port := fake.New()
+	out, err := newW(welcomeCfg("auto", nil, onWelcome("hello")), disabledRow(), port, listedIDs{7: true}).
+		Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 7})
+	if err != nil || out != OutcomeSkipChatDisabled || sends(port.Calls()) != 0 {
+		t.Fatalf("out=%q err=%v sends=%d, want skip_chat_disabled and no sends", out, err, sends(port.Calls()))
+	}
+}
+
+func TestWelcomerKnownBeforeRateCap(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		store *memWelcome
+	}{
+		{"welcomed", &memWelcome{welcomed: map[[2]int64]bool{{-100, 7}: true}}},
+		{"trusted", &memWelcome{trust: map[[2]int64]int{{-100, 7}: 1}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			port := fake.New()
+			cfg := welcomeCfg("auto", nil, config.Welcome{
+				Enabled: boolPtr(true), Text: "hello", MaxPerMinute: intPtr(1),
+			})
+			w := newW(cfg, tt.store, port, nil)
+			w.Now = func() time.Time { return time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC) }
+			out, err := w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 1})
+			if err != nil || out != OutcomeSent || sends(port.Calls()) != 1 {
+				t.Fatalf("initial send=%q err=%v sends=%d, want sent and 1 send", out, err, sends(port.Calls()))
+			}
+			out, err = w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 7})
+			if err != nil || out != OutcomeSkipKnown || sends(port.Calls()) != 1 {
+				t.Fatalf("known user at cap=%q err=%v sends=%d, want skip_known and 1 send", out, err, sends(port.Calls()))
+			}
+		})
+	}
+}

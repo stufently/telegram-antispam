@@ -79,3 +79,25 @@ func asAdmin(u *models.User) models.ChatMember {
 func asOwner(u *models.User) models.ChatMember {
 	return models.ChatMember{Type: models.ChatMemberTypeOwner, Owner: &models.ChatMemberOwner{Status: models.ChatMemberTypeOwner, User: u}}
 }
+
+func TestJoinRejectsZeroUserID(t *testing.T) {
+	user := &models.User{ID: 0}
+	for _, tt := range []struct {
+		name string
+		new  models.ChatMember
+	}{
+		{"member", asMember(user)},
+		{"restricted member", asRestricted(user, true)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			event, ok := JoinFromChatMemberUpdated(models.ChatMemberUpdated{
+				Chat:          models.Chat{ID: -100, Type: "supergroup"},
+				OldChatMember: asLeft(user),
+				NewChatMember: tt.new,
+			})
+			if ok || event != (JoinEvent{}) {
+				t.Fatalf("event=%+v ok=%v, want zero JoinEvent and false", event, ok)
+			}
+		})
+	}
+}
