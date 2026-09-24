@@ -641,24 +641,18 @@ func (p *LivePort) SendWelcome(ctx context.Context, chat, userID int64, text str
 	return p.sendToUser(ctx, "SendWelcome", chat, userID, text)
 }
 
-// ephemeralSend is what Telegram reported for one send-to-user attempt.
-// ephemeralID is the private id; messageID is set when the text was stored
-// as an ordinary chat message.
+// ephemeralSend is one send-to-user result: ephemeralID is the private id,
+// messageID is set when Telegram stored an ordinary chat message instead.
 type ephemeralSend struct {
 	ephemeralID int
 	messageID   int
 }
 
-// sendToUser sends text so that only userID should see it. method is the
-// Port name the dispatcher uses for priority ("SendEphemeral" or "SendWelcome").
-//
-// Bot API 10.3 replaced the top-level receiver_user_id parameter with
-// ephemeral_message_parameters. A response that has a message_id and no
-// ephemeral_message_id means Telegram ignored that and published the text
-// to the whole chat. Delete it through the dispatcher (so the delete is
-// rate-limited and ordered with every other destructive call) and return
-// ErrEphemeralNotHonored. The two sends share this helper so the safeguard
-// cannot be fixed on one path and forgotten on the other.
+// sendToUser is SendEphemeral and SendWelcome. method is the priority name.
+// A message_id without ephemeral_message_id means the text was published to
+// the chat. Delete it through the dispatcher — calling DeleteMessages from
+// inside this job would deadlock the single-threaded Run — and return
+// ErrEphemeralNotHonored, wrapping a delete failure.
 func (p *LivePort) sendToUser(ctx context.Context, method string, chat, userID int64, text string) (int, error) {
 	sent, err := submitSync(ctx, p.disp, chat, p.prio(method), func(ctx context.Context) (ephemeralSend, error) {
 		msg, err := p.b.SendMessage(ctx, &bot.SendMessageParams{
@@ -679,9 +673,6 @@ func (p *LivePort) sendToUser(ctx context.Context, method string, chat, userID i
 	if err != nil {
 		return 0, err
 	}
-	// The send job has finished, so the dispatcher is free to run the
-	// delete. Calling DeleteMessages from inside the job would deadlock:
-	// Run is single-threaded and would wait on itself.
 	if sent.ephemeralID == 0 && sent.messageID != 0 {
 		if delErr := p.DeleteMessages(ctx, chat, []int{sent.messageID}); delErr != nil {
 			return 0, fmt.Errorf("%w: %w", ErrEphemeralNotHonored, delErr)

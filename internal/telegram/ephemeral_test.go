@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -50,18 +50,15 @@ func startLivePort(t *testing.T, handler http.HandlerFunc) (*LivePort, *[]string
 	}
 }
 
-func readForm(t *testing.T, r *http.Request) map[string]string {
+func formOf(t *testing.T, r *http.Request) map[string]string {
 	t.Helper()
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		t.Errorf("parse form: %v", err)
-		return nil
 	}
 	out := map[string]string{}
 	for k, v := range r.PostForm {
 		if len(v) > 0 {
 			out[k] = v[0]
-		} else {
-			out[k] = ""
 		}
 	}
 	return out
@@ -70,24 +67,23 @@ func readForm(t *testing.T, r *http.Request) map[string]string {
 func assertEphemeralForm(t *testing.T, form map[string]string, userID int64) {
 	t.Helper()
 	if _, ok := form["receiver_user_id"]; ok {
-		t.Fatalf("top-level receiver_user_id is present: %v", form["receiver_user_id"])
+		t.Fatalf("top-level receiver_user_id=%q", form["receiver_user_id"])
 	}
-	raw, ok := form["ephemeral_message_parameters"]
-	if !ok {
-		t.Fatal("ephemeral_message_parameters is missing")
-	}
+	raw := form["ephemeral_message_parameters"]
 	var params struct {
 		ReceiverUserID int64 `json:"receiver_user_id"`
 	}
-	if err := json.Unmarshal([]byte(raw), &params); err != nil {
-		t.Fatalf("ephemeral_message_parameters %q: %v", raw, err)
-	}
-	if params.ReceiverUserID != userID {
-		t.Fatalf("receiver_user_id = %d, want %d (body %s)", params.ReceiverUserID, userID, raw)
+	if err := json.Unmarshal([]byte(raw), &params); err != nil || params.ReceiverUserID != userID {
+		t.Fatalf("ephemeral_message_parameters=%q err=%v user=%d", raw, err, params.ReceiverUserID)
 	}
 	if form["parse_mode"] != "" {
-		t.Fatalf("parse_mode = %q, welcome and ephemeral text are plain", form["parse_mode"])
+		t.Fatalf("parse_mode=%q", form["parse_mode"])
 	}
+}
+
+func writeJSON(w http.ResponseWriter, body string) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = io.WriteString(w, body)
 }
 
 func TestSendEphemeralUsesEphemeralParameters(t *testing.T) {
@@ -96,30 +92,26 @@ func TestSendEphemeralUsesEphemeralParameters(t *testing.T) {
 	var paths []string
 	var form map[string]string
 	p, prios, stop := startLivePort(t, func(w http.ResponseWriter, r *http.Request) {
+		f := formOf(t, r)
 		mu.Lock()
 		paths = append(paths, r.URL.Path)
-		form = readForm(t, r)
+		form = f
 		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"ok":true,"result":{"message_id":10,"ephemeral_message_id":55,"date":1,"chat":{"id":-100,"type":"supergroup"}}}`)
+		writeJSON(w, `{"ok":true,"result":{"message_id":10,"ephemeral_message_id":55,"date":1,"chat":{"id":-100,"type":"supergroup"}}}`)
 	})
 	defer stop()
-
 	id, err := p.SendEphemeral(context.Background(), -100, userID, "only you")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if id != 55 {
-		t.Fatalf("ephemeral id = %d, want 55", id)
-	}
 	mu.Lock()
 	defer mu.Unlock()
+	if err != nil || id != 55 {
+		t.Fatalf("id=%d err=%v", id, err)
+	}
 	if len(paths) != 1 || !strings.HasSuffix(paths[0], "/sendMessage") {
-		t.Fatalf("paths = %v, want one sendMessage and no delete", paths)
+		t.Fatalf("paths=%v", paths)
 	}
 	assertEphemeralForm(t, form, userID)
 	if len(*prios) != 1 || (*prios)[0] != "SendEphemeral" {
-		t.Fatalf("priority methods = %v, want [SendEphemeral]", *prios)
+		t.Fatalf("prio=%v", *prios)
 	}
 }
 
@@ -128,71 +120,60 @@ func TestSendEphemeralDeletesPublicFallback(t *testing.T) {
 	var mu sync.Mutex
 	var paths []string
 	var deleteIDs string
-	var forms []map[string]string
+	var sendForm map[string]string
 	deleteFails := false
 	p, prios, stop := startLivePort(t, func(w http.ResponseWriter, r *http.Request) {
-		f := readForm(t, r)
+		f := formOf(t, r)
 		mu.Lock()
 		paths = append(paths, r.URL.Path)
-		forms = append(forms, f)
-		failDelete := deleteFails
+		fail := deleteFails
+		if strings.HasSuffix(r.URL.Path, "/sendMessage") && sendForm == nil {
+			sendForm = f
+		}
 		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/sendMessage"):
-			_, _ = fmt.Fprint(w, `{"ok":true,"result":{"message_id":77,"date":1,"chat":{"id":-100,"type":"supergroup"}}}`)
+			writeJSON(w, `{"ok":true,"result":{"message_id":77,"date":1,"chat":{"id":-100,"type":"supergroup"}}}`)
 		case strings.HasSuffix(r.URL.Path, "/deleteMessages"):
 			mu.Lock()
 			deleteIDs = f["message_ids"]
 			mu.Unlock()
-			if failDelete {
-				_, _ = fmt.Fprint(w, `{"ok":false,"error_code":400,"description":"Bad Request: message can't be deleted"}`)
+			if fail {
+				writeJSON(w, `{"ok":false,"error_code":400,"description":"Bad Request: message can't be deleted"}`)
 				return
 			}
-			_, _ = fmt.Fprint(w, `{"ok":true,"result":true}`)
+			writeJSON(w, `{"ok":true,"result":true}`)
 		default:
-			t.Errorf("unexpected path %s", r.URL.Path)
+			t.Errorf("path %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 		}
 	})
 	defer stop()
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	id, err := p.SendEphemeral(ctx, -100, userID, "should have been private")
-	if !errors.Is(err, ErrEphemeralNotHonored) {
-		t.Fatalf("err = %v, want ErrEphemeralNotHonored", err)
-	}
-	if id != 0 {
-		t.Fatalf("id = %d, want 0 when the send was public", id)
-	}
 	mu.Lock()
-	gotDelete := deleteIDs
-	gotPaths := append([]string(nil), paths...)
-	gotPrios := append([]string(nil), *prios...)
-	sendForm := forms[0]
+	gotDelete, gotPaths, gotPrios, gotForm := deleteIDs, append([]string(nil), paths...), append([]string(nil), *prios...), sendForm
 	mu.Unlock()
+	if !errors.Is(err, ErrEphemeralNotHonored) || id != 0 {
+		t.Fatalf("id=%d err=%v", id, err)
+	}
 	if !strings.Contains(gotDelete, "77") {
-		t.Fatalf("delete message_ids = %q, want 77", gotDelete)
+		t.Fatalf("delete ids=%q", gotDelete)
 	}
 	if len(gotPaths) != 2 || !strings.HasSuffix(gotPaths[0], "/sendMessage") || !strings.HasSuffix(gotPaths[1], "/deleteMessages") {
-		t.Fatalf("paths = %v, want sendMessage then deleteMessages", gotPaths)
+		t.Fatalf("paths=%v", gotPaths)
 	}
-	assertEphemeralForm(t, sendForm, userID)
+	assertEphemeralForm(t, gotForm, userID)
 	if len(gotPrios) != 2 || gotPrios[0] != "SendEphemeral" || gotPrios[1] != "DeleteMessages" {
-		t.Fatalf("priority methods = %v, want SendEphemeral then DeleteMessages (delete goes through the dispatcher)", gotPrios)
+		t.Fatalf("prio=%v", gotPrios)
 	}
-
 	mu.Lock()
 	deleteFails = true
-	paths = nil
 	mu.Unlock()
 	_, err = p.SendEphemeral(ctx, -100, userID, "still public")
-	if !errors.Is(err, ErrEphemeralNotHonored) {
-		t.Fatalf("delete failure err = %v, want it wrapped in ErrEphemeralNotHonored", err)
-	}
-	if !strings.Contains(err.Error(), "can't be deleted") {
-		t.Fatalf("delete failure was dropped: %v", err)
+	if !errors.Is(err, ErrEphemeralNotHonored) || !strings.Contains(err.Error(), "can't be deleted") {
+		t.Fatalf("wrapped delete err=%v", err)
 	}
 }
 
@@ -202,30 +183,25 @@ func TestSendWelcomeUsesEphemeralParameters(t *testing.T) {
 	var form map[string]string
 	var paths []string
 	p, prios, stop := startLivePort(t, func(w http.ResponseWriter, r *http.Request) {
-		f := readForm(t, r)
+		f := formOf(t, r)
 		mu.Lock()
 		paths = append(paths, r.URL.Path)
 		form = f
 		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"ok":true,"result":{"message_id":3,"ephemeral_message_id":8,"date":1,"chat":{"id":-100,"type":"supergroup"}}}`)
+		writeJSON(w, `{"ok":true,"result":{"message_id":3,"ephemeral_message_id":8,"date":1,"chat":{"id":-100,"type":"supergroup"}}}`)
 	})
 	defer stop()
-
 	id, err := p.SendWelcome(context.Background(), -100, userID, "welcome, plain text")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if id != 8 {
-		t.Fatalf("ephemeral id = %d, want 8", id)
-	}
 	mu.Lock()
 	defer mu.Unlock()
+	if err != nil || id != 8 {
+		t.Fatalf("id=%d err=%v", id, err)
+	}
 	if len(paths) != 1 || !strings.HasSuffix(paths[0], "/sendMessage") {
-		t.Fatalf("paths = %v, want one sendMessage", paths)
+		t.Fatalf("paths=%v", paths)
 	}
 	assertEphemeralForm(t, form, userID)
 	if len(*prios) != 1 || (*prios)[0] != "SendWelcome" {
-		t.Fatalf("priority methods = %v, want [SendWelcome]", *prios)
+		t.Fatalf("prio=%v", *prios)
 	}
 }

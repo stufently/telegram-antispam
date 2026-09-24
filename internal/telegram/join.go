@@ -2,19 +2,17 @@ package telegram
 
 import "github.com/go-telegram/bot/models"
 
-// JoinEvent is a person entering a chat, extracted from a chat_member
-// update. ViaJoinRequest is Telegram's flag for an approved join request.
-// The greeting does not branch on it; the flag is there for a later gate
-// that may.
+// JoinEvent is one person entering a chat. ViaJoinRequest is recorded and
+// does not change the greeting.
 type JoinEvent struct {
 	ChatID, UserID int64
 	ViaJoinRequest bool
 }
 
-// JoinFromChatMemberUpdated reports whether u is a non-bot user becoming a
-// member of the chat. Old status must be left, kicked, or restricted with
-// is_member false; new status must be member, or restricted with is_member
-// true. Promotions, renames, leaves, bans, and bots are not joins.
+// JoinFromChatMemberUpdated is true only for a non-bot user moving from
+// left, kicked, or restricted with is_member false into member, or into
+// restricted with is_member true. Promotions, renames, leaves, bans and
+// bots are not joins.
 func JoinFromChatMemberUpdated(u models.ChatMemberUpdated) (JoinEvent, bool) {
 	if !memberWasOut(u.OldChatMember) || !memberIsIn(u.NewChatMember) {
 		return JoinEvent{}, false

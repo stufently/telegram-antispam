@@ -447,13 +447,11 @@ type LLM struct {
 	MaxTokens int `yaml:"max_tokens"`
 }
 
-// Welcome is the optional ephemeral greeting sent to a person who joins a
-// chat. It is off unless Enabled is set and the resolved text is non-empty.
-// Delivery is not guaranteed and the chat's dry-run flag does not apply:
-// the message is a notice, not a sanction.
-//
-// Enabled and MaxPerMinute are pointers so an explicit false or 0 is kept.
-// The default for Enabled is false; the default for MaxPerMinute is 20.
+// Welcome is the optional ephemeral greeting for a person who joins.
+// Off unless enabled with non-empty text. Delivery is not guaranteed and
+// dry-run does not apply: this is a notice, not a sanction. Enabled and
+// MaxPerMinute are pointers so explicit false and 0 are kept (defaults:
+// false and 20).
 type Welcome struct {
 	Enabled      *bool                 `yaml:"enabled"`
 	Text         string                `yaml:"text"`

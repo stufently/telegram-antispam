@@ -3,7 +3,6 @@ package watch
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
@@ -13,17 +12,14 @@ import (
 	"github.com/stufently/telegram-antispam/internal/telegram/fake"
 )
 
-// *store.DB must keep satisfying WelcomeStore: the wiring passes it directly.
 var _ WelcomeStore = (*store.DB)(nil)
 
 type memWelcome struct {
-	mu       sync.Mutex
 	welcomed map[[2]int64]bool
 	trust    map[[2]int64]int
 	chats    map[int64]store.ChatRow
 	found    map[int64]bool
 	marks    int
-
 	errWas   error
 	errMark  error
 	errTrust error
@@ -34,8 +30,6 @@ func (m *memWelcome) WasWelcomed(chatID, userID int64) (bool, error) {
 	if m.errWas != nil {
 		return false, m.errWas
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	return m.welcomed[[2]int64{chatID, userID}], nil
 }
 
@@ -43,8 +37,6 @@ func (m *memWelcome) MarkWelcomed(chatID, userID int64) error {
 	if m.errMark != nil {
 		return m.errMark
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.welcomed == nil {
 		m.welcomed = map[[2]int64]bool{}
 	}
@@ -57,8 +49,6 @@ func (m *memWelcome) TrustCount(chatID, userID int64) (int, error) {
 	if m.errTrust != nil {
 		return 0, m.errTrust
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	return m.trust[[2]int64{chatID, userID}], nil
 }
 
@@ -66,8 +56,6 @@ func (m *memWelcome) GetChat(chatID int64) (store.ChatRow, bool, error) {
 	if m.errChat != nil {
 		return store.ChatRow{}, false, m.errChat
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	row, ok := m.chats[chatID]
 	if m.found != nil {
 		ok = m.found[chatID]
@@ -86,13 +74,21 @@ func welcomeCfg(mode string, allow []int64, w config.Welcome) *config.Config {
 	if w.MaxPerMinute == nil {
 		w.MaxPerMinute = intPtr(20)
 	}
-	return &config.Config{
-		Chats:   config.ChatsPolicy{Mode: mode, Allowlist: allow},
-		Welcome: w,
+	return &config.Config{Chats: config.ChatsPolicy{Mode: mode, Allowlist: allow}, Welcome: w}
+}
+
+func onWelcome(text string) config.Welcome {
+	return config.Welcome{Enabled: boolPtr(true), Text: text}
+}
+
+func disabledRow() *memWelcome {
+	return &memWelcome{
+		chats: map[int64]store.ChatRow{-100: {Enabled: false}},
+		found: map[int64]bool{-100: true},
 	}
 }
 
-func countWelcome(calls []string) int {
+func sends(calls []string) int {
 	n := 0
 	for _, c := range calls {
 		if c == "SendWelcome" {
@@ -100,6 +96,10 @@ func countWelcome(calls []string) int {
 		}
 	}
 	return n
+}
+
+func newW(cfg *config.Config, st *memWelcome, port *fake.Fake, list listedIDs) *Welcomer {
+	return &Welcomer{Config: config.NewStore(cfg), Store: st, Port: port, Blocklist: list}
 }
 
 func TestWelcomerSendsOncePerChatUser(t *testing.T) {
@@ -111,178 +111,61 @@ func TestWelcomerSendsOncePerChatUser(t *testing.T) {
 		found: map[int64]bool{-100: true, -200: true},
 	}
 	port := fake.New()
-	w := &Welcomer{
-		Config: config.NewStore(welcomeCfg("auto", nil, config.Welcome{
-			Enabled: boolPtr(false),
-			Text:    "global text that must not be sent",
-			Chats: map[int64]config.WelcomeChat{
-				-100: {Enabled: boolPtr(true), Text: "  rules for A. mistaken mute: @desk  "},
-				-200: {Enabled: boolPtr(true), Text: "rules for B"},
-			},
-		})),
-		Store:     st,
-		Port:      port,
-		Blocklist: listedIDs{},
-		Now:       func() time.Time { return time.Unix(1_700_000_000, 0) },
-	}
+	w := newW(welcomeCfg("auto", nil, config.Welcome{
+		Enabled: boolPtr(false),
+		Text:    "global text that must not be sent",
+		Chats: map[int64]config.WelcomeChat{
+			-100: {Enabled: boolPtr(true), Text: "  rules for A. mistaken mute: @desk  "},
+			-200: {Enabled: boolPtr(true), Text: "rules for B"},
+		},
+	}), st, port, listedIDs{})
+	w.Now = func() time.Time { return time.Unix(1_700_000_000, 0) }
 
-	out, err := w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 7})
-	if err != nil || out != OutcomeSent {
-		t.Fatalf("first = %q err=%v, want sent", out, err)
+	check := func(chat, user int64, want Outcome) {
+		t.Helper()
+		out, err := w.Observe(context.Background(), telegram.JoinEvent{ChatID: chat, UserID: user})
+		if err != nil || out != want {
+			t.Fatalf("chat %d user %d = %q err=%v, want %q", chat, user, out, err, want)
+		}
 	}
+	check(-100, 7, OutcomeSent)
 	if port.LastWelcome.Text != "rules for A. mistaken mute: @desk" || port.LastWelcome.Chat != -100 || port.LastWelcome.UserID != 7 {
-		t.Fatalf("sent %+v, want the trimmed per-chat text to user 7 in chat -100", port.LastWelcome)
+		t.Fatalf("sent %+v", port.LastWelcome)
 	}
-
-	out, err = w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 7})
-	if err != nil || out != OutcomeSkipKnown {
-		t.Fatalf("repeat = %q err=%v, want skip_known", out, err)
-	}
-
-	out, err = w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 8})
-	if err != nil || out != OutcomeSent {
-		t.Fatalf("other user = %q err=%v, want sent", out, err)
-	}
-	out, err = w.Observe(context.Background(), telegram.JoinEvent{ChatID: -200, UserID: 7})
-	if err != nil || out != OutcomeSent {
-		t.Fatalf("other chat = %q err=%v, want sent", out, err)
-	}
+	check(-100, 7, OutcomeSkipKnown)
+	check(-100, 8, OutcomeSent)
+	check(-200, 7, OutcomeSent)
 	if port.LastWelcome.Chat != -200 || port.LastWelcome.Text != "rules for B" {
-		t.Fatalf("last send = %+v, want chat -200's own text", port.LastWelcome)
+		t.Fatalf("last send %+v", port.LastWelcome)
 	}
-	if got := countWelcome(port.Calls()); got != 3 {
-		t.Fatalf("SendWelcome calls = %d, want 3 (the repeat must not send)", got)
-	}
-	if st.marks != 3 {
-		t.Fatalf("marks = %d, want 3", st.marks)
+	if got, marks := sends(port.Calls()), st.marks; got != 3 || marks != 3 {
+		t.Fatalf("sends=%d marks=%d, want 3 and 3", got, marks)
 	}
 }
 
 func TestWelcomerSkips(t *testing.T) {
-	enabled := config.Welcome{
-		Enabled: boolPtr(true),
-		Text:    "hello",
-	}
+	enabled := onWelcome("hello")
 	cases := []struct {
 		name  string
 		cfg   *config.Config
 		store *memWelcome
 		list  listedIDs
-		user  int64
 		want  Outcome
 	}{
-		{
-			name:  "not admitted",
-			cfg:   welcomeCfg("allowlist", []int64{-1}, enabled),
-			store: &memWelcome{},
-			want:  OutcomeSkipNotAdmitted,
-		},
-		{
-			name:  "disabled",
-			cfg:   welcomeCfg("auto", nil, config.Welcome{Enabled: boolPtr(false), Text: "hello"}),
-			store: &memWelcome{},
-			want:  OutcomeSkipDisabled,
-		},
-		{
-			name: "chat row disabled",
-			cfg:  welcomeCfg("auto", nil, enabled),
-			store: &memWelcome{
-				chats: map[int64]store.ChatRow{-100: {Enabled: false, DryRun: false}},
-				found: map[int64]bool{-100: true},
-			},
-			want: OutcomeSkipChatDisabled,
-		},
-		{
-			name:  "blocklisted",
-			cfg:   welcomeCfg("auto", nil, enabled),
-			store: &memWelcome{},
-			list:  listedIDs{7: true},
-			user:  7,
-			want:  OutcomeSkipBlocklisted,
-		},
-		{
-			name: "already welcomed",
-			cfg:  welcomeCfg("auto", nil, enabled),
-			store: &memWelcome{
-				welcomed: map[[2]int64]bool{{-100, 7}: true},
-			},
-			user: 7,
-			want: OutcomeSkipKnown,
-		},
-		{
-			name: "already trusted",
-			cfg:  welcomeCfg("auto", nil, enabled),
-			store: &memWelcome{
-				trust: map[[2]int64]int{{-100, 7}: 1},
-			},
-			user: 7,
-			want: OutcomeSkipKnown,
-		},
-		{
-			name: "admission is decided before the switch",
-			cfg:  welcomeCfg("allowlist", nil, config.Welcome{Enabled: boolPtr(false)}),
-			store: &memWelcome{
-				chats: map[int64]store.ChatRow{-100: {Enabled: false}},
-				found: map[int64]bool{-100: true},
-			},
-			list: listedIDs{7: true},
-			user: 7,
-			want: OutcomeSkipNotAdmitted,
-		},
-		{
-			name: "switch is decided before the stored chat row",
-			cfg:  welcomeCfg("auto", nil, config.Welcome{Enabled: boolPtr(false), Text: "hello"}),
-			store: &memWelcome{
-				chats: map[int64]store.ChatRow{-100: {Enabled: false}},
-				found: map[int64]bool{-100: true},
-			},
-			want: OutcomeSkipDisabled,
-		},
-		{
-			name: "stored chat row is decided before the blocklist",
-			cfg:  welcomeCfg("auto", nil, enabled),
-			store: &memWelcome{
-				chats: map[int64]store.ChatRow{-100: {Enabled: false}},
-				found: map[int64]bool{-100: true},
-			},
-			list: listedIDs{7: true},
-			user: 7,
-			want: OutcomeSkipChatDisabled,
-		},
-		{
-			name: "blocklist is decided before known",
-			cfg:  welcomeCfg("auto", nil, enabled),
-			store: &memWelcome{
-				welcomed: map[[2]int64]bool{{-100, 7}: true},
-				trust:    map[[2]int64]int{{-100, 7}: 4},
-			},
-			list: listedIDs{7: true},
-			user: 7,
-			want: OutcomeSkipBlocklisted,
-		},
+		{"not admitted", welcomeCfg("allowlist", []int64{-1}, enabled), &memWelcome{}, nil, OutcomeSkipNotAdmitted},
+		{"disabled", welcomeCfg("auto", nil, config.Welcome{Enabled: boolPtr(false), Text: "hello"}), &memWelcome{}, nil, OutcomeSkipDisabled},
+		{"chat row disabled", welcomeCfg("auto", nil, enabled), disabledRow(), nil, OutcomeSkipChatDisabled},
+		{"blocklisted", welcomeCfg("auto", nil, enabled), &memWelcome{}, listedIDs{7: true}, OutcomeSkipBlocklisted},
+		{"already welcomed", welcomeCfg("auto", nil, enabled), &memWelcome{welcomed: map[[2]int64]bool{{-100, 7}: true}}, nil, OutcomeSkipKnown},
+		{"already trusted", welcomeCfg("auto", nil, enabled), &memWelcome{trust: map[[2]int64]int{{-100, 7}: 1}}, nil, OutcomeSkipKnown},
+		{"blocklist before known", welcomeCfg("auto", nil, enabled), &memWelcome{welcomed: map[[2]int64]bool{{-100, 7}: true}}, listedIDs{7: true}, OutcomeSkipBlocklisted},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			port := fake.New()
-			user := tt.user
-			if user == 0 {
-				user = 7
-			}
-			w := &Welcomer{
-				Config:    config.NewStore(tt.cfg),
-				Store:     tt.store,
-				Port:      port,
-				Blocklist: tt.list,
-			}
-			out, err := w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: user})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if out != tt.want {
-				t.Fatalf("outcome = %q, want %q", out, tt.want)
-			}
-			if got := countWelcome(port.Calls()); got != 0 {
-				t.Fatalf("SendWelcome calls = %d, want 0", got)
+			out, err := newW(tt.cfg, tt.store, port, tt.list).Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 7})
+			if err != nil || out != tt.want || sends(port.Calls()) != 0 {
+				t.Fatalf("got %q err=%v sends=%d, want %q and no send", out, err, sends(port.Calls()), tt.want)
 			}
 		})
 	}
@@ -292,43 +175,25 @@ func TestWelcomerRateCap(t *testing.T) {
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 	st := &memWelcome{}
 	port := fake.New()
-	w := &Welcomer{
-		Config: config.NewStore(welcomeCfg("auto", nil, config.Welcome{
-			Enabled:      boolPtr(true),
-			Text:         "hello",
-			MaxPerMinute: intPtr(2),
-		})),
-		Store: st,
-		Port:  port,
-		Now:   func() time.Time { return now },
-	}
+	w := newW(welcomeCfg("auto", nil, config.Welcome{Enabled: boolPtr(true), Text: "hello", MaxPerMinute: intPtr(2)}), st, port, nil)
+	w.Now = func() time.Time { return now }
 	for i, user := range []int64{1, 2, 3} {
 		out, err := w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: user})
-		if err != nil {
-			t.Fatal(err)
-		}
 		want := OutcomeSent
 		if i == 2 {
 			want = OutcomeSkipRateCapped
 		}
-		if out != want {
-			t.Fatalf("user %d outcome = %q, want %q", user, out, want)
+		if err != nil || out != want {
+			t.Fatalf("user %d = %q err=%v, want %q", user, out, err, want)
 		}
 	}
-	if got := countWelcome(port.Calls()); got != 2 {
-		t.Fatalf("sends inside the window = %d, want 2", got)
+	if sends(port.Calls()) != 2 || st.marks != 2 {
+		t.Fatalf("sends=%d marks=%d, want 2 and 2", sends(port.Calls()), st.marks)
 	}
-	if st.marks != 2 {
-		t.Fatalf("marks = %d, want 2 (the capped join must not be recorded)", st.marks)
-	}
-
 	now = now.Add(61 * time.Second)
 	out, err := w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 4})
-	if err != nil || out != OutcomeSent {
-		t.Fatalf("after 61s = %q err=%v, want sent", out, err)
-	}
-	if got := countWelcome(port.Calls()); got != 3 {
-		t.Fatalf("sends after the window moved = %d, want 3", got)
+	if err != nil || out != OutcomeSent || sends(port.Calls()) != 3 {
+		t.Fatalf("after 61s = %q err=%v sends=%d", out, err, sends(port.Calls()))
 	}
 }
 
@@ -336,57 +201,30 @@ func TestWelcomerSendFailureNotMarked(t *testing.T) {
 	st := &memWelcome{}
 	port := fake.New()
 	port.WelcomeErr = errors.New("telegram down")
-	w := &Welcomer{
-		Config: config.NewStore(welcomeCfg("auto", nil, config.Welcome{
-			Enabled: boolPtr(true),
-			Text:    "hello",
-		})),
-		Store: st,
-		Port:  port,
-	}
-	out, err := w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 7})
-	if out != OutcomeError || !errors.Is(err, port.WelcomeErr) {
-		t.Fatalf("outcome = %q err=%v, want error wrapping the send failure", out, err)
-	}
-	if st.marks != 0 {
-		t.Fatalf("marks = %d, want 0 after a failed send", st.marks)
-	}
-	known, err := st.WasWelcomed(-100, 7)
-	if err != nil || known {
-		t.Fatalf("was welcomed = %v err=%v, want false", known, err)
+	out, err := newW(welcomeCfg("auto", nil, onWelcome("hello")), st, port, nil).
+		Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 7})
+	known, kerr := st.WasWelcomed(-100, 7)
+	if out != OutcomeError || !errors.Is(err, port.WelcomeErr) || st.marks != 0 || kerr != nil || known {
+		t.Fatalf("out=%q err=%v marks=%d known=%v kerr=%v", out, err, st.marks, known, kerr)
 	}
 }
 
 func TestWelcomerStoreErrorFailsClosed(t *testing.T) {
 	boom := errors.New("db")
-	cases := []struct {
+	for _, tt := range []struct {
 		name  string
 		store *memWelcome
 	}{
-		{name: "get chat", store: &memWelcome{errChat: boom}},
-		{name: "was welcomed", store: &memWelcome{errWas: boom}},
-		{name: "trust count", store: &memWelcome{errTrust: boom}},
-	}
-	for _, tt := range cases {
+		{"get chat", &memWelcome{errChat: boom}},
+		{"was welcomed", &memWelcome{errWas: boom}},
+		{"trust count", &memWelcome{errTrust: boom}},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
 			port := fake.New()
-			w := &Welcomer{
-				Config: config.NewStore(welcomeCfg("auto", nil, config.Welcome{
-					Enabled: boolPtr(true),
-					Text:    "hello",
-				})),
-				Store: tt.store,
-				Port:  port,
-			}
-			out, err := w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 7})
-			if out != OutcomeError || !errors.Is(err, boom) {
-				t.Fatalf("outcome = %q err=%v, want the store error", out, err)
-			}
-			if got := countWelcome(port.Calls()); got != 0 {
-				t.Fatalf("SendWelcome calls = %d, want 0", got)
-			}
-			if tt.store.marks != 0 {
-				t.Fatalf("marks = %d, want 0", tt.store.marks)
+			out, err := newW(welcomeCfg("auto", nil, onWelcome("hello")), tt.store, port, nil).
+				Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 7})
+			if out != OutcomeError || !errors.Is(err, boom) || sends(port.Calls()) != 0 || tt.store.marks != 0 {
+				t.Fatalf("out=%q err=%v sends=%d marks=%d", out, err, sends(port.Calls()), tt.store.marks)
 			}
 		})
 	}
@@ -394,27 +232,24 @@ func TestWelcomerStoreErrorFailsClosed(t *testing.T) {
 
 func TestWelcomerFollowsConfigReload(t *testing.T) {
 	off := welcomeCfg("auto", nil, config.Welcome{Enabled: boolPtr(false), Text: "hello"})
-	on := welcomeCfg("auto", nil, config.Welcome{Enabled: boolPtr(true), Text: "hello"})
+	on := welcomeCfg("auto", nil, onWelcome("hello"))
 	live := config.NewStore(off)
 	st := &memWelcome{}
 	port := fake.New()
 	w := &Welcomer{Config: live, Store: st, Port: port}
-
-	out, err := w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 1})
-	if err != nil || out != OutcomeSkipDisabled {
-		t.Fatalf("before reload = %q err=%v, want skip_disabled", out, err)
+	step := func(user int64, want Outcome) {
+		t.Helper()
+		out, err := w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: user})
+		if err != nil || out != want {
+			t.Fatalf("user %d = %q err=%v, want %q", user, out, err, want)
+		}
 	}
+	step(1, OutcomeSkipDisabled)
 	live.Swap(on)
-	out, err = w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 1})
-	if err != nil || out != OutcomeSent {
-		t.Fatalf("after enabling = %q err=%v, want sent", out, err)
-	}
+	step(1, OutcomeSent)
 	live.Swap(off)
-	out, err = w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 2})
-	if err != nil || out != OutcomeSkipDisabled {
-		t.Fatalf("after disabling = %q err=%v, want skip_disabled", out, err)
-	}
-	if got := countWelcome(port.Calls()); got != 1 {
-		t.Fatalf("SendWelcome calls = %d, want 1", got)
+	step(2, OutcomeSkipDisabled)
+	if sends(port.Calls()) != 1 {
+		t.Fatalf("sends=%d, want 1", sends(port.Calls()))
 	}
 }

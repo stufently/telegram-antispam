@@ -10,13 +10,8 @@ import (
 	"github.com/stufently/telegram-antispam/internal/watch"
 )
 
-// handleChatMember is the chat_member branch of the update handler.
-//
-// Invalidation stays on the inline consumer, before the job is queued, so
-// a later update from this chat cannot observe a stale admin list.
-// Identity recording and the welcome run in the same per-chat job, welcome
-// strictly after the identity write: the sequencer is what keeps those two
-// in order when several membership updates arrive together.
+// handleChatMember invalidates the admin cache on the inline consumer, then
+// records the identity and maybe greets, in that order, inside one per-chat job.
 func handleChatMember(
 	ctx context.Context,
 	cm *models.ChatMemberUpdated,
@@ -30,14 +25,9 @@ func handleChatMember(
 		return
 	}
 	mem := telegram.MemberFromChatMember(cm.NewChatMember)
-	// Only a change that touches the admin roster invalidates it.
-	// chat_member also fires for every ordinary join, leave, and
-	// restriction, and dropping the cache on those would turn the
-	// TTL cache into a per-event GetChatAdministrators during a
-	// raid — and stretch the windows where a failing lookup has
-	// nothing cached to fall back on. Invalidate on the inline
-	// consumer, before later updates from this chat can be
-	// submitted, then let the sequenced watcher refetch as needed.
+	// Ordinary joins must not drop the admin cache: during a raid that
+	// would turn it into a GetChatAdministrators per event. Invalidate
+	// here, on the inline consumer, before this chat's next update is queued.
 	if invalidate != nil && (isAdminStatus(telegram.MemberFromChatMember(cm.OldChatMember).Status) || isAdminStatus(mem.Status)) {
 		invalidate(cm.Chat.ID)
 	}

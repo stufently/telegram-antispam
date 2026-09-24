@@ -27,9 +27,8 @@ const (
 	OutcomeError            Outcome = "error"
 )
 
-// WelcomeStore is the persistence Welcomer needs. *store.DB satisfies it.
-// GetChat's row is only consulted for Enabled; dry-run is intentionally
-// ignored because a greeting is not a sanction.
+// WelcomeStore is what Welcomer reads. *store.DB satisfies it. GetChat is
+// consulted only for Enabled; dry-run does not apply to a greeting.
 type WelcomeStore interface {
 	WasWelcomed(chatID, userID int64) (bool, error)
 	MarkWelcomed(chatID, userID int64) error
@@ -37,8 +36,8 @@ type WelcomeStore interface {
 	GetChat(chatID int64) (store.ChatRow, bool, error)
 }
 
-// Welcomer sends one ephemeral greeting per (chat, user). Config is read on
-// every event, so a reload turns the option on or off without a restart.
+// Welcomer greets each (chat, user) once. It reads Config on every event,
+// so a reload turns the option on or off without a restart.
 type Welcomer struct {
 	Config    *config.Store
 	Store     WelcomeStore
@@ -50,9 +49,8 @@ type Welcomer struct {
 	sent map[int64][]time.Time
 }
 
-// Observe decides whether ev should be greeted and, when it should, sends
-// the text. A store read error returns OutcomeError and sends nothing.
-// A failed send is not recorded, so a later event can try again.
+// Observe greets ev or explains why not. A store read error is OutcomeError
+// and sends nothing. A failed send is not marked, so a later event can retry.
 func (w *Welcomer) Observe(ctx context.Context, ev telegram.JoinEvent) (Outcome, error) {
 	if w.Config == nil {
 		return OutcomeError, errors.New("welcome: no config")
@@ -135,9 +133,8 @@ func (w *Welcomer) recordSend(chatID int64, now time.Time) {
 	w.sent[chatID] = append(w.prune(chatID, now), now)
 }
 
-// prune returns the send times for chatID that are still inside the window.
-// Caller holds w.mu. The result is a fresh slice, so appending to it does
-// not alias the stored one.
+// prune returns send times still inside the window. Caller holds w.mu.
+// The result is a fresh slice, so the caller can append without aliasing.
 func (w *Welcomer) prune(chatID int64, now time.Time) []time.Time {
 	cutoff := now.Add(-welcomeWindow)
 	var fresh []time.Time

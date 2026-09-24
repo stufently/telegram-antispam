@@ -88,15 +88,12 @@ type Port interface {
 	EditAdminMarkup(ctx context.Context, adminChat int64, messageID int, buttons [][]Button) error
 	DeleteMessageReaction(ctx context.Context, chat int64, messageID int, userID int64) error
 	SendEphemeral(ctx context.Context, chat, userID int64, text string) (int, error)
-	// SendWelcome delivers a plain-text ephemeral greeting to one user.
-	// It is the same send as SendEphemeral, queued under its own method
-	// name so the dispatcher can run it at a lower priority than moderation.
+	// SendWelcome is the same ephemeral send, under its own priority name.
 	SendWelcome(ctx context.Context, chat, userID int64, text string) (int, error)
 	CheckBotRights(ctx context.Context, chat int64) (BotRights, error)
 }
 
-// ErrEphemeralNotHonored means Telegram accepted the send but did not mark
-// it ephemeral: the response carried a message_id and no ephemeral_message_id,
-// so the text landed in the chat where everyone can read it. The port deletes
-// that message before returning this error. A delete failure is wrapped in it.
+// ErrEphemeralNotHonored means Telegram published the text (message_id set,
+// ephemeral_message_id absent). The port deletes that message first. A
+// delete failure is wrapped in this error.
 var ErrEphemeralNotHonored = errors.New("telegram: ephemeral send was published to the chat")
