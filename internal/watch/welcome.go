@@ -98,10 +98,16 @@ func (w *Welcomer) Observe(ctx context.Context, ev telegram.JoinEvent) (Outcome,
 	if w.rateCapped(ev.ChatID, now, max) {
 		return OutcomeSkipRateCapped, nil
 	}
-	if _, err := w.Port.SendWelcome(ctx, ev.ChatID, ev.UserID, text); err != nil {
-		return OutcomeError, err
+	_, sendErr := w.Port.SendWelcome(ctx, ev.ChatID, ev.UserID, text)
+	// Count the attempt when it finishes, not when it was queued: a 429
+	// retry can outlive the minute, and recording the start time would let
+	// the next join through immediately. A failed attempt still counts —
+	// ErrEphemeralNotHonored did publish — but the user is not marked, so
+	// a later join retries once the window moves.
+	w.recordSend(ev.ChatID, w.now())
+	if sendErr != nil {
+		return OutcomeError, sendErr
 	}
-	w.recordSend(ev.ChatID, now)
 	if err := w.Store.MarkWelcomed(ev.ChatID, ev.UserID); err != nil {
 		return OutcomeError, err
 	}

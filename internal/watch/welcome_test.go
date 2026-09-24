@@ -195,17 +195,44 @@ func TestWelcomerRateCap(t *testing.T) {
 	if err != nil || out != OutcomeSent || sends(port.Calls()) != 3 {
 		t.Fatalf("after 61s = %q err=%v sends=%d", out, err, sends(port.Calls()))
 	}
+
+	// A send that outlives the minute is stamped when it finishes, so the
+	// next joiner still sees it inside the window.
+	base := time.Date(2026, 9, 24, 13, 0, 0, 0, time.UTC)
+	var ticks int
+	late := fake.New()
+	slow := newW(welcomeCfg("auto", nil, config.Welcome{Enabled: boolPtr(true), Text: "hello", MaxPerMinute: intPtr(1)}), &memWelcome{}, late, nil)
+	slow.Now = func() time.Time {
+		ticks++
+		if ticks == 1 {
+			return base
+		}
+		return base.Add(61 * time.Second)
+	}
+	out, err = slow.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 1})
+	if err != nil || out != OutcomeSent {
+		t.Fatalf("slow send = %q err=%v", out, err)
+	}
+	out, err = slow.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 2})
+	if err != nil || out != OutcomeSkipRateCapped || sends(late.Calls()) != 1 {
+		t.Fatalf("after a slow send = %q err=%v sends=%d", out, err, sends(late.Calls()))
+	}
 }
 
 func TestWelcomerSendFailureNotMarked(t *testing.T) {
 	st := &memWelcome{}
 	port := fake.New()
 	port.WelcomeErr = errors.New("telegram down")
-	out, err := newW(welcomeCfg("auto", nil, onWelcome("hello")), st, port, nil).
-		Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 7})
+	w := newW(welcomeCfg("auto", nil, config.Welcome{Enabled: boolPtr(true), Text: "hello", MaxPerMinute: intPtr(1)}), st, port, nil)
+	out, err := w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 7})
 	known, kerr := st.WasWelcomed(-100, 7)
 	if out != OutcomeError || !errors.Is(err, port.WelcomeErr) || st.marks != 0 || kerr != nil || known {
 		t.Fatalf("out=%q err=%v marks=%d known=%v kerr=%v", out, err, st.marks, known, kerr)
+	}
+	port.WelcomeErr = nil
+	out, err = w.Observe(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 8})
+	if err != nil || out != OutcomeSkipRateCapped || sends(port.Calls()) != 1 {
+		t.Fatalf("failed attempt did not consume the cap: %q err=%v sends=%d", out, err, sends(port.Calls()))
 	}
 }
 
