@@ -38,6 +38,8 @@ type Fake struct {
 	UnbanErr     error
 	EphemeralID  int
 	EphemeralErr error
+	WelcomeID    int
+	WelcomeErr   error
 	Rights       telegram.BotRights
 	RightsErr    error
 	// Titles answers ChatTitle per chat id; TitleErr fails the lookup, which
@@ -67,6 +69,12 @@ type Fake struct {
 	// LastEphemeral captures the most recent args passed to SendEphemeral, so
 	// tests can assert on fields the call log doesn't otherwise record.
 	LastEphemeral struct {
+		Chat, UserID int64
+		Text         string
+	}
+
+	// LastWelcome captures the most recent args passed to SendWelcome.
+	LastWelcome struct {
 		Chat, UserID int64
 		Text         string
 	}
@@ -231,6 +239,16 @@ func (f *Fake) SendEphemeral(_ context.Context, chat, userID int64, text string)
 	f.mu.Unlock()
 	f.log("SendEphemeral")
 	return f.EphemeralID, f.EphemeralErr
+}
+
+func (f *Fake) SendWelcome(_ context.Context, chat, userID int64, text string) (int, error) {
+	f.mu.Lock()
+	f.LastWelcome.Chat = chat
+	f.LastWelcome.UserID = userID
+	f.LastWelcome.Text = text
+	f.mu.Unlock()
+	f.log("SendWelcome")
+	return f.WelcomeID, f.WelcomeErr
 }
 
 func (f *Fake) CheckBotRights(_ context.Context, _ int64) (telegram.BotRights, error) {

@@ -8,6 +8,28 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+### Added
+
+- Optional ephemeral welcome for a person who joins a chat (`welcome`,
+  default off). The text is plain and can be set globally or per chat.
+  Telegram shows it only to the new member and does not guarantee delivery.
+  A chat's dry-run flag does not apply: this is a notice, not a sanction.
+  Each person is greeted at most once, and a per-chat cap bounds a burst
+  of joins.
+
+### Changed
+
+- `github.com/go-telegram/bot` is now v1.27.0 (Bot API 10.3). Ephemeral
+  sends pass `ephemeral_message_parameters` instead of the removed
+  top-level `receiver_user_id` parameter.
+
+### Security
+
+- An ephemeral send that Telegram publishes to the chat — a `message_id`
+  and no `ephemeral_message_id` — is deleted immediately and returned as
+  an error, so a private moderator reply or a welcome cannot stay visible
+  to everyone.
+
 ## [0.17.1] - 2026-09-18
 
 ### Fixed

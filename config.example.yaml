@@ -31,6 +31,32 @@ chats:
   # simply get "not authorized".
   operators: []
 
+# welcome sends an ephemeral greeting when a person joins a chat. Telegram
+# shows it only to that person and does not guarantee delivery, so nothing
+# else in the bot waits on it. It is a notice, not a sanction: the chat's
+# dry-run flag does not apply, and the text is plain (no parse_mode). Say
+# what the rules are and who to contact if the bot mutes someone by mistake.
+# Off unless enabled is true AND the resolved text is non-empty. A chat
+# entry overrides the global switch when its enabled is set, and overrides
+# the text when its text is non-empty. In chats.mode allowlist every key
+# under welcome.chats must also be in chats.allowlist.
+welcome:
+  # Master switch for every admitted chat that does not override it.
+  # Default: false.
+  enabled: false
+  # Shared text. Empty leaves the option off even when enabled is true.
+  text: ""
+  # How many greetings one chat may send per rolling minute. A join raid
+  # would otherwise fill that chat's outbound queue. Default: 20.
+  max_per_minute: 20
+  # Per-chat overrides. The id below is fictional.
+  chats: {}
+  # -1001234567890:
+  #   enabled: true
+  #   text: |
+  #     Welcome. Rules: no advertising, no off-topic spam.
+  #     If you were muted by mistake, message @moderator_contact.
+
 # detection configures the M3 detection cascade (internal/detect). Every
 # field below is optional; unset fields fall back to the defaults shown
 # here as comments. Durations are Go duration strings (e.g. "60s", "5m").

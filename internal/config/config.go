@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stufently/telegram-antispam/internal/domain"
 	"gopkg.in/yaml.v3"
@@ -446,6 +447,53 @@ type LLM struct {
 	MaxTokens int `yaml:"max_tokens"`
 }
 
+// Welcome is the optional ephemeral greeting sent to a person who joins a
+// chat. It is off unless Enabled is set and the resolved text is non-empty.
+// Delivery is not guaranteed and the chat's dry-run flag does not apply:
+// the message is a notice, not a sanction.
+//
+// Enabled and MaxPerMinute are pointers so an explicit false or 0 is kept.
+// The default for Enabled is false; the default for MaxPerMinute is 20.
+type Welcome struct {
+	Enabled      *bool                 `yaml:"enabled"`
+	Text         string                `yaml:"text"`
+	MaxPerMinute *int                  `yaml:"max_per_minute"`
+	Chats        map[int64]WelcomeChat `yaml:"chats"`
+}
+
+// WelcomeChat overrides Welcome for one chat. A nil Enabled means "inherit
+// the global switch"; a non-empty Text replaces the global text.
+type WelcomeChat struct {
+	Enabled *bool  `yaml:"enabled"`
+	Text    string `yaml:"text"`
+}
+
+// telegramMessageRunes is the Bot API message length limit, counted in
+// Unicode code points rather than bytes.
+const telegramMessageRunes = 4096
+
+// For resolves the greeting for chatID. A chat entry whose Enabled is
+// non-nil decides whether that chat is on; otherwise the global switch does.
+// Text is the chat entry's text when it is non-empty after trimming,
+// otherwise the global text. ok is true only when the chat is on and the
+// resolved text is non-empty.
+func (w Welcome) For(chatID int64) (text string, ok bool) {
+	enabled := w.Enabled != nil && *w.Enabled
+	text = strings.TrimSpace(w.Text)
+	if chat, found := w.Chats[chatID]; found {
+		if chat.Enabled != nil {
+			enabled = *chat.Enabled
+		}
+		if trimmed := strings.TrimSpace(chat.Text); trimmed != "" {
+			text = trimmed
+		}
+	}
+	if !enabled || text == "" {
+		return text, false
+	}
+	return text, true
+}
+
 type Config struct {
 	BotToken    string        `yaml:"bot_token"`
 	AdminChatID int64         `yaml:"admin_chat_id"`
@@ -455,6 +503,7 @@ type Config struct {
 	Blocklist   Blocklist     `yaml:"blocklist"`
 	Ops         Ops           `yaml:"ops"`
 	LLM         LLM           `yaml:"llm"`
+	Welcome     Welcome       `yaml:"welcome"`
 }
 
 func Load(path string) (*Config, error) {
@@ -474,6 +523,7 @@ func Parse(b []byte) (*Config, error) {
 	c.applyBlocklistDefaults()
 	c.applyOpsDefaults()
 	c.applyLLMDefaults()
+	c.applyWelcomeDefaults()
 	// BOT_TOKEN env overrides bot_token from the file, so the token can be
 	// supplied by a Kubernetes Secret / Docker secret and kept out of the
 	// config file entirely (12-factor). Env wins when both are set.
@@ -663,6 +713,23 @@ func (c *Config) applyOpsDefaults() {
 // applyLLMDefaults fills LLM fields left unset. Enabled defaults to FALSE
 // (external calls are opt-in), so — unlike the other blocks — a nil Enabled
 // stays disabled.
+// applyWelcomeDefaults fills Welcome fields left unset. Enabled defaults
+// to false (a greeting is opt-in) and MaxPerMinute to 20. An explicit
+// value, including false and 0, is left alone so Validate can reject 0.
+func (c *Config) applyWelcomeDefaults() {
+	if c.Welcome.Enabled == nil {
+		def := false
+		c.Welcome.Enabled = &def
+	}
+	if c.Welcome.MaxPerMinute == nil {
+		def := 20
+		c.Welcome.MaxPerMinute = &def
+	}
+	if c.Welcome.Chats == nil {
+		c.Welcome.Chats = map[int64]WelcomeChat{}
+	}
+}
+
 func (c *Config) applyLLMDefaults() {
 	if c.LLM.Enabled == nil {
 		def := false
@@ -734,6 +801,45 @@ func (c *Config) Validate() error {
 			if p.Model == "" {
 				return fmt.Errorf("llm.providers[%d] (%s) missing model", i, p.Kind)
 			}
+		}
+	}
+	if err := c.validateWelcome(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Config) validateWelcome() error {
+	if c.Welcome.MaxPerMinute != nil && *c.Welcome.MaxPerMinute < 1 {
+		return fmt.Errorf("welcome.max_per_minute must be >= 1, got %d", *c.Welcome.MaxPerMinute)
+	}
+	if n := utf8.RuneCountInString(strings.TrimSpace(c.Welcome.Text)); n > telegramMessageRunes {
+		return fmt.Errorf("welcome.text is %d runes, the Telegram limit is %d", n, telegramMessageRunes)
+	}
+	globalOn := c.Welcome.Enabled != nil && *c.Welcome.Enabled
+	if globalOn && strings.TrimSpace(c.Welcome.Text) == "" {
+		return fmt.Errorf("welcome.text is empty while welcome.enabled is true")
+	}
+	if c.Chats.Mode == "allowlist" {
+		for id := range c.Welcome.Chats {
+			if !containsChat(c.Chats.Allowlist, id) {
+				return fmt.Errorf("welcome.chats contains %d, which is not in chats.allowlist", id)
+			}
+		}
+	}
+	for id, chat := range c.Welcome.Chats {
+		if n := utf8.RuneCountInString(strings.TrimSpace(chat.Text)); n > telegramMessageRunes {
+			return fmt.Errorf("welcome.chats[%d].text is %d runes, the Telegram limit is %d", id, n, telegramMessageRunes)
+		}
+		on := globalOn
+		if chat.Enabled != nil {
+			on = *chat.Enabled
+		}
+		if !on {
+			continue
+		}
+		if _, ok := c.Welcome.For(id); !ok {
+			return fmt.Errorf("welcome.chats[%d] is enabled but the welcome text is empty", id)
 		}
 	}
 	return nil

@@ -2,7 +2,10 @@
 // The rest of the bot depends on Port so it can be tested with a fake.
 package telegram
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // Perms is the subset of chat permissions the bot toggles when muting.
 type Perms struct {
@@ -85,5 +88,15 @@ type Port interface {
 	EditAdminMarkup(ctx context.Context, adminChat int64, messageID int, buttons [][]Button) error
 	DeleteMessageReaction(ctx context.Context, chat int64, messageID int, userID int64) error
 	SendEphemeral(ctx context.Context, chat, userID int64, text string) (int, error)
+	// SendWelcome delivers a plain-text ephemeral greeting to one user.
+	// It is the same send as SendEphemeral, queued under its own method
+	// name so the dispatcher can run it at a lower priority than moderation.
+	SendWelcome(ctx context.Context, chat, userID int64, text string) (int, error)
 	CheckBotRights(ctx context.Context, chat int64) (BotRights, error)
 }
+
+// ErrEphemeralNotHonored means Telegram accepted the send but did not mark
+// it ephemeral: the response carried a message_id and no ephemeral_message_id,
+// so the text landed in the chat where everyone can read it. The port deletes
+// that message before returning this error. A delete failure is wrapped in it.
+var ErrEphemeralNotHonored = errors.New("telegram: ephemeral send was published to the chat")

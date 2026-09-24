@@ -112,3 +112,5 @@ config: |
       # Opt-in. Recognized Maps URLs alone skip link_from_untrusted; other
       # detectors still run. See config.example.yaml for the exact shapes.
       allow_google_maps_links: false
+  # Ephemeral greeting for someone who joins; off by default, and dry-run does not apply.
+  welcome: {enabled: false}

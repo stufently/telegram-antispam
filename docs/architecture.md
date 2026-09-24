@@ -203,6 +203,23 @@ there is no cached list at all — the cascade emits a non-actionable
 increment trust. A deferred message is still recorded in every behavioral window, since the
 update is already marked seen and will never be reprocessed.
 
+A `chat_member` update has a second job in the same per-chat sequencer task,
+strictly after the identity watcher records the name. The adapter classifies
+the update with `JoinFromChatMemberUpdated`: a non-bot user moving from left,
+kicked, or restricted-but-not-a-member into member (or into restricted with
+`is_member`) is a join. `watch.Welcomer` may then send an ephemeral greeting.
+That option is off unless `welcome` is enabled and has text, and it does not
+consult the chat's dry-run flag — the message is a notice, not a sanction.
+Telegram shows it only to the joining user and does not guarantee delivery,
+so nothing else waits on it. Each (chat, user) pair is greeted at most once;
+someone who has already spoken, or who is on the blocklist, is skipped; a
+per-chat cap (`welcome.max_per_minute` over a rolling minute) keeps a join
+raid from filling the outbound queue. The same ephemeral send deletes the
+message and returns an error when Telegram answers with an ordinary
+`message_id` and no `ephemeral_message_id`, so a parameter the server did
+not honor cannot leave the text visible to the whole chat. Welcome traffic
+is queued at low priority and does not delay deletes or admin cards.
+
 The blocklist is an atomic in-memory snapshot refreshed from external sources.
 LOLS full, LOLS delta, and CAS full data are retained separately: a failed or
 empty source refresh keeps that source's last-good contribution while a

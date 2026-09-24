@@ -8,6 +8,7 @@ package telegram
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -633,13 +634,61 @@ func (p *LivePort) DeleteMessageReaction(ctx context.Context, chat int64, messag
 }
 
 func (p *LivePort) SendEphemeral(ctx context.Context, chat, userID int64, text string) (int, error) {
-	return submitSync(ctx, p.disp, chat, p.prio("SendEphemeral"), func(ctx context.Context) (int, error) {
-		msg, err := p.b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chat, ReceiverUserID: userID, Text: text})
+	return p.sendToUser(ctx, "SendEphemeral", chat, userID, text)
+}
+
+func (p *LivePort) SendWelcome(ctx context.Context, chat, userID int64, text string) (int, error) {
+	return p.sendToUser(ctx, "SendWelcome", chat, userID, text)
+}
+
+// ephemeralSend is what Telegram reported for one send-to-user attempt.
+// ephemeralID is the private id; messageID is set when the text was stored
+// as an ordinary chat message.
+type ephemeralSend struct {
+	ephemeralID int
+	messageID   int
+}
+
+// sendToUser sends text so that only userID should see it. method is the
+// Port name the dispatcher uses for priority ("SendEphemeral" or "SendWelcome").
+//
+// Bot API 10.3 replaced the top-level receiver_user_id parameter with
+// ephemeral_message_parameters. A response that has a message_id and no
+// ephemeral_message_id means Telegram ignored that and published the text
+// to the whole chat. Delete it through the dispatcher (so the delete is
+// rate-limited and ordered with every other destructive call) and return
+// ErrEphemeralNotHonored. The two sends share this helper so the safeguard
+// cannot be fixed on one path and forgotten on the other.
+func (p *LivePort) sendToUser(ctx context.Context, method string, chat, userID int64, text string) (int, error) {
+	sent, err := submitSync(ctx, p.disp, chat, p.prio(method), func(ctx context.Context) (ephemeralSend, error) {
+		msg, err := p.b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: chat,
+			Text:   text,
+			EphemeralMessageParameters: &models.EphemeralMessageParameters{
+				ReceiverUserID: userID,
+			},
+		})
 		if err != nil {
-			return 0, mapRetry(err)
+			return ephemeralSend{}, mapRetry(err)
 		}
-		return msg.EphemeralMessageID, nil
+		if msg == nil {
+			return ephemeralSend{}, nil
+		}
+		return ephemeralSend{ephemeralID: msg.EphemeralMessageID, messageID: msg.ID}, nil
 	})
+	if err != nil {
+		return 0, err
+	}
+	// The send job has finished, so the dispatcher is free to run the
+	// delete. Calling DeleteMessages from inside the job would deadlock:
+	// Run is single-threaded and would wait on itself.
+	if sent.ephemeralID == 0 && sent.messageID != 0 {
+		if delErr := p.DeleteMessages(ctx, chat, []int{sent.messageID}); delErr != nil {
+			return 0, fmt.Errorf("%w: %w", ErrEphemeralNotHonored, delErr)
+		}
+		return 0, ErrEphemeralNotHonored
+	}
+	return sent.ephemeralID, nil
 }
 
 func toInlineKeyboard(buttons [][]Button) [][]models.InlineKeyboardButton {

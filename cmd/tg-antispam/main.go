@@ -89,6 +89,9 @@ func priorityFor(method string) queue.Priority {
 	switch method {
 	case "DeleteMessages", "BanMember", "UnbanMember", "RestrictMember", "UnrestrictMember", "BanSenderChat":
 		return queue.PrioHigh
+	case "SendWelcome":
+		// A join raid must not stand in front of deletes and admin cards.
+		return queue.PrioLow
 	default:
 		return queue.PrioNormal
 	}
@@ -361,6 +364,7 @@ func main() {
 		handler         *telegram.Handler
 		adminHandler    *admin.Handler
 		memberWatcher   *watch.MemberWatcher
+		welcomer        *watch.Welcomer
 		reactionCleaner *watch.ReactionCleaner
 		adminCache      *telegram.AdminCache
 		selfCheck       func(context.Context, int64)
@@ -433,26 +437,8 @@ func main() {
 				})
 			case update.ChatMember != nil:
 				reg.IncCounter("tg_antispam_updates_total", 1, "kind", "chat_member")
-				cm := update.ChatMember
-				mem := telegram.MemberFromChatMember(cm.NewChatMember)
-				// Only a change that touches the admin roster invalidates it.
-				// chat_member also fires for every ordinary join, leave, and
-				// restriction, and dropping the cache on those would turn the
-				// TTL cache into a per-event GetChatAdministrators during a
-				// raid — and stretch the windows where a failing lookup has
-				// nothing cached to fall back on. Invalidate on the inline
-				// consumer, before later updates from this chat can be
-				// submitted, then let the sequenced watcher refetch as needed.
-				if isAdminStatus(telegram.MemberFromChatMember(cm.OldChatMember).Status) || isAdminStatus(mem.Status) {
-					adminCache.Invalidate(cm.Chat.ID)
-				}
-				ev := watch.MemberEvent{ChatID: cm.Chat.ID, UserID: mem.UserID, Username: mem.Username, DisplayName: mem.DisplayName}
-				seq.Submit(cm.Chat.ID, func() {
-					if memberWatcher != nil {
-						if err := memberWatcher.Observe(workCtx, ev); err != nil {
-							log.Printf("member watch: %v", err)
-						}
-					}
+				handleChatMember(workCtx, update.ChatMember, adminCache.Invalidate, seq.Submit, memberWatcher, welcomer, func(result string) {
+					reg.IncCounter("tg_antispam_welcome_total", 1, "result", result)
 				})
 			case update.MessageReaction != nil:
 				reg.IncCounter("tg_antispam_updates_total", 1, "kind", "reaction")
@@ -717,6 +703,18 @@ func main() {
 				}
 			}
 		})
+	}
+
+	// Greetings read the live config on each join, so a reload turns them
+	// on or off without a restart. blocklistSource stays nil when the
+	// blocklist is disabled; a typed nil would make the check think a list
+	// is loaded. Dry-run is not consulted: a welcome is not a sanction.
+	welcomer = &watch.Welcomer{
+		Config:    cfgStore,
+		Store:     db,
+		Port:      livePort,
+		Blocklist: blocklistSource,
+		Now:       time.Now,
 	}
 
 	// Sequencer health. Both counters are silent failures by construction:

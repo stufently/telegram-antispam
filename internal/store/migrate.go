@@ -91,6 +91,12 @@ CREATE TABLE IF NOT EXISTS user_identity (
 	updated_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
 	PRIMARY KEY(chat_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS welcome_sent (
+	chat_id    INTEGER NOT NULL,
+	user_id    INTEGER NOT NULL,
+	created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+	PRIMARY KEY(chat_id, user_id)
+);
 `
 
 // Migrate creates all tables if absent, then applies any additive column

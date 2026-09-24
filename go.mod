@@ -11,7 +11,7 @@ toolchain go1.26.6
 
 require (
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/go-telegram/bot v1.23.0
+	github.com/go-telegram/bot v1.27.0
 	golang.org/x/text v0.41.0
 	golang.org/x/time v0.15.0
 	gopkg.in/yaml.v3 v3.0.1
