@@ -249,7 +249,8 @@ sends the same `cap:` button to `user_chat_id` and approves the request when
 that person presses it. The applicant is not a member yet, so a moderation
 sanction is not consulted. `on_fail: kick` declines the request;
 `keep_muted` leaves it for the admins, as do a failed prompt, an orphan
-`new` row, and a chat that is off or in dry-run when the deadline passes.
+`new` row, a `challenged` row whose button was never stored, and a chat
+that is off or in dry-run when the deadline passes.
 Someone who already passed, or who has trust, is approved without a new
 challenge. A blocklisted id is left untouched. An ordinary join in that
 chat does not start the button captcha. An admin who approves the request

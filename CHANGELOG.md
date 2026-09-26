@@ -20,7 +20,8 @@ Entries start life under **Unreleased** and are moved under a version heading wh
   that admit people by request. The bot listens for `chat_join_request`,
   sends the button to the applicant in private, and approves the request
   on a press. `on_fail: kick` declines the request; `keep_muted` leaves it
-  for the admins. The bot needs `can_invite_users`. An ordinary join in
+  for the admins. A challenge whose button was never stored is left for
+  the admins too. The bot needs `can_invite_users`. An ordinary join in
   that chat does not start the button captcha.
 
 - Optional ephemeral welcome (`welcome`, default off) when a person joins.

@@ -106,8 +106,11 @@ func (c *Captcha) sweepJoinChallenged(ctx context.Context, row store.CaptchaRow)
 		c.log(err)
 		return
 	}
-	if out != "" || pol.OnFail != "kick" {
-		c.cancelJoin(ctx, row, store.CaptchaChallenged, true)
+	// challenged is recorded before the private button exists. A deadline
+	// that arrives with no message was a crash or a send that never
+	// landed; declining it would punish someone who was never asked.
+	if out != "" || pol.OnFail != "kick" || row.MessageID == 0 {
+		c.cancelJoin(ctx, row, store.CaptchaChallenged, row.MessageID != 0)
 		return
 	}
 	failed, ok, ferr := c.Store.FailCaptcha(row.ChatID, row.UserID, row.Attempt, []string{store.CaptchaChallenged}, "decline")

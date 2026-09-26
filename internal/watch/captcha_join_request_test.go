@@ -163,6 +163,24 @@ func TestJoinRequestWrongUserRejected(t *testing.T) {
 	}
 }
 
+func TestJoinRequestUnsentChallengedLeftPending(t *testing.T) {
+	e := newCap(t)
+	e.asJoinRequest("")
+	row, started, err := e.db.BeginCaptcha(capChat, 7, e.clock.Unix(), e.clock.Unix(), "join_request")
+	if err != nil || !started {
+		t.Fatal(err)
+	}
+	if _, ok, err := e.db.TransitionCaptcha(capChat, 7, row.Attempt, []string{store.CaptchaNew}, store.CaptchaChallenged); err != nil || !ok {
+		t.Fatal(err)
+	}
+	if _, err := e.c.Sweep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if e.row(7).State != store.CaptchaCancelled || called(e.calls(), "DeclineJoinRequest") || called(e.calls(), "ApproveJoinRequest") || !e.saw("left_pending") {
+		t.Fatal(e.row(7).State, e.calls(), e.saw("left_pending"))
+	}
+}
+
 func TestJoinRequestTimeoutDeclines(t *testing.T) {
 	e := newCap(t)
 	e.asJoinRequest("")
