@@ -523,6 +523,16 @@ func (errPrompt) SetCaptchaPrompt(int64, int64, int64, int, int, int64) (store.C
 	return store.CaptchaRow{}, errors.New("save prompt")
 }
 
+type errPromptAndFail struct{ *store.DB }
+
+func (errPromptAndFail) SetCaptchaPrompt(int64, int64, int64, int, int, int64) (store.CaptchaRow, error) {
+	return store.CaptchaRow{}, errors.New("save prompt")
+}
+
+func (errPromptAndFail) FailCaptcha(int64, int64, int64, []string, string) (store.CaptchaRow, bool, error) {
+	return store.CaptchaRow{}, false, errors.New("db")
+}
+
 func TestCaptchaChallengedCounted(t *testing.T) {
 	e := newCap(t)
 	out := e.join(7, "Ada")
@@ -617,6 +627,12 @@ func TestCaptchaPromptSaveErrorFailsOpen(t *testing.T) {
 	}
 	if !called(e.calls(), "UnrestrictMember") || called(e.calls(), "BanMember") {
 		t.Fatal(e.calls())
+	}
+	e2 := newCap(t)
+	e2.c.Store = errPromptAndFail{e2.db}
+	e2.join(7, "Ada")
+	if e2.row(7).State != store.CaptchaChallenged || called(e2.calls(), "DeleteEphemeral") || called(e2.calls(), "UnrestrictMember") {
+		t.Fatal(e2.row(7).State, e2.calls())
 	}
 }
 

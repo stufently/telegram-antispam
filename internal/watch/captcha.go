@@ -289,12 +289,15 @@ func (c *Captcha) challenge(ctx context.Context, ev telegram.JoinEvent, attempt 
 	saved, err := c.Store.SetCaptchaPrompt(ev.ChatID, ev.UserID, attempt, ephID, msgID, sentAt.Add(pol.Timeout).Unix())
 	if err != nil {
 		log.Printf("captcha: %v", err)
-		c.deleteIDs(ctx, ev.ChatID, ev.UserID, ephID, msgID)
+		// Record fail-open before dropping the button. If this write also
+		// fails, the person can still press; deleting first would leave a
+		// mute that the deadline later treats as a failed challenge.
 		failed, ok, ferr := c.Store.FailCaptcha(ev.ChatID, ev.UserID, attempt, []string{store.CaptchaChallenged}, "unrestrict")
 		if ferr != nil {
 			c.log(ferr)
 			return
 		}
+		c.deleteIDs(ctx, ev.ChatID, ev.UserID, ephID, msgID)
 		if ok {
 			c.fail(ctx, failed)
 		}

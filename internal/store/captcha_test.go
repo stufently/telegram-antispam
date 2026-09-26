@@ -92,7 +92,7 @@ func TestCaptchaLifecycle(t *testing.T) {
 	if err != nil || !found || again.Tries != 1 || again.Deadline != 80 || again.State != CaptchaFailing {
 		t.Fatal(again, found, err)
 	}
-	prompt, err := db.SetCaptchaPrompt(-100, 8, 1, 55, 0, 80)
+	prompt, err := db.SetCaptchaPrompt(-100, 8, 1, 55, 0, 90)
 	if err != nil || prompt.EphemeralID != 55 || prompt.MessageID != 0 || prompt.State != CaptchaFailing || prompt.Deadline != 80 {
 		t.Fatal(prompt, err)
 	}
@@ -134,6 +134,10 @@ func TestCaptchaLifecycle(t *testing.T) {
 	}
 	if len(got) != 4 || got[0] != 2 || got[1] != 5 || got[2] != 6 || got[3] != 8 {
 		t.Fatal(got)
+	}
+	shown, err := db.SetCaptchaPrompt(-100, 5, 1, 0, 9, 45)
+	if err != nil || shown.State != CaptchaChallenged || shown.MessageID != 9 || shown.Deadline != 45 {
+		t.Fatal(shown, err)
 	}
 
 	if _, _, err = db.InsertPending(-100, 1, 7, 0, false, domain.Verdict{Action: domain.ActionMute}); err != nil {

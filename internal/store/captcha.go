@@ -181,9 +181,15 @@ func (db *DB) RetryCaptcha(chatID, userID, attempt, nextDeadline int64) error {
 func (db *DB) SetCaptchaPrompt(chatID, userID, attempt int64, ephemeralID, messageID int, deadline int64) (CaptchaRow, error) {
 	var row CaptchaRow
 	err := db.Write(func(tx *sql.Tx) error {
-		res, err := tx.Exec(`UPDATE captcha_challenges SET ephemeral_id=?, message_id=?, deadline=?, updated_at=?
+		// A press can commit `passing` (deadline = now) between the send and
+		// this write. Pushing that deadline out to the full timeout would
+		// hide a failed unmute from the sweep.
+		res, err := tx.Exec(`UPDATE captcha_challenges
+			SET ephemeral_id=?, message_id=?,
+				deadline=CASE WHEN state=? THEN ? ELSE deadline END,
+				updated_at=?
 			WHERE chat_id=? AND user_id=? AND attempt=?`,
-			ephemeralID, messageID, deadline, nowUnix(), chatID, userID, attempt)
+			ephemeralID, messageID, CaptchaChallenged, deadline, nowUnix(), chatID, userID, attempt)
 		if err != nil {
 			return err
 		}
