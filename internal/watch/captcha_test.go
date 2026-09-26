@@ -1,10 +1,14 @@
 package watch
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +21,13 @@ import (
 )
 
 const capChat int64 = -100
+
+func durPtr(d time.Duration) *config.Duration {
+	v := config.Duration(d)
+	return &v
+}
+
+func strPtr(s string) *string { return &s }
 
 func ev(restricted bool) telegram.JoinEvent {
 	return telegram.JoinEvent{ChatID: capChat, UserID: 7, Restricted: restricted}
@@ -88,8 +99,8 @@ func newCap(t *testing.T) *capEnv {
 		cfg: &config.Config{
 			Chats: config.ChatsPolicy{Mode: "auto", StartInDryRun: &off},
 			Captcha: config.Captcha{
-				Enabled: &on, Mode: "button", Timeout: config.Duration(30 * time.Second),
-				OnFail: "kick", Text: "prove it", ButtonText: "I am not a bot",
+				Enabled: &on, Mode: "button", Timeout: durPtr(30 * time.Second),
+				OnFail: "kick", Text: strPtr("prove it"), ButtonText: strPtr("I am not a bot"),
 			},
 		},
 	}
@@ -233,7 +244,7 @@ func TestCaptchaSkips(t *testing.T) {
 		if err := e.db.MarkWelcomed(capChat, 7); err != nil {
 			t.Fatal(err)
 		}
-		if out := e.join(7, "Ada"); out != "" || e.row(7).State != store.CaptchaChallenged || !called(e.calls(), "RestrictMember") {
+		if out := e.join(7, "Ada"); out != CaptchaChallenged || e.row(7).State != store.CaptchaChallenged || !called(e.calls(), "RestrictMember") {
 			t.Fatal(out, e.row(7).State, e.calls())
 		}
 	})
@@ -241,7 +252,7 @@ func TestCaptchaSkips(t *testing.T) {
 
 func TestCaptchaMutesThenPrompts(t *testing.T) {
 	e := newCap(t)
-	if out := e.join(7, "Ada"); out != "" {
+	if out := e.join(7, "Ada"); out != CaptchaChallenged {
 		t.Fatal(out)
 	}
 	calls := e.calls()
@@ -339,7 +350,7 @@ func TestCaptchaStaleAttemptIgnored(t *testing.T) {
 func TestCaptchaPressAfterSanctionKeepsMute(t *testing.T) {
 	e := newCap(t)
 	e.join(7, "Ada")
-	if _, _, err := e.db.InsertPending(capChat, 1, 7, 0, false, domain.Verdict{}); err != nil {
+	if _, _, err := e.db.InsertPending(capChat, 1, 7, 0, false, domain.Verdict{Action: domain.ActionMute}); err != nil {
 		t.Fatal(err)
 	}
 	row := e.row(7)
@@ -434,7 +445,7 @@ func TestCaptchaSweepSkipsInFlightRestrict(t *testing.T) {
 	block := &blockRestrict{capPort: e.port, started: make(chan struct{}), release: make(chan struct{})}
 	e.c.Port = block
 	out, err := e.c.OnJoin(context.Background(), ev(false), "Ada")
-	if err != nil || out != "" {
+	if err != nil || out != CaptchaChallenged {
 		t.Fatal(out, err)
 	}
 	select {
@@ -491,5 +502,185 @@ func TestCaptchaSurvivesRestart(t *testing.T) {
 	}
 	if !called(e.calls(), "BanMember") || !called(e.calls(), "UnbanMember") || !called(e.calls(), "UnrestrictMember") {
 		t.Fatal(e.calls())
+	}
+}
+
+type unrestrictGate struct {
+	telegram.Port
+	err error
+}
+
+func (g *unrestrictGate) UnrestrictMember(ctx context.Context, chat, user int64) error {
+	if g.err != nil {
+		return g.err
+	}
+	return g.Port.UnrestrictMember(ctx, chat, user)
+}
+
+type errPrompt struct{ *store.DB }
+
+func (errPrompt) SetCaptchaPrompt(int64, int64, int64, int, int, int64) (store.CaptchaRow, error) {
+	return store.CaptchaRow{}, errors.New("save prompt")
+}
+
+func TestCaptchaChallengedCounted(t *testing.T) {
+	e := newCap(t)
+	out := e.join(7, "Ada")
+	if out != CaptchaChallenged || string(out) != "challenged" {
+		t.Fatal(out)
+	}
+	if e.row(7).State != store.CaptchaChallenged || out == "" || out == CaptchaSkip {
+		t.Fatal(out, e.row(7).State)
+	}
+}
+
+func TestCaptchaPassingSurvivesCrash(t *testing.T) {
+	e := newCap(t)
+	row, started, err := e.db.BeginCaptcha(capChat, 7, e.clock.Unix(), e.clock.Unix())
+	if err != nil || !started {
+		t.Fatal(err)
+	}
+	if _, ok, err := e.db.TransitionCaptcha(capChat, 7, row.Attempt, []string{store.CaptchaNew}, store.CaptchaPassing); err != nil || !ok {
+		t.Fatal(err)
+	}
+	known, err := e.db.CaptchaPassed(capChat, 7)
+	if err != nil || known {
+		t.Fatal(known, err)
+	}
+	e.c = e.engine()
+	if _, err := e.c.Sweep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if e.row(7).State != store.CaptchaPassed || !called(e.calls(), "UnrestrictMember") {
+		t.Fatal(e.row(7).State, e.calls())
+	}
+}
+
+func TestCaptchaPressUnrestrictErrorKeepsPassing(t *testing.T) {
+	e := newCap(t)
+	gate := &unrestrictGate{Port: e.port, err: errors.New("temp")}
+	e.c.Port = gate
+	e.join(7, "Ada")
+	row := e.row(7)
+	out, err := e.c.OnPress(context.Background(), CaptchaPress{
+		ID: "cb", Data: fmt.Sprintf("cap:%d:%d:%d", capChat, 7, row.Attempt), PresserID: 7,
+	})
+	if out != CaptchaError || err == nil || e.row(7).State != store.CaptchaPassing || e.row(7).Tries != 0 {
+		t.Fatal(out, err, e.row(7))
+	}
+	if texts := e.port.texts(); len(texts) != 1 || texts[0] != "accepted, access will be restored shortly" {
+		t.Fatal(texts)
+	}
+	if _, err := e.c.Sweep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	row = e.row(7)
+	if row.State != store.CaptchaPassing || row.Tries != 1 || called(e.calls(), "UnrestrictMember") {
+		t.Fatal(row, e.calls())
+	}
+	gate.err = nil
+	e.clock = e.clock.Add(60 * time.Second)
+	if _, err := e.c.Sweep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if e.row(7).State != store.CaptchaPassed || !called(e.calls(), "UnrestrictMember") {
+		t.Fatal(e.row(7).State, e.calls())
+	}
+}
+
+func TestCaptchaFailOpenRespectsSanction(t *testing.T) {
+	e := newCap(t)
+	e.join(7, "Ada")
+	if _, _, err := e.db.InsertPending(capChat, 1, 7, 0, false, domain.Verdict{Action: domain.ActionBan}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := *e.cfg
+	cfg.Chats.ForceDryRun = []int64{capChat}
+	e.live.Swap(&cfg)
+	e.due()
+	if e.row(7).State != store.CaptchaCancelled || called(e.calls(), "UnrestrictMember") || called(e.calls(), "BanMember") {
+		t.Fatal(e.row(7).State, e.calls())
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(e.counts) != 1 || e.counts[0] != string(CaptchaCancelledSanction) {
+		t.Fatal(e.counts)
+	}
+}
+
+func TestCaptchaPromptSaveErrorFailsOpen(t *testing.T) {
+	e := newCap(t)
+	e.c.Store = errPrompt{e.db}
+	e.join(7, "Ada")
+	if e.row(7).State != store.CaptchaCancelled || e.port.LastDeleteEphemeral.EphemeralID != 55 {
+		t.Fatal(e.row(7).State, e.port.LastDeleteEphemeral)
+	}
+	if !called(e.calls(), "UnrestrictMember") || called(e.calls(), "BanMember") {
+		t.Fatal(e.calls())
+	}
+}
+
+func TestCaptchaDeadlineStartsAtPrompt(t *testing.T) {
+	e := newCap(t)
+	block := &blockRestrict{capPort: e.port, started: make(chan struct{}), release: make(chan struct{})}
+	e.c.Port = block
+	inserted := e.clock
+	out, err := e.c.OnJoin(context.Background(), ev(false), "Ada")
+	if err != nil || out != CaptchaChallenged {
+		t.Fatal(out, err)
+	}
+	select {
+	case <-block.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("restrict did not start")
+	}
+	e.clock = e.clock.Add(10 * time.Second)
+	close(block.release)
+	e.c.Wait()
+	row := e.row(7)
+	want := e.clock.Add(30 * time.Second).Unix()
+	if row.Deadline != want || row.Deadline == inserted.Add(30*time.Second).Unix() {
+		t.Fatalf("deadline %d, want %d from the send, not %d from the join", row.Deadline, want, inserted.Add(30*time.Second).Unix())
+	}
+}
+
+func TestCaptchaRestrictAfterCancelCounted(t *testing.T) {
+	e := newCap(t)
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	block := &blockRestrict{capPort: e.port, started: make(chan struct{}), release: make(chan struct{})}
+	e.c.Port = block
+	out, err := e.c.OnJoin(context.Background(), ev(false), "Ada")
+	if err != nil || out != CaptchaChallenged {
+		t.Fatal(out, err)
+	}
+	select {
+	case <-block.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("restrict did not start")
+	}
+	cout, err := e.c.OnMemberChange(context.Background(), telegram.MemberChange{ChatID: capChat, UserID: 7, ActorID: 50})
+	if err != nil || cout != CaptchaCancelledByAdmin || e.row(7).State != store.CaptchaCancelled {
+		t.Fatal(cout, err, e.row(7).State)
+	}
+	close(block.release)
+	e.c.Wait()
+	if e.row(7).State != store.CaptchaCancelled || !called(e.calls(), "RestrictMember") || called(e.calls(), "UnrestrictMember") {
+		t.Fatal(e.row(7).State, e.calls())
+	}
+	if !strings.Contains(buf.String(), "restrict after cancel chat=-100 user=7") {
+		t.Fatal(buf.String())
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	found := false
+	for _, c := range e.counts {
+		if c == string(CaptchaRestrictAfterCancel) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal(e.counts)
 	}
 }

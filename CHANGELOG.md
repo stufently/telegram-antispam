@@ -27,6 +27,22 @@ Entries start life under **Unreleased** and are moved under a version heading wh
   decides and reserves a rate-limit slot; a slow greeting no longer
   stands in front of moderation for that chat.
 
+### Fixed
+
+- Starting a captcha is counted (`challenged`). A press is stored as
+  `passing` until the mute is actually lifted, and a restart finishes
+  that lift. A failed lift no longer records the person as already
+  passed. The bot does not lift a captcha mute when moderation has
+  applied `delete_mute`, `mute`, or `ban` since the challenge started.
+  The button deadline starts when the prompt is sent. If that prompt
+  cannot be stored, the mute is released unless such a sanction already
+  landed. A mute that lands after an admin cancelled the challenge is
+  counted and left in place.
+- A second join while a welcome is being marked is not greeted again.
+- An explicit `captcha.timeout: 0s`, or an empty `captcha.text` or
+  `captcha.button_text`, is rejected. Omitting those keys still uses
+  the default. A per-chat `0` or empty value still means inherit.
+
 - `github.com/go-telegram/bot` v1.27.0 (Bot API 10.3). Ephemeral sends use
   `ephemeral_message_parameters` instead of the removed `receiver_user_id`.
 

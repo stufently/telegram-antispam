@@ -4,11 +4,14 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"github.com/stufently/telegram-antispam/internal/domain"
 )
 
 const (
 	CaptchaNew        = "new"
 	CaptchaChallenged = "challenged"
+	CaptchaPassing    = "passing"
 	CaptchaPassed     = "passed"
 	CaptchaFailing    = "failing"
 	CaptchaFailed     = "failed"
@@ -106,6 +109,14 @@ func (db *DB) TransitionCaptcha(chatID, userID, attempt int64, from []string, to
 	return db.updateCaptcha(chatID, userID, attempt, from, `state=?, updated_at=?`, []any{to, nowUnix()})
 }
 
+// MarkCaptchaPassing records the press and the moment it happened in one
+// write. The deadline moves to now so a crash before the mute is lifted is
+// due for the sweep immediately. The row stays passing until that lift lands.
+func (db *DB) MarkCaptchaPassing(chatID, userID, attempt, deadline int64) (CaptchaRow, bool, error) {
+	return db.updateCaptcha(chatID, userID, attempt, []string{CaptchaChallenged},
+		`state=?, deadline=?, updated_at=?`, []any{CaptchaPassing, deadline, nowUnix()})
+}
+
 func (db *DB) FailCaptcha(chatID, userID, attempt int64, from []string, action string) (CaptchaRow, bool, error) {
 	return db.updateCaptcha(chatID, userID, attempt, from,
 		`state=?, fail_action=?, updated_at=?`, []any{CaptchaFailing, action, nowUnix()})
@@ -151,8 +162,8 @@ func (db *DB) updateCaptcha(chatID, userID, attempt int64, from []string, setSQL
 func (db *DB) RetryCaptcha(chatID, userID, attempt, nextDeadline int64) error {
 	return db.Write(func(tx *sql.Tx) error {
 		res, err := tx.Exec(`UPDATE captcha_challenges SET tries=tries+1, deadline=?, updated_at=?
-			WHERE chat_id=? AND user_id=? AND attempt=? AND state=?`,
-			nextDeadline, nowUnix(), chatID, userID, attempt, CaptchaFailing)
+			WHERE chat_id=? AND user_id=? AND attempt=? AND state IN (?,?)`,
+			nextDeadline, nowUnix(), chatID, userID, attempt, CaptchaFailing, CaptchaPassing)
 		if err != nil {
 			return err
 		}
@@ -161,18 +172,18 @@ func (db *DB) RetryCaptcha(chatID, userID, attempt, nextDeadline int64) error {
 			return err
 		}
 		if n != 1 {
-			return fmt.Errorf("captcha retry: row chat=%d user=%d attempt=%d is not failing", chatID, userID, attempt)
+			return fmt.Errorf("captcha retry: row chat=%d user=%d attempt=%d is not failing or passing", chatID, userID, attempt)
 		}
 		return nil
 	})
 }
 
-func (db *DB) SetCaptchaPrompt(chatID, userID, attempt int64, ephemeralID, messageID int) (CaptchaRow, error) {
+func (db *DB) SetCaptchaPrompt(chatID, userID, attempt int64, ephemeralID, messageID int, deadline int64) (CaptchaRow, error) {
 	var row CaptchaRow
 	err := db.Write(func(tx *sql.Tx) error {
-		res, err := tx.Exec(`UPDATE captcha_challenges SET ephemeral_id=?, message_id=?, updated_at=?
+		res, err := tx.Exec(`UPDATE captcha_challenges SET ephemeral_id=?, message_id=?, deadline=?, updated_at=?
 			WHERE chat_id=? AND user_id=? AND attempt=?`,
-			ephemeralID, messageID, nowUnix(), chatID, userID, attempt)
+			ephemeralID, messageID, deadline, nowUnix(), chatID, userID, attempt)
 		if err != nil {
 			return err
 		}
@@ -201,9 +212,9 @@ func (db *DB) DueCaptchas(now int64, limit int) ([]CaptchaRow, error) {
 		return nil, nil
 	}
 	rows, err := db.Read().Query(captchaSelect+`
-		WHERE state IN (?,?,?) AND deadline<=?
+		WHERE state IN (?,?,?,?) AND deadline<=?
 		ORDER BY deadline, chat_id, user_id
-		LIMIT ?`, CaptchaNew, CaptchaChallenged, CaptchaFailing, now, limit)
+		LIMIT ?`, CaptchaNew, CaptchaChallenged, CaptchaFailing, CaptchaPassing, now, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -221,9 +232,19 @@ func (db *DB) DueCaptchas(now int64, limit int) ([]CaptchaRow, error) {
 
 func (db *DB) SanctionSince(chatID, userID, since int64) (bool, error) {
 	var one int
-	err := db.Read().QueryRow(`SELECT 1 FROM incidents
-		WHERE chat_id=? AND user_id=? AND dry_run=0 AND created_at>=? LIMIT 1`,
-		chatID, userID, since).Scan(&one)
+	// A review, quarantine, delete-only or dry-run incident did not mute
+	// this person. Only an audit action that is itself a mute or a ban —
+	// written in the same transaction as the incident — means the captcha
+	// must leave that mute alone.
+	err := db.Read().QueryRow(`SELECT 1 FROM incidents i
+		WHERE i.chat_id=? AND i.user_id=? AND i.dry_run=0 AND i.created_at>=?
+		  AND EXISTS (
+		    SELECT 1 FROM audit a
+		    WHERE a.incident_id=i.id AND a.action IN (?,?,?)
+		  )
+		LIMIT 1`,
+		chatID, userID, since,
+		string(domain.ActionDeleteMute), string(domain.ActionMute), string(domain.ActionBan)).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}

@@ -15,6 +15,13 @@ import (
 	"github.com/stufently/telegram-antispam/internal/watch"
 )
 
+func durPtr(d time.Duration) *config.Duration {
+	v := config.Duration(d)
+	return &v
+}
+
+func strPtr(s string) *string { return &s }
+
 func TestPriorityForWelcomeIsLow(t *testing.T) {
 	if got := priorityFor("SendWelcome"); got != queue.PrioLow {
 		t.Fatalf("SendWelcome priority = %d, want low (%d)", got, queue.PrioLow)
@@ -236,7 +243,10 @@ func (s orderCaptchaStore) FailCaptcha(int64, int64, int64, []string, string) (s
 	return store.CaptchaRow{}, false, nil
 }
 func (s orderCaptchaStore) RetryCaptcha(int64, int64, int64, int64) error { return nil }
-func (s orderCaptchaStore) SetCaptchaPrompt(int64, int64, int64, int, int) (store.CaptchaRow, error) {
+func (s orderCaptchaStore) MarkCaptchaPassing(int64, int64, int64, int64) (store.CaptchaRow, bool, error) {
+	return store.CaptchaRow{}, false, nil
+}
+func (s orderCaptchaStore) SetCaptchaPrompt(int64, int64, int64, int, int, int64) (store.CaptchaRow, error) {
 	return store.CaptchaRow{}, nil
 }
 func (s orderCaptchaStore) DueCaptchas(int64, int) ([]store.CaptchaRow, error) { return nil, nil }
@@ -260,8 +270,8 @@ func TestChatMemberRunsCaptchaBeforeWelcome(t *testing.T) {
 		Config: config.NewStore(&config.Config{
 			Chats: config.ChatsPolicy{Mode: "auto", StartInDryRun: &off},
 			Captcha: config.Captcha{
-				Enabled: &on, Mode: "button", Timeout: config.Duration(time.Minute),
-				OnFail: "kick", Text: "prove", ButtonText: "Go",
+				Enabled: &on, Mode: "button", Timeout: durPtr(time.Minute),
+				OnFail: "kick", Text: strPtr("prove"), ButtonText: strPtr("Go"),
 			},
 		}),
 		Store: st, Port: fake.New(), SelfID: 1,

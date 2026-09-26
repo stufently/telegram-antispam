@@ -18,11 +18,11 @@ func TestCaptchaDefaultsOff(t *testing.T) {
 	if c.Captcha.Mode != "button" || c.Captcha.OnFail != "kick" {
 		t.Fatal(c.Captcha.Mode, c.Captcha.OnFail)
 	}
-	if c.Captcha.Timeout.Duration() != 2*time.Minute {
-		t.Fatal(c.Captcha.Timeout.Duration())
+	if c.Captcha.Timeout == nil || c.Captcha.Timeout.Duration() != 2*time.Minute {
+		t.Fatal(c.Captcha.Timeout)
 	}
 	const text = "Press the button below to confirm you are not a bot, otherwise you will be removed from the chat."
-	if c.Captcha.Text != text || c.Captcha.ButtonText != "I am not a bot" {
+	if c.Captcha.Text == nil || *c.Captcha.Text != text || c.Captcha.ButtonText == nil || *c.Captcha.ButtonText != "I am not a bot" {
 		t.Fatal(c.Captcha.Text, c.Captcha.ButtonText)
 	}
 	if _, ok := c.Captcha.For(-100); ok {
@@ -107,6 +107,32 @@ func TestCaptchaValidate(t *testing.T) {
 		if _, err := Parse([]byte(y)); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestCaptchaValidateExplicitZeroAndEmpty(t *testing.T) {
+	base := "bot_token: t\nadmin_chat_id: -1\naction: ban\nchats:\n  mode: auto\n"
+	cases := []struct{ name, yaml, key string }{
+		{"timeout zero", base + "captcha:\n  enabled: true\n  timeout: 0s\n  text: hi\n  button_text: Go\n", "captcha.timeout"},
+		{"text empty", base + "captcha:\n  enabled: false\n  text: \"\"\n", "captcha.text"},
+		{"button empty", base + "captcha:\n  button_text: \"\"\n", "captcha.button_text"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.yaml))
+			if err == nil || !strings.Contains(err.Error(), tt.key) {
+				t.Fatal(err, tt.key)
+			}
+		})
+	}
+	inherit := base + "captcha:\n  enabled: true\n  timeout: 2m\n  text: hello\n  button_text: Go\n  chats:\n    -100:\n      timeout: 0s\n      text: \"\"\n      button_text: \"\"\n"
+	c, err := Parse([]byte(inherit))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol, ok := c.Captcha.For(-100)
+	if !ok || pol.Timeout != 2*time.Minute || pol.Text != "hello" || pol.ButtonText != "Go" {
+		t.Fatal(pol, ok)
 	}
 }
 

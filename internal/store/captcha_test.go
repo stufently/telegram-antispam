@@ -24,7 +24,7 @@ func TestCaptchaLifecycle(t *testing.T) {
 	if err != nil || !started || row.Attempt != 1 || row.State != CaptchaNew || row.Deadline != 40 || row.CreatedAt != 10 {
 		t.Fatal(row, started, err)
 	}
-	for _, st := range []string{CaptchaNew, CaptchaChallenged, CaptchaFailing, CaptchaPassed} {
+	for _, st := range []string{CaptchaNew, CaptchaChallenged, CaptchaFailing, CaptchaPassing, CaptchaPassed} {
 		if row.State != st {
 			if _, moved, err := db.TransitionCaptcha(-100, 7, 1, []string{row.State}, st); err != nil || !moved {
 				t.Fatal(st, moved, err)
@@ -33,6 +33,12 @@ func TestCaptchaLifecycle(t *testing.T) {
 		again, started, err := db.BeginCaptcha(-100, 7, 99, 99)
 		if err != nil || started || again.Attempt != 1 || again.State != st {
 			t.Fatal(st, again, started, err)
+		}
+		if st == CaptchaPassing {
+			known, err := db.CaptchaPassed(-100, 7)
+			if err != nil || known {
+				t.Fatal("passing is not passed", known, err)
+			}
 		}
 		row = again
 	}
@@ -86,8 +92,8 @@ func TestCaptchaLifecycle(t *testing.T) {
 	if err != nil || !found || again.Tries != 1 || again.Deadline != 80 || again.State != CaptchaFailing {
 		t.Fatal(again, found, err)
 	}
-	prompt, err := db.SetCaptchaPrompt(-100, 8, 1, 55, 0)
-	if err != nil || prompt.EphemeralID != 55 || prompt.MessageID != 0 || prompt.State != CaptchaFailing {
+	prompt, err := db.SetCaptchaPrompt(-100, 8, 1, 55, 0, 80)
+	if err != nil || prompt.EphemeralID != 55 || prompt.MessageID != 0 || prompt.State != CaptchaFailing || prompt.Deadline != 80 {
 		t.Fatal(prompt, err)
 	}
 
@@ -130,7 +136,7 @@ func TestCaptchaLifecycle(t *testing.T) {
 		t.Fatal(got)
 	}
 
-	if _, _, err = db.InsertPending(-100, 1, 7, 0, false, domain.Verdict{}); err != nil {
+	if _, _, err = db.InsertPending(-100, 1, 7, 0, false, domain.Verdict{Action: domain.ActionMute}); err != nil {
 		t.Fatal(err)
 	}
 	if err := setIncidentTime(db, 7, 1000); err != nil {
@@ -144,7 +150,7 @@ func TestCaptchaLifecycle(t *testing.T) {
 	if err != nil || ok {
 		t.Fatal(ok, err)
 	}
-	if _, _, err = db.InsertPending(-100, 2, 8, 0, true, domain.Verdict{}); err != nil {
+	if _, _, err = db.InsertPending(-100, 2, 8, 0, true, domain.Verdict{Action: domain.ActionBan}); err != nil {
 		t.Fatal(err)
 	}
 	if err := setIncidentTime(db, 8, 1000); err != nil {
@@ -158,11 +164,64 @@ func TestCaptchaLifecycle(t *testing.T) {
 	if err != nil || ok {
 		t.Fatal(ok, err)
 	}
+	if _, started, err = db.BeginCaptcha(-100, 11, 1, 1); err != nil || !started {
+		t.Fatal(err)
+	}
+	if _, moved, err = db.TransitionCaptcha(-100, 11, 1, []string{CaptchaNew}, CaptchaPassing); err != nil || !moved {
+		t.Fatal(err)
+	}
+	if err := db.RetryCaptcha(-100, 11, 1, 70); err != nil {
+		t.Fatal(err)
+	}
+	again, found, err = db.GetCaptcha(-100, 11)
+	if err != nil || !found || again.State != CaptchaPassing || again.Tries != 1 || again.Deadline != 70 {
+		t.Fatal(again, found, err)
+	}
 	if err := db.Migrate(); err != nil {
 		t.Fatal(err)
 	}
 	if _, found, err := db.GetCaptcha(-100, 7); err != nil || !found {
 		t.Fatal(found, err)
+	}
+}
+
+func TestSanctionSinceOnlyMuteOrBan(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		user   int64
+		action domain.Action
+		dry    bool
+		at     int64
+		since  int64
+		want   bool
+	}{
+		{1, domain.ActionDeleteMute, false, 1000, 1000, true},
+		{2, domain.ActionMute, false, 1000, 1000, true},
+		{3, domain.ActionBan, false, 1000, 1000, true},
+		{4, domain.ActionQuarantine, false, 1000, 1000, false},
+		{5, domain.ActionDeleteOnly, false, 1000, 1000, false},
+		{6, domain.ActionNone, false, 1000, 1000, false},
+		{7, domain.ActionBan, true, 1000, 1000, false},
+		{8, domain.ActionMute, false, 999, 1000, false},
+	}
+	for _, tt := range cases {
+		if _, _, err := db.InsertPending(-100, int(tt.user), tt.user, 0, tt.dry, domain.Verdict{Action: tt.action}); err != nil {
+			t.Fatal(tt.user, err)
+		}
+		if err := setIncidentTime(db, tt.user, tt.at); err != nil {
+			t.Fatal(tt.user, err)
+		}
+		ok, err := db.SanctionSince(-100, tt.user, tt.since)
+		if err != nil || ok != tt.want {
+			t.Fatalf("user %d action %s dry=%v at=%d since=%d: ok=%v err=%v want %v", tt.user, tt.action, tt.dry, tt.at, tt.since, ok, err, tt.want)
+		}
 	}
 }
 

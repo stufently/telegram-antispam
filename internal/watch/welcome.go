@@ -121,11 +121,17 @@ func (w *Welcomer) Deliver(ctx context.Context, t *WelcomeTicket) (Outcome, erro
 		return OutcomeError, errors.New("welcome: nil ticket")
 	}
 	_, sendErr := w.Port.SendWelcome(ctx, t.ChatID, t.UserID, t.Text)
-	w.finish(t.ChatID, t.UserID, w.now())
+	// Stamp the rate window at send completion, but keep the reservation
+	// until the mark lands. Releasing it first let a second join through
+	// WasWelcomed=false with nothing in flight.
+	sentAt := w.now()
 	if sendErr != nil {
+		w.finish(t.ChatID, t.UserID, sentAt)
 		return OutcomeError, sendErr
 	}
-	if err := w.Store.MarkWelcomed(t.ChatID, t.UserID); err != nil {
+	err := w.Store.MarkWelcomed(t.ChatID, t.UserID)
+	w.finish(t.ChatID, t.UserID, sentAt)
+	if err != nil {
 		return OutcomeError, err
 	}
 	return OutcomeSent, nil

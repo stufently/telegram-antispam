@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -400,5 +401,56 @@ func TestWelcomerKnownBeforeRateCap(t *testing.T) {
 				t.Fatalf("known user at cap=%q err=%v sends=%d, want skip_known and 1 send", out, err, sends(port.Calls()))
 			}
 		})
+	}
+}
+
+type blockingMark struct {
+	*memWelcome
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (b *blockingMark) MarkWelcomed(chatID, userID int64) error {
+	b.once.Do(func() { close(b.started) })
+	<-b.release
+	return b.memWelcome.MarkWelcomed(chatID, userID)
+}
+
+func TestWelcomerNoDuplicateWhileMarking(t *testing.T) {
+	st := &blockingMark{memWelcome: &memWelcome{}, started: make(chan struct{}), release: make(chan struct{})}
+	port := fake.New()
+	w := &Welcomer{
+		Config: config.NewStore(welcomeCfg("auto", nil, config.Welcome{Enabled: boolPtr(true), Text: "hello"})),
+		Store:  st,
+		Port:   port,
+	}
+	out, ticket, err := w.Admit(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 7})
+	if err != nil || out != OutcomeQueued || ticket == nil {
+		t.Fatal(out, err, ticket)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = w.Deliver(context.Background(), ticket)
+	}()
+	select {
+	case <-st.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("MarkWelcomed did not start")
+	}
+	out, ticket, err = w.Admit(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 7})
+	if err != nil || out != OutcomeSkipKnown || ticket != nil || sends(port.Calls()) != 1 {
+		t.Fatalf("second=%q err=%v ticket=%v sends=%d", out, err, ticket, sends(port.Calls()))
+	}
+	close(st.release)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("deliver did not finish")
+	}
+	known, err := st.WasWelcomed(-100, 7)
+	if err != nil || !known || sends(port.Calls()) != 1 {
+		t.Fatal(known, err, sends(port.Calls()))
 	}
 }
