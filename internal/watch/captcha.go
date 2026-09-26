@@ -351,7 +351,7 @@ func (c *Captcha) decidePress(ctx context.Context, p CaptchaPress) (CaptchaOutco
 	if err != nil {
 		return CaptchaError, err
 	}
-	if !found || row.Attempt != attempt || row.State != store.CaptchaChallenged {
+	if !found || row.Attempt != attempt || row.State != store.CaptchaChallenged || row.Deadline <= c.now().Unix() {
 		return CaptchaExpired, nil
 	}
 	sanctioned, err := c.Store.SanctionSince(chatID, userID, row.CreatedAt)
@@ -375,6 +375,18 @@ func (c *Captcha) decidePress(ctx context.Context, p CaptchaPress) (CaptchaOutco
 	}
 	if !moved {
 		return CaptchaExpired, nil
+	}
+	if s, e := c.Store.SanctionSince(chatID, userID, row.CreatedAt); e != nil || s {
+		back := store.CaptchaChallenged
+		if s {
+			back = store.CaptchaCancelled
+		}
+		c.Store.TransitionCaptcha(chatID, userID, attempt, []string{store.CaptchaPassed}, back)
+		if s {
+			c.deleteIDs(ctx, passed.ChatID, passed.UserID, passed.EphemeralID, passed.MessageID)
+			return CaptchaCancelledSanction, nil
+		}
+		return CaptchaError, e
 	}
 	if err := c.Port.UnrestrictMember(ctx, chatID, userID); err != nil {
 		if _, _, rerr := c.Store.TransitionCaptcha(chatID, userID, attempt, []string{store.CaptchaPassed}, store.CaptchaChallenged); rerr != nil {

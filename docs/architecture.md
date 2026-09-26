@@ -219,18 +219,17 @@ error, so an unhonored ephemeral parameter cannot leave the text in the chat.
 
 The sequencer job only decides the greeting and reserves a rate-limit slot.
 The send runs on its own goroutine, so a slow welcome cannot block moderation
-for that chat. Shutdown waits for those sends after the sequencer drains.
+for that chat.
 
 A join can also be challenged (`captcha`, off unless enabled). This is not an
 incident. The bot mutes the joiner (`new`), marks the row `challenged` and
-sends an ephemeral button, falling back to a normal chat message. A press
+sends an ephemeral button, or a chat message if that fails. A press
 (`passed`) lifts the mute. Deadlines live in SQLite. A sweep at startup and
-every few seconds finishes expired rows: `kick` bans then unbans, `keep_muted`
-leaves the mute, and an orphan `new` row is released. `failing` is a sanction
-chosen but not finished, so the next sweep retries it. `cap:` callbacks skip
-the admin sequencer. Dry-run, an already restricted joiner, a blocklisted id,
-and a chat turned off while a challenge is open fail open. An admin changing
-the member cancels the challenge and the bot leaves that mute alone.
+every 5s finishes due rows: `kick` bans then unbans, `keep_muted`
+leaves the mute, and an orphan `new` is released. `failing` retries next sweep.
+`cap:` callbacks skip the admin sequencer. Dry-run, a restricted joiner, a
+blocklisted id, and a chat turned off mid-challenge fail open. An admin change
+cancels the challenge and the bot leaves that mute alone.
 
 The blocklist is an atomic in-memory snapshot refreshed from external sources.
 LOLS full, LOLS delta, and CAS full data are retained separately: a failed or

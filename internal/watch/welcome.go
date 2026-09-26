@@ -121,11 +121,6 @@ func (w *Welcomer) Deliver(ctx context.Context, t *WelcomeTicket) (Outcome, erro
 		return OutcomeError, errors.New("welcome: nil ticket")
 	}
 	_, sendErr := w.Port.SendWelcome(ctx, t.ChatID, t.UserID, t.Text)
-	// Count the attempt when it finishes, not when it was reserved: a 429
-	// retry can outlive the minute, and recording the start time would let
-	// the next join through immediately. A failed attempt still counts —
-	// ErrEphemeralNotHonored did publish — but the user is not marked, so
-	// a later join retries once the window moves.
 	w.finish(t.ChatID, t.UserID, w.now())
 	if sendErr != nil {
 		return OutcomeError, sendErr
