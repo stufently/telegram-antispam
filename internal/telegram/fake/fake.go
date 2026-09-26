@@ -35,13 +35,18 @@ type Fake struct {
 	BanSenderErr    error
 	// UnbanErr makes the undo path fail, so tests can cover a transient
 	// Telegram error during a moderator's rollback press.
-	UnbanErr     error
-	EphemeralID  int
-	EphemeralErr error
-	WelcomeID    int
-	WelcomeErr   error
-	Rights       telegram.BotRights
-	RightsErr    error
+	UnbanErr            error
+	EphemeralID         int
+	EphemeralErr        error
+	WelcomeID           int
+	WelcomeErr          error
+	CaptchaEphemeralID  int
+	CaptchaEphemeralErr error
+	CaptchaMessageID    int
+	CaptchaMessageErr   error
+	DeleteEphemeralErr  error
+	Rights              telegram.BotRights
+	RightsErr           error
 	// Titles answers ChatTitle per chat id; TitleErr fails the lookup, which
 	// the admin card must survive by falling back to the bare id.
 	Titles   map[int64]string
@@ -77,6 +82,21 @@ type Fake struct {
 	LastWelcome struct {
 		Chat, UserID int64
 		Text         string
+	}
+
+	LastCaptchaEphemeral struct {
+		Chat, UserID int64
+		Text         string
+		Buttons      [][]telegram.Button
+	}
+	LastCaptchaMessage struct {
+		Chat    int64
+		Text    string
+		Buttons [][]telegram.Button
+	}
+	LastDeleteEphemeral struct {
+		Chat, UserID int64
+		EphemeralID  int
 	}
 
 	// LastUnban, LastRestrict, and LastDelete capture the most recent args
@@ -249,6 +269,37 @@ func (f *Fake) SendWelcome(_ context.Context, chat, userID int64, text string) (
 	f.mu.Unlock()
 	f.log("SendWelcome")
 	return f.WelcomeID, f.WelcomeErr
+}
+
+func (f *Fake) SendCaptchaEphemeral(_ context.Context, chat, userID int64, text string, buttons [][]telegram.Button) (int, error) {
+	f.mu.Lock()
+	f.LastCaptchaEphemeral.Chat = chat
+	f.LastCaptchaEphemeral.UserID = userID
+	f.LastCaptchaEphemeral.Text = text
+	f.LastCaptchaEphemeral.Buttons = buttons
+	f.mu.Unlock()
+	f.log("SendCaptchaEphemeral")
+	return f.CaptchaEphemeralID, f.CaptchaEphemeralErr
+}
+
+func (f *Fake) SendCaptchaMessage(_ context.Context, chat int64, text string, buttons [][]telegram.Button) (int, error) {
+	f.mu.Lock()
+	f.LastCaptchaMessage.Chat = chat
+	f.LastCaptchaMessage.Text = text
+	f.LastCaptchaMessage.Buttons = buttons
+	f.mu.Unlock()
+	f.log("SendCaptchaMessage")
+	return f.CaptchaMessageID, f.CaptchaMessageErr
+}
+
+func (f *Fake) DeleteEphemeral(_ context.Context, chat, userID int64, ephemeralID int) error {
+	f.mu.Lock()
+	f.LastDeleteEphemeral.Chat = chat
+	f.LastDeleteEphemeral.UserID = userID
+	f.LastDeleteEphemeral.EphemeralID = ephemeralID
+	f.mu.Unlock()
+	f.log("DeleteEphemeral")
+	return f.DeleteEphemeralErr
 }
 
 func (f *Fake) CheckBotRights(_ context.Context, _ int64) (telegram.BotRights, error) {

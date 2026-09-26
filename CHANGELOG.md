@@ -10,12 +10,22 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ### Added
 
+- Optional button captcha (`captcha`, default off) when a person joins.
+  The bot mutes them until they press the button or the timeout passes,
+  then kicks or leaves the mute (`on_fail`). Deadlines survive a restart.
+  An ephemeral button falls back to a normal chat message. Dry-run chats
+  are skipped. `join_request` is not in this version.
+
 - Optional ephemeral welcome (`welcome`, default off) when a person joins.
   Plain text, global or per chat. Shown only to that person; delivery is
   not guaranteed. Dry-run does not apply (it is a notice, not a sanction).
   One greeting per person, plus a per-chat cap on join bursts.
 
 ### Changed
+
+- A welcome is sent outside the per-chat sequencer job. The job only
+  decides and reserves a rate-limit slot; a slow greeting no longer
+  stands in front of moderation for that chat.
 
 - `github.com/go-telegram/bot` v1.27.0 (Bot API 10.3). Ephemeral sends use
   `ephemeral_message_parameters` instead of the removed `receiver_user_id`.

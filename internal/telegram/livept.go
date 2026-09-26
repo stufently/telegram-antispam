@@ -634,11 +634,47 @@ func (p *LivePort) DeleteMessageReaction(ctx context.Context, chat int64, messag
 }
 
 func (p *LivePort) SendEphemeral(ctx context.Context, chat, userID int64, text string) (int, error) {
-	return p.sendToUser(ctx, "SendEphemeral", chat, userID, text)
+	return p.sendToUser(ctx, "SendEphemeral", chat, userID, text, nil)
 }
 
 func (p *LivePort) SendWelcome(ctx context.Context, chat, userID int64, text string) (int, error) {
-	return p.sendToUser(ctx, "SendWelcome", chat, userID, text)
+	return p.sendToUser(ctx, "SendWelcome", chat, userID, text, nil)
+}
+
+func (p *LivePort) SendCaptchaEphemeral(ctx context.Context, chat, userID int64, text string, buttons [][]Button) (int, error) {
+	return p.sendToUser(ctx, "SendCaptchaEphemeral", chat, userID, text, buttons)
+}
+
+func (p *LivePort) SendCaptchaMessage(ctx context.Context, chat int64, text string, buttons [][]Button) (int, error) {
+	msg, err := submitSync(ctx, p.disp, chat, p.prio("SendCaptchaMessage"), func(ctx context.Context) (*models.Message, error) {
+		sent, err := p.b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID:      chat,
+			Text:        text,
+			ReplyMarkup: models.InlineKeyboardMarkup{InlineKeyboard: toInlineKeyboard(buttons)},
+		})
+		if err != nil {
+			return nil, mapRetry(err)
+		}
+		return sent, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	if msg == nil {
+		return 0, nil
+	}
+	return msg.ID, nil
+}
+
+func (p *LivePort) DeleteEphemeral(ctx context.Context, chat, userID int64, ephemeralID int) error {
+	return submitSyncErr(ctx, p.disp, chat, p.prio("DeleteEphemeral"), func(ctx context.Context) error {
+		_, err := p.b.DeleteEphemeralMessage(ctx, &bot.DeleteEphemeralMessageParams{
+			ChatID:             chat,
+			ReceiverUserID:     userID,
+			EphemeralMessageID: ephemeralID,
+		})
+		return mapRetry(err)
+	})
 }
 
 // ephemeralSend is one send-to-user result: ephemeralID is the private id,
@@ -653,15 +689,19 @@ type ephemeralSend struct {
 // the chat. Delete it through the dispatcher — calling DeleteMessages from
 // inside this job would deadlock the single-threaded Run — and return
 // ErrEphemeralNotHonored, wrapping a delete failure.
-func (p *LivePort) sendToUser(ctx context.Context, method string, chat, userID int64, text string) (int, error) {
+func (p *LivePort) sendToUser(ctx context.Context, method string, chat, userID int64, text string, buttons [][]Button) (int, error) {
 	sent, err := submitSync(ctx, p.disp, chat, p.prio(method), func(ctx context.Context) (ephemeralSend, error) {
-		msg, err := p.b.SendMessage(ctx, &bot.SendMessageParams{
+		params := &bot.SendMessageParams{
 			ChatID: chat,
 			Text:   text,
 			EphemeralMessageParameters: &models.EphemeralMessageParameters{
 				ReceiverUserID: userID,
 			},
-		})
+		}
+		if len(buttons) > 0 {
+			params.ReplyMarkup = models.InlineKeyboardMarkup{InlineKeyboard: toInlineKeyboard(buttons)}
+		}
+		msg, err := p.b.SendMessage(ctx, params)
 		if err != nil {
 			return ephemeralSend{}, mapRetry(err)
 		}

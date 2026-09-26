@@ -18,6 +18,7 @@ func handleChatMember(
 	invalidate func(chatID int64),
 	submit func(chatID int64, job func()),
 	members *watch.MemberWatcher,
+	captcha *watch.Captcha,
 	welcomer *watch.Welcomer,
 	count func(result string),
 ) {
@@ -44,15 +45,57 @@ func handleChatMember(
 				log.Printf("member watch: %v", err)
 			}
 		}
+		if captcha != nil {
+			if ch, ok := telegram.MemberChangeFromUpdate(*cm); ok {
+				out, err := captcha.OnMemberChange(ctx, ch)
+				noteCaptcha(captcha, out, err)
+			}
+			if isJoin {
+				out, err := captcha.OnJoin(ctx, join, mem.DisplayName)
+				noteCaptcha(captcha, out, err)
+			}
+		}
 		if !isJoin || welcomer == nil {
 			return
 		}
-		outcome, err := welcomer.Observe(ctx, join)
-		if count != nil {
-			count(string(outcome))
+		outcome, ticket, err := welcomer.Admit(ctx, join)
+		if outcome != watch.OutcomeQueued {
+			if count != nil {
+				count(string(outcome))
+			}
+			if err != nil {
+				log.Printf("welcome chat=%d user=%d: %v", join.ChatID, join.UserID, err)
+			}
+			return
 		}
-		if err != nil {
-			log.Printf("welcome chat=%d user=%d: %v", join.ChatID, join.UserID, err)
-		}
+		welcomer.DeliverAsync(ctx, ticket, func(outcome watch.Outcome, err error) {
+			if count != nil {
+				count(string(outcome))
+			}
+			if err != nil {
+				log.Printf("welcome chat=%d user=%d: %v", join.ChatID, join.UserID, err)
+			}
+		})
 	})
+}
+
+func noteCaptcha(c *watch.Captcha, out watch.CaptchaOutcome, err error) {
+	if c.Count != nil && out != "" && out != watch.CaptchaSkip {
+		c.Count(string(out))
+	}
+	if err != nil {
+		log.Printf("captcha: %v", err)
+	}
+}
+
+func dispatchCallback(data string, onCaptcha, onAdmin func()) {
+	if watch.IsCaptchaCallback(data) {
+		if onCaptcha != nil {
+			onCaptcha()
+		}
+		return
+	}
+	if onAdmin != nil {
+		onAdmin()
+	}
 }

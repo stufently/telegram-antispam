@@ -236,6 +236,26 @@ func TestWelcomerSendFailureNotMarked(t *testing.T) {
 	}
 }
 
+func TestWelcomerAdmitReservesInFlight(t *testing.T) {
+	port := fake.New()
+	w := newW(welcomeCfg("auto", nil, config.Welcome{Enabled: boolPtr(true), Text: "hello", MaxPerMinute: intPtr(1)}), &memWelcome{}, port, nil)
+	out, ticket, err := w.Admit(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 1})
+	if err != nil || out != OutcomeQueued || ticket == nil {
+		t.Fatalf("first=%q err=%v ticket=%v", out, err, ticket)
+	}
+	out, ticket, err = w.Admit(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 2})
+	if err != nil || out != OutcomeSkipRateCapped || ticket != nil {
+		t.Fatalf("other=%q err=%v ticket=%v", out, err, ticket)
+	}
+	out, ticket, err = w.Admit(context.Background(), telegram.JoinEvent{ChatID: -100, UserID: 1})
+	if err != nil || out != OutcomeSkipKnown || ticket != nil {
+		t.Fatalf("same=%q err=%v ticket=%v", out, err, ticket)
+	}
+	if sends(port.Calls()) != 0 {
+		t.Fatal("a reserved ticket must not send")
+	}
+}
+
 func TestWelcomerStoreErrorFailsClosed(t *testing.T) {
 	boom := errors.New("db")
 	for _, tt := range []struct {

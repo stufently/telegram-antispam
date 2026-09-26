@@ -97,6 +97,20 @@ CREATE TABLE IF NOT EXISTS welcome_sent (
 	created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
 	PRIMARY KEY(chat_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS captcha_challenges (
+	chat_id      INTEGER NOT NULL,
+	user_id      INTEGER NOT NULL,
+	attempt      INTEGER NOT NULL,
+	state        TEXT    NOT NULL,
+	deadline     INTEGER NOT NULL,
+	fail_action  TEXT    NOT NULL DEFAULT '',
+	tries        INTEGER NOT NULL DEFAULT 0,
+	ephemeral_id INTEGER NOT NULL DEFAULT 0,
+	message_id   INTEGER NOT NULL DEFAULT 0,
+	created_at   INTEGER NOT NULL,
+	updated_at   INTEGER,
+	PRIMARY KEY(chat_id, user_id)
+);
 `
 
 // Migrate creates all tables if absent, then applies any additive column

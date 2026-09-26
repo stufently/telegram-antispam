@@ -492,6 +492,67 @@ func (w Welcome) For(chatID int64) (text string, ok bool) {
 	return text, true
 }
 
+type Captcha struct {
+	Enabled    *bool                 `yaml:"enabled"`
+	Mode       string                `yaml:"mode"`
+	Timeout    Duration              `yaml:"timeout"`
+	OnFail     string                `yaml:"on_fail"`
+	Text       string                `yaml:"text"`
+	ButtonText string                `yaml:"button_text"`
+	Chats      map[int64]CaptchaChat `yaml:"chats"`
+}
+
+type CaptchaChat struct {
+	Enabled    *bool    `yaml:"enabled"`
+	Mode       string   `yaml:"mode"`
+	Timeout    Duration `yaml:"timeout"`
+	OnFail     string   `yaml:"on_fail"`
+	Text       string   `yaml:"text"`
+	ButtonText string   `yaml:"button_text"`
+}
+
+type CaptchaPolicy struct {
+	Mode       string
+	Timeout    time.Duration
+	OnFail     string
+	Text       string
+	ButtonText string
+}
+
+const (
+	defaultCaptchaText   = "Press the button below to confirm you are not a bot, otherwise you will be removed from the chat."
+	defaultCaptchaButton = "I am not a bot"
+	captchaTimeoutMin    = 30 * time.Second
+	captchaTimeoutMax    = time.Hour
+	captchaButtonRunes   = 64
+)
+
+func (c Captcha) For(chatID int64) (CaptchaPolicy, bool) {
+	en := c.Enabled != nil && *c.Enabled
+	p := CaptchaPolicy{c.Mode, time.Duration(c.Timeout), c.OnFail, strings.TrimSpace(c.Text), strings.TrimSpace(c.ButtonText)}
+	if ch, ok := c.Chats[chatID]; ok {
+		if ch.Enabled != nil {
+			en = *ch.Enabled
+		}
+		if ch.Mode != "" {
+			p.Mode = ch.Mode
+		}
+		if ch.Timeout != 0 {
+			p.Timeout = time.Duration(ch.Timeout)
+		}
+		if ch.OnFail != "" {
+			p.OnFail = ch.OnFail
+		}
+		if ch.Text != "" {
+			p.Text = strings.TrimSpace(ch.Text)
+		}
+		if ch.ButtonText != "" {
+			p.ButtonText = strings.TrimSpace(ch.ButtonText)
+		}
+	}
+	return p, en
+}
+
 type Config struct {
 	BotToken    string        `yaml:"bot_token"`
 	AdminChatID int64         `yaml:"admin_chat_id"`
@@ -502,6 +563,7 @@ type Config struct {
 	Ops         Ops           `yaml:"ops"`
 	LLM         LLM           `yaml:"llm"`
 	Welcome     Welcome       `yaml:"welcome"`
+	Captcha     Captcha       `yaml:"captcha"`
 }
 
 func Load(path string) (*Config, error) {
@@ -522,6 +584,7 @@ func Parse(b []byte) (*Config, error) {
 	c.applyOpsDefaults()
 	c.applyLLMDefaults()
 	c.applyWelcomeDefaults()
+	c.applyCaptchaDefaults()
 	// BOT_TOKEN env overrides bot_token from the file, so the token can be
 	// supplied by a Kubernetes Secret / Docker secret and kept out of the
 	// config file entirely (12-factor). Env wins when both are set.
@@ -725,6 +788,31 @@ func (c *Config) applyWelcomeDefaults() {
 	}
 }
 
+func (c *Config) applyCaptchaDefaults() {
+	if c.Captcha.Enabled == nil {
+		def := false
+		c.Captcha.Enabled = &def
+	}
+	if c.Captcha.Mode == "" {
+		c.Captcha.Mode = "button"
+	}
+	if c.Captcha.Timeout == 0 {
+		c.Captcha.Timeout = Duration(2 * time.Minute)
+	}
+	if c.Captcha.OnFail == "" {
+		c.Captcha.OnFail = "kick"
+	}
+	if c.Captcha.Text == "" {
+		c.Captcha.Text = defaultCaptchaText
+	}
+	if c.Captcha.ButtonText == "" {
+		c.Captcha.ButtonText = defaultCaptchaButton
+	}
+	if c.Captcha.Chats == nil {
+		c.Captcha.Chats = map[int64]CaptchaChat{}
+	}
+}
+
 // applyLLMDefaults fills LLM fields left unset. Enabled defaults to FALSE
 // (external calls are opt-in), so — unlike the other blocks — a nil Enabled
 // stays disabled.
@@ -803,6 +891,97 @@ func (c *Config) Validate() error {
 	}
 	if err := c.validateWelcome(); err != nil {
 		return err
+	}
+	if err := c.validateCaptcha(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Config) validateCaptcha() error {
+	g := c.Captcha
+	if err := captchaFields("captcha", g.Mode, g.OnFail, g.Text, g.ButtonText, g.Timeout, true); err != nil {
+		return err
+	}
+	if g.Enabled != nil && *g.Enabled {
+		if strings.TrimSpace(g.Text) == "" {
+			return fmt.Errorf("captcha.text is empty while captcha.enabled is true")
+		}
+		if strings.TrimSpace(g.ButtonText) == "" {
+			return fmt.Errorf("captcha.button_text is empty while captcha.enabled is true")
+		}
+	}
+	if c.Chats.Mode == "allowlist" {
+		for id := range g.Chats {
+			if !containsChat(c.Chats.Allowlist, id) {
+				return fmt.Errorf("captcha.chats contains %d, which is not in chats.allowlist", id)
+			}
+		}
+	}
+	for id, chat := range g.Chats {
+		key := fmt.Sprintf("captcha.chats[%d]", id)
+		if err := captchaFields(key, chat.Mode, chat.OnFail, chat.Text, chat.ButtonText, chat.Timeout, false); err != nil {
+			return err
+		}
+		if pol, on := g.For(id); on && (pol.Text == "" || pol.ButtonText == "") {
+			return fmt.Errorf("%s text or button_text is empty while captcha is enabled", key)
+		}
+	}
+	return nil
+}
+
+func captchaFields(key, mode, onFail, text, button string, timeout Duration, timeoutRequired bool) error {
+	if err := captchaMode(key+".mode", mode); err != nil {
+		return err
+	}
+	if err := captchaOnFail(key+".on_fail", onFail); err != nil {
+		return err
+	}
+	if err := captchaTimeout(key+".timeout", timeout, timeoutRequired); err != nil {
+		return err
+	}
+	if err := captchaTextLen(key+".text", text); err != nil {
+		return err
+	}
+	return captchaButtonLen(key+".button_text", button)
+}
+
+func captchaMode(key, mode string) error {
+	if mode != "" && mode != "button" {
+		return fmt.Errorf("%s %q is not supported", key, mode)
+	}
+	return nil
+}
+
+func captchaOnFail(key, action string) error {
+	switch action {
+	case "", "kick", "keep_muted":
+		return nil
+	default:
+		return fmt.Errorf("%s must be kick|keep_muted, got %q", key, action)
+	}
+}
+
+func captchaTimeout(key string, d Duration, required bool) error {
+	if d == 0 && !required {
+		return nil
+	}
+	if time.Duration(d) < captchaTimeoutMin || time.Duration(d) > captchaTimeoutMax {
+		return fmt.Errorf("%s must be between 30s and 1h, got %s", key, time.Duration(d))
+	}
+	return nil
+}
+
+func captchaTextLen(key, text string) error {
+	if n := utf8.RuneCountInString(strings.TrimSpace(text)); n > telegramMessageRunes {
+		return fmt.Errorf("%s is %d runes, the Telegram limit is %d", key, n, telegramMessageRunes)
+	}
+	return nil
+}
+
+func captchaButtonLen(key, text string) error {
+	if n := utf8.RuneCountInString(strings.TrimSpace(text)); n > captchaButtonRunes {
+		return fmt.Errorf("%s is %d runes, the limit is %d", key, n, captchaButtonRunes)
 	}
 	return nil
 }

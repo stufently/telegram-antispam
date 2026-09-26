@@ -90,6 +90,9 @@ type Port interface {
 	SendEphemeral(ctx context.Context, chat, userID int64, text string) (int, error)
 	// SendWelcome is the same ephemeral send, under its own priority name.
 	SendWelcome(ctx context.Context, chat, userID int64, text string) (int, error)
+	SendCaptchaEphemeral(ctx context.Context, chat, userID int64, text string, buttons [][]Button) (int, error)
+	SendCaptchaMessage(ctx context.Context, chat int64, text string, buttons [][]Button) (int, error)
+	DeleteEphemeral(ctx context.Context, chat, userID int64, ephemeralID int) error
 	CheckBotRights(ctx context.Context, chat int64) (BotRights, error)
 }
 

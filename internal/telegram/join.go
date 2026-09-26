@@ -7,6 +7,11 @@ import "github.com/go-telegram/bot/models"
 type JoinEvent struct {
 	ChatID, UserID int64
 	ViaJoinRequest bool
+	Restricted     bool
+}
+
+type MemberChange struct {
+	ChatID, UserID, ActorID int64
 }
 
 // JoinFromChatMemberUpdated is true only for a non-bot user moving from
@@ -25,7 +30,16 @@ func JoinFromChatMemberUpdated(u models.ChatMemberUpdated) (JoinEvent, bool) {
 		ChatID:         u.Chat.ID,
 		UserID:         user.ID,
 		ViaJoinRequest: u.ViaJoinRequest,
+		Restricted:     u.NewChatMember.Type == models.ChatMemberTypeRestricted,
 	}, true
+}
+
+func MemberChangeFromUpdate(u models.ChatMemberUpdated) (MemberChange, bool) {
+	mem := MemberFromChatMember(u.NewChatMember)
+	if mem.UserID == 0 {
+		return MemberChange{}, false
+	}
+	return MemberChange{ChatID: u.Chat.ID, UserID: mem.UserID, ActorID: u.From.ID}, true
 }
 
 func memberWasOut(cm models.ChatMember) bool {

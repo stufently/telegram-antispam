@@ -49,6 +49,27 @@ welcome:
   #     Welcome. Rules: no advertising, no off-topic spam.
   #     If you were muted by mistake, message @moderator_contact.
 
+# captcha: off unless enabled. Mutes a joiner until the button is pressed or
+# the timeout passes. Ephemeral button, with a normal chat message if that
+# cannot be delivered. Skips dry-run (a mute or kick is a sanction). on_fail
+# is kick (they may rejoin) or keep_muted. join_request is rejected for now.
+# A chat entry overrides the global switch and any field it sets. In allowlist
+# mode every captcha.chats key must be in chats.allowlist.
+captcha:
+  enabled: false # Default: false.
+  mode: button # Only button is supported. join_request is rejected.
+  timeout: 2m # How long the button stays valid. Allowed: 30s to 1h.
+  on_fail: kick # kick or keep_muted.
+  text: "Press the button below to confirm you are not a bot, otherwise you will be removed from the chat."
+  button_text: "I am not a bot"
+  chats: {} # Per-chat overrides. The id below is fictional.
+  # -1001234567890:
+  #   enabled: true
+  #   timeout: 5m
+  #   on_fail: keep_muted
+  #   text: "Press the button to speak in this chat."
+  #   button_text: "I am not a bot"
+
 # detection configures the M3 detection cascade (internal/detect). Every
 # field below is optional; unset fields fall back to the defaults shown
 # here as comments. Durations are Go duration strings (e.g. "60s", "5m").

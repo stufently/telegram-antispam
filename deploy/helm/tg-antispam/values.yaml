@@ -114,3 +114,5 @@ config: |
       allow_google_maps_links: false
   # Ephemeral greeting for someone who joins; off by default, and dry-run does not apply.
   welcome: {enabled: false}
+  # Button captcha for a new member; off by default. join_request comes later.
+  captcha: {enabled: false}
