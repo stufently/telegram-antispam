@@ -84,6 +84,40 @@ func TestDeleteEphemeralParams(t *testing.T) {
 	}
 }
 
+func TestApproveDeclineJoinRequestParams(t *testing.T) {
+	var mu sync.Mutex
+	type hit struct {
+		path string
+		form map[string]string
+	}
+	var hits []hit
+	p, _, stop := startLivePort(t, func(w http.ResponseWriter, r *http.Request) {
+		f := formOf(t, r)
+		mu.Lock()
+		hits = append(hits, hit{path: r.URL.Path, form: f})
+		mu.Unlock()
+		writeJSON(w, `{"ok":true,"result":true}`)
+	})
+	defer stop()
+	if err := p.ApproveJoinRequest(context.Background(), -100, 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.DeclineJoinRequest(context.Background(), -100, 8); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(hits) != 2 {
+		t.Fatal(len(hits))
+	}
+	if !strings.HasSuffix(hits[0].path, "/approveChatJoinRequest") || hits[0].form["chat_id"] != "-100" || hits[0].form["user_id"] != "7" {
+		t.Fatal(hits[0])
+	}
+	if !strings.HasSuffix(hits[1].path, "/declineChatJoinRequest") || hits[1].form["chat_id"] != "-100" || hits[1].form["user_id"] != "8" {
+		t.Fatal(hits[1])
+	}
+}
+
 func TestJoinEventRestrictedFlag(t *testing.T) {
 	person := &models.User{ID: 42, FirstName: "Ada"}
 	member, ok := JoinFromChatMemberUpdated(models.ChatMemberUpdated{

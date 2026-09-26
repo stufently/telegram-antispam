@@ -207,7 +207,7 @@ func TestCaptchaSkips(t *testing.T) {
 		{"restricted", nil, ev(true), CaptchaSkipRestricted},
 		{"blocklisted", func(e *capEnv) { e.c.Blocklist = listedIDs{7: true} }, ev(false), CaptchaSkipBlocklisted},
 		{"passed", func(e *capEnv) {
-			row, started, err := e.db.BeginCaptcha(capChat, 7, 1, 1)
+			row, started, err := e.db.BeginCaptcha(capChat, 7, 1, 1, "button")
 			if err != nil || !started {
 				e.t.Fatal(err)
 			}
@@ -221,7 +221,7 @@ func TestCaptchaSkips(t *testing.T) {
 			}
 		}, ev(false), CaptchaSkipKnown},
 		{"pending", func(e *capEnv) {
-			if _, started, err := e.db.BeginCaptcha(capChat, 7, 1, e.clock.Add(time.Hour).Unix()); err != nil || !started {
+			if _, started, err := e.db.BeginCaptcha(capChat, 7, 1, e.clock.Add(time.Hour).Unix(), "button"); err != nil || !started {
 				e.t.Fatal(err)
 			}
 		}, ev(false), CaptchaSkipPending},
@@ -483,14 +483,14 @@ func TestCaptchaPressAfterTimeoutIgnored(t *testing.T) {
 
 func TestCaptchaSurvivesRestart(t *testing.T) {
 	e := newCap(t)
-	row, started, err := e.db.BeginCaptcha(capChat, 1, 100, 100)
+	row, started, err := e.db.BeginCaptcha(capChat, 1, 100, 100, "button")
 	if err != nil || !started {
 		t.Fatal(err)
 	}
 	if _, ok, err := e.db.TransitionCaptcha(capChat, 1, row.Attempt, []string{store.CaptchaNew}, store.CaptchaChallenged); err != nil || !ok {
 		t.Fatal(err)
 	}
-	if _, started, err = e.db.BeginCaptcha(capChat, 2, 100, 100); err != nil || !started {
+	if _, started, err = e.db.BeginCaptcha(capChat, 2, 100, 100, "button"); err != nil || !started {
 		t.Fatal(err)
 	}
 	e.c = e.engine()
@@ -519,13 +519,13 @@ func (g *unrestrictGate) UnrestrictMember(ctx context.Context, chat, user int64)
 
 type errPrompt struct{ *store.DB }
 
-func (errPrompt) SetCaptchaPrompt(int64, int64, int64, int, int, int64) (store.CaptchaRow, error) {
+func (errPrompt) SetCaptchaPrompt(int64, int64, int64, int64, int, int, int64) (store.CaptchaRow, error) {
 	return store.CaptchaRow{}, errors.New("save prompt")
 }
 
 type errPromptAndFail struct{ *store.DB }
 
-func (errPromptAndFail) SetCaptchaPrompt(int64, int64, int64, int, int, int64) (store.CaptchaRow, error) {
+func (errPromptAndFail) SetCaptchaPrompt(int64, int64, int64, int64, int, int, int64) (store.CaptchaRow, error) {
 	return store.CaptchaRow{}, errors.New("save prompt")
 }
 
@@ -546,7 +546,7 @@ func TestCaptchaChallengedCounted(t *testing.T) {
 
 func TestCaptchaPassingSurvivesCrash(t *testing.T) {
 	e := newCap(t)
-	row, started, err := e.db.BeginCaptcha(capChat, 7, e.clock.Unix(), e.clock.Unix())
+	row, started, err := e.db.BeginCaptcha(capChat, 7, e.clock.Unix(), e.clock.Unix(), "button")
 	if err != nil || !started {
 		t.Fatal(err)
 	}

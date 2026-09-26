@@ -82,6 +82,16 @@ const (
 	updateDedupWindow int64 = 100_000
 )
 
+// allowedUpdates is the inbound set long polling subscribes to. Tests read
+// it so a new kind cannot be handled in the switch and forgotten here.
+func allowedUpdates() []string {
+	return []string{
+		"message", "edited_message", "callback_query",
+		"chat_member", "my_chat_member", "message_reaction",
+		"chat_join_request",
+	}
+}
+
 // priorityFor maps a Port method name to its queue priority: destructive
 // moderation calls (delete/ban/restrict) jump ahead of notifications and
 // bookkeeping.
@@ -389,10 +399,7 @@ func main() {
 		// deduplication, and message-reaction dedup depend on a single inline
 		// update consumer; do not raise without a concurrent-ordering strategy.
 		tgbot.WithWorkers(1),
-		tgbot.WithAllowedUpdates([]string{
-			"message", "edited_message", "callback_query",
-			"chat_member", "my_chat_member", "message_reaction",
-		}),
+		tgbot.WithAllowedUpdates(allowedUpdates()),
 		tgbot.WithDefaultHandler(func(updateCtx context.Context, b *tgbot.Bot, update *models.Update) {
 			switch {
 			case update.Message != nil:
@@ -447,6 +454,10 @@ func main() {
 							log.Printf("admin callback: %v", err)
 						}
 					})
+				})
+			case update.ChatJoinRequest != nil:
+				handleChatJoinRequest(workCtx, update.ChatJoinRequest, seq.Submit, captcha, func(kind string) {
+					reg.IncCounter("tg_antispam_updates_total", 1, "kind", kind)
 				})
 			case update.ChatMember != nil:
 				reg.IncCounter("tg_antispam_updates_total", 1, "kind", "chat_member")

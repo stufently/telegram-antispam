@@ -232,7 +232,7 @@ func (s orderCaptchaStore) CaptchaPassed(int64, int64) (bool, error) { return fa
 func (s orderCaptchaStore) GetCaptcha(int64, int64) (store.CaptchaRow, bool, error) {
 	return store.CaptchaRow{}, false, nil
 }
-func (s orderCaptchaStore) BeginCaptcha(int64, int64, int64, int64) (store.CaptchaRow, bool, error) {
+func (s orderCaptchaStore) BeginCaptcha(int64, int64, int64, int64, string) (store.CaptchaRow, bool, error) {
 	s.note("captcha")
 	return store.CaptchaRow{State: store.CaptchaNew, Attempt: 1}, true, nil
 }
@@ -246,7 +246,7 @@ func (s orderCaptchaStore) RetryCaptcha(int64, int64, int64, int64) error { retu
 func (s orderCaptchaStore) MarkCaptchaPassing(int64, int64, int64, int64) (store.CaptchaRow, bool, error) {
 	return store.CaptchaRow{}, false, nil
 }
-func (s orderCaptchaStore) SetCaptchaPrompt(int64, int64, int64, int, int, int64) (store.CaptchaRow, error) {
+func (s orderCaptchaStore) SetCaptchaPrompt(int64, int64, int64, int64, int, int, int64) (store.CaptchaRow, error) {
 	return store.CaptchaRow{}, nil
 }
 func (s orderCaptchaStore) DueCaptchas(int64, int) ([]store.CaptchaRow, error) { return nil, nil }

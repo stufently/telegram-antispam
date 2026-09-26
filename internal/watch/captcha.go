@@ -28,6 +28,12 @@ const (
 	CaptchaSkipBlocklisted     CaptchaOutcome = "skip_blocklisted"
 	CaptchaSkipKnown           CaptchaOutcome = "skip_known"
 	CaptchaSkipPending         CaptchaOutcome = "skip_pending"
+	CaptchaSkipMode            CaptchaOutcome = "skip_mode"
+	CaptchaApprovedKnown       CaptchaOutcome = "approved_known"
+	CaptchaPromptFailed        CaptchaOutcome = "prompt_failed"
+	CaptchaApproved            CaptchaOutcome = "approved"
+	CaptchaFailedDecline       CaptchaOutcome = "failed_decline"
+	CaptchaLeftPending         CaptchaOutcome = "left_pending"
 	CaptchaChallenged          CaptchaOutcome = "challenged"
 	CaptchaPassed              CaptchaOutcome = "passed"
 	CaptchaRestrictAfterCancel CaptchaOutcome = "restrict_after_cancel"
@@ -47,14 +53,14 @@ const (
 )
 
 type CaptchaStore interface {
-	BeginCaptcha(chatID, userID, now, deadline int64) (store.CaptchaRow, bool, error)
+	BeginCaptcha(chatID, userID, now, deadline int64, mode string) (store.CaptchaRow, bool, error)
 	CaptchaPassed(chatID, userID int64) (bool, error)
 	GetCaptcha(chatID, userID int64) (store.CaptchaRow, bool, error)
 	TransitionCaptcha(chatID, userID, attempt int64, from []string, to string) (store.CaptchaRow, bool, error)
 	MarkCaptchaPassing(chatID, userID, attempt, deadline int64) (store.CaptchaRow, bool, error)
 	FailCaptcha(chatID, userID, attempt int64, from []string, action string) (store.CaptchaRow, bool, error)
 	RetryCaptcha(chatID, userID, attempt, nextDeadline int64) error
-	SetCaptchaPrompt(chatID, userID, attempt int64, ephemeralID, messageID int, deadline int64) (store.CaptchaRow, error)
+	SetCaptchaPrompt(chatID, userID, attempt, promptChatID int64, ephemeralID, messageID int, deadline int64) (store.CaptchaRow, error)
 	DueCaptchas(now int64, limit int) ([]store.CaptchaRow, error)
 	SanctionSince(chatID, userID, since int64) (bool, error)
 	TrustCount(chatID, userID int64) (int, error)
@@ -212,6 +218,9 @@ func (c *Captcha) OnJoin(ctx context.Context, ev telegram.JoinEvent, displayName
 	if out != "" || err != nil {
 		return out, err
 	}
+	if pol.Mode == "join_request" {
+		return CaptchaSkipMode, nil
+	}
 	if ev.Restricted {
 		return CaptchaSkipRestricted, nil
 	}
@@ -233,7 +242,7 @@ func (c *Captcha) OnJoin(ctx context.Context, ev telegram.JoinEvent, displayName
 		return CaptchaSkipKnown, nil
 	}
 	now := c.now()
-	row, started, err := c.Store.BeginCaptcha(ev.ChatID, ev.UserID, now.Unix(), now.Add(pol.Timeout).Unix())
+	row, started, err := c.Store.BeginCaptcha(ev.ChatID, ev.UserID, now.Unix(), now.Add(pol.Timeout).Unix(), "button")
 	if err != nil {
 		return CaptchaError, err
 	}
@@ -286,7 +295,7 @@ func (c *Captcha) challenge(ctx context.Context, ev telegram.JoinEvent, attempt 
 		return
 	}
 	sentAt := c.now()
-	saved, err := c.Store.SetCaptchaPrompt(ev.ChatID, ev.UserID, attempt, ephID, msgID, sentAt.Add(pol.Timeout).Unix())
+	saved, err := c.Store.SetCaptchaPrompt(ev.ChatID, ev.UserID, attempt, 0, ephID, msgID, sentAt.Add(pol.Timeout).Unix())
 	if err != nil {
 		log.Printf("captcha: %v", err)
 		// Record fail-open before dropping the button. If this write also
@@ -297,14 +306,14 @@ func (c *Captcha) challenge(ctx context.Context, ev telegram.JoinEvent, attempt 
 			c.log(ferr)
 			return
 		}
-		c.deleteIDs(ctx, ev.ChatID, ev.UserID, ephID, msgID)
+		c.deleteIDs(ctx, store.CaptchaRow{ChatID: ev.ChatID, UserID: ev.UserID, EphemeralID: ephID, MessageID: msgID})
 		if ok {
 			c.fail(ctx, failed)
 		}
 		return
 	}
 	if saved.Attempt != attempt || saved.State != store.CaptchaChallenged {
-		c.deleteIDs(ctx, ev.ChatID, ev.UserID, ephID, msgID)
+		c.deleteIDs(ctx, saved)
 	}
 }
 
@@ -339,7 +348,7 @@ func (c *Captcha) OnMemberChange(ctx context.Context, ch telegram.MemberChange) 
 	if !ok {
 		return CaptchaSkip, nil
 	}
-	c.deleteIDs(ctx, updated.ChatID, updated.UserID, updated.EphemeralID, updated.MessageID)
+	c.deleteIDs(ctx, updated)
 	return CaptchaCancelledByAdmin, nil
 }
 
@@ -367,7 +376,7 @@ func captchaAnswer(out CaptchaOutcome) string {
 		return "invalid"
 	case CaptchaExpired:
 		return "expired"
-	case CaptchaPassed:
+	case CaptchaPassed, CaptchaApproved:
 		return "confirmed"
 	default:
 		return ""
@@ -389,20 +398,25 @@ func (c *Captcha) decidePress(ctx context.Context, p CaptchaPress) (CaptchaOutco
 	if !found || row.Attempt != attempt || row.State != store.CaptchaChallenged || row.Deadline <= c.now().Unix() {
 		return CaptchaExpired, "", nil
 	}
-	sanctioned, err := c.Store.SanctionSince(chatID, userID, row.CreatedAt)
-	if err != nil {
-		return CaptchaError, "", err
-	}
-	if sanctioned {
-		updated, moved, terr := c.Store.TransitionCaptcha(chatID, userID, attempt, []string{store.CaptchaChallenged}, store.CaptchaCancelled)
-		if terr != nil {
-			return CaptchaError, "", terr
+	// A join-request applicant is not in the chat yet, so a sanction
+	// recorded against the user id cannot be the mute this press would lift.
+	join := row.Mode == "join_request"
+	if !join {
+		sanctioned, serr := c.Store.SanctionSince(chatID, userID, row.CreatedAt)
+		if serr != nil {
+			return CaptchaError, "", serr
 		}
-		if !moved {
-			return CaptchaExpired, "", nil
+		if sanctioned {
+			updated, moved, terr := c.Store.TransitionCaptcha(chatID, userID, attempt, []string{store.CaptchaChallenged}, store.CaptchaCancelled)
+			if terr != nil {
+				return CaptchaError, "", terr
+			}
+			if !moved {
+				return CaptchaExpired, "", nil
+			}
+			c.deleteIDs(ctx, updated)
+			return CaptchaCancelledSanction, "", nil
 		}
-		c.deleteIDs(ctx, updated.ChatID, updated.UserID, updated.EphemeralID, updated.MessageID)
-		return CaptchaCancelledSanction, "", nil
 	}
 	var moved bool
 	_, moved, err = c.Store.MarkCaptchaPassing(chatID, userID, attempt, c.now().Unix())
@@ -412,23 +426,31 @@ func (c *Captcha) decidePress(ctx context.Context, p CaptchaPress) (CaptchaOutco
 	if !moved {
 		return CaptchaExpired, "", nil
 	}
-	sanctioned, err = c.Store.SanctionSince(chatID, userID, row.CreatedAt)
-	if err != nil {
-		return CaptchaError, captchaRestoreSoon, err
-	}
-	if sanctioned {
-		updated, moved, terr := c.Store.TransitionCaptcha(chatID, userID, attempt, []string{store.CaptchaPassing}, store.CaptchaCancelled)
-		if terr != nil {
-			return CaptchaError, captchaRestoreSoon, terr
+	if !join {
+		sanctioned, serr := c.Store.SanctionSince(chatID, userID, row.CreatedAt)
+		if serr != nil {
+			return CaptchaError, captchaRestoreSoon, serr
 		}
-		if !moved {
-			return CaptchaExpired, "", nil
+		if sanctioned {
+			updated, moved, terr := c.Store.TransitionCaptcha(chatID, userID, attempt, []string{store.CaptchaPassing}, store.CaptchaCancelled)
+			if terr != nil {
+				return CaptchaError, captchaRestoreSoon, terr
+			}
+			if !moved {
+				return CaptchaExpired, "", nil
+			}
+			c.deleteIDs(ctx, updated)
+			return CaptchaCancelledSanction, "", nil
 		}
-		c.deleteIDs(ctx, updated.ChatID, updated.UserID, updated.EphemeralID, updated.MessageID)
-		return CaptchaCancelledSanction, "", nil
 	}
-	if err := c.Port.UnrestrictMember(ctx, chatID, userID); err != nil {
-		return CaptchaError, captchaRestoreSoon, err
+	var lift error
+	if join {
+		lift = c.Port.ApproveJoinRequest(ctx, chatID, userID)
+	} else {
+		lift = c.Port.UnrestrictMember(ctx, chatID, userID)
+	}
+	if lift != nil {
+		return CaptchaError, captchaRestoreSoon, lift
 	}
 	passed, moved, err := c.Store.TransitionCaptcha(chatID, userID, attempt, []string{store.CaptchaPassing}, store.CaptchaPassed)
 	if err != nil {
@@ -442,11 +464,17 @@ func (c *Captcha) decidePress(ctx context.Context, p CaptchaPress) (CaptchaOutco
 			return CaptchaError, captchaRestoreSoon, gerr
 		}
 		if found && again.State == store.CaptchaPassed {
+			if join {
+				return CaptchaApproved, "", nil
+			}
 			return CaptchaPassed, "", nil
 		}
 		return CaptchaExpired, "", nil
 	}
-	c.deleteIDs(ctx, passed.ChatID, passed.UserID, passed.EphemeralID, passed.MessageID)
+	c.deleteIDs(ctx, passed)
+	if join {
+		return CaptchaApproved, "", nil
+	}
 	return CaptchaPassed, "", nil
 }
 
@@ -466,6 +494,10 @@ func (c *Captcha) Sweep(ctx context.Context) (int, error) {
 				continue
 			}
 			n++
+			if row.Mode == "join_request" {
+				c.cancelJoin(ctx, row, store.CaptchaNew, false)
+				continue
+			}
 			failed, ok, ferr := c.Store.FailCaptcha(row.ChatID, row.UserID, row.Attempt, []string{store.CaptchaNew}, "unrestrict")
 			if ferr != nil {
 				c.log(ferr)
@@ -476,6 +508,10 @@ func (c *Captcha) Sweep(ctx context.Context) (int, error) {
 			}
 		case store.CaptchaChallenged:
 			n++
+			if row.Mode == "join_request" {
+				c.sweepJoinChallenged(ctx, row)
+				continue
+			}
 			c.sweepChallenged(ctx, row)
 		case store.CaptchaFailing:
 			n++
@@ -510,7 +546,7 @@ func (c *Captcha) sweepChallenged(ctx context.Context, row store.CaptchaRow) {
 				return
 			}
 			if ok {
-				c.deleteIDs(ctx, updated.ChatID, updated.UserID, updated.EphemeralID, updated.MessageID)
+				c.deleteIDs(ctx, updated)
 				c.count(CaptchaCancelledSanction)
 			}
 			return
@@ -524,11 +560,15 @@ func (c *Captcha) sweepChallenged(ctx context.Context, row store.CaptchaRow) {
 	if !ok {
 		return
 	}
-	c.deleteIDs(ctx, failed.ChatID, failed.UserID, failed.EphemeralID, failed.MessageID)
+	c.deleteIDs(ctx, failed)
 	c.fail(ctx, failed)
 }
 
 func (c *Captcha) sweepPassing(ctx context.Context, row store.CaptchaRow) {
+	if row.Mode == "join_request" {
+		c.sweepJoinPassing(ctx, row)
+		return
+	}
 	sanctioned, err := c.Store.SanctionSince(row.ChatID, row.UserID, row.CreatedAt)
 	if err != nil {
 		c.log(err)
@@ -541,7 +581,7 @@ func (c *Captcha) sweepPassing(ctx context.Context, row store.CaptchaRow) {
 			return
 		}
 		if ok {
-			c.deleteIDs(ctx, updated.ChatID, updated.UserID, updated.EphemeralID, updated.MessageID)
+			c.deleteIDs(ctx, updated)
 			c.count(CaptchaCancelledSanction)
 		}
 		return
@@ -552,7 +592,7 @@ func (c *Captcha) sweepPassing(ctx context.Context, row store.CaptchaRow) {
 			c.log(terr)
 			return
 		} else if ok {
-			c.deleteIDs(ctx, row.ChatID, row.UserID, row.EphemeralID, row.MessageID)
+			c.deleteIDs(ctx, row)
 			c.count(CaptchaGaveUp)
 		}
 		return
@@ -569,7 +609,7 @@ func (c *Captcha) sweepPassing(ctx context.Context, row store.CaptchaRow) {
 	if !ok {
 		return
 	}
-	c.deleteIDs(ctx, updated.ChatID, updated.UserID, updated.EphemeralID, updated.MessageID)
+	c.deleteIDs(ctx, updated)
 	c.count(CaptchaPassed)
 }
 
@@ -610,6 +650,12 @@ func (c *Captcha) fail(ctx context.Context, row store.CaptchaRow) {
 		c.finishFail(row, store.CaptchaFailed, CaptchaFailedKick)
 	case "keep_muted":
 		c.finishFail(row, store.CaptchaFailed, CaptchaFailedMuted)
+	case "decline":
+		if err := c.Port.DeclineJoinRequest(ctx, row.ChatID, row.UserID); err != nil {
+			c.retry(row, err)
+			return
+		}
+		c.finishFail(row, store.CaptchaFailed, CaptchaFailedDecline)
 	default:
 		log.Printf("captcha: bad action %s", row.FailAction)
 		c.giveUp(row)
@@ -641,14 +687,21 @@ func (c *Captcha) retry(row store.CaptchaRow, cause error) {
 	c.count(CaptchaError)
 }
 
-func (c *Captcha) deleteIDs(ctx context.Context, chatID, userID int64, ephemeralID, messageID int) {
-	if ephemeralID != 0 {
-		if err := c.Port.DeleteEphemeral(ctx, chatID, userID, ephemeralID); err != nil {
+// deleteIDs removes the prompt. A non-zero PromptChatID is the private chat
+// the button was sent to; zero means the group, which is where a button
+// captcha posts its fallback message.
+func (c *Captcha) deleteIDs(ctx context.Context, row store.CaptchaRow) {
+	if row.EphemeralID != 0 {
+		if err := c.Port.DeleteEphemeral(ctx, row.ChatID, row.UserID, row.EphemeralID); err != nil {
 			log.Printf("captcha: %v", err)
 		}
 	}
-	if messageID != 0 {
-		if err := c.Port.DeleteMessages(ctx, chatID, []int{messageID}); err != nil {
+	dest := row.ChatID
+	if row.PromptChatID != 0 {
+		dest = row.PromptChatID
+	}
+	if row.MessageID != 0 {
+		if err := c.Port.DeleteMessages(ctx, dest, []int{row.MessageID}); err != nil {
 			log.Printf("captcha: %v", err)
 		}
 	}

@@ -28,9 +28,11 @@ type CaptchaRow struct {
 	EphemeralID    int
 	MessageID      int
 	CreatedAt      int64
+	Mode           string
+	PromptChatID   int64
 }
 
-const captchaSelect = `SELECT chat_id, user_id, attempt, state, deadline, fail_action, tries, ephemeral_id, message_id, created_at FROM captcha_challenges`
+const captchaSelect = `SELECT chat_id, user_id, attempt, state, deadline, fail_action, tries, ephemeral_id, message_id, created_at, mode, prompt_chat_id FROM captcha_challenges`
 
 type captchaScanner interface {
 	Scan(dest ...any) error
@@ -38,7 +40,7 @@ type captchaScanner interface {
 
 func scanCaptcha(s captchaScanner) (CaptchaRow, bool, error) {
 	var r CaptchaRow
-	err := s.Scan(&r.ChatID, &r.UserID, &r.Attempt, &r.State, &r.Deadline, &r.FailAction, &r.Tries, &r.EphemeralID, &r.MessageID, &r.CreatedAt)
+	err := s.Scan(&r.ChatID, &r.UserID, &r.Attempt, &r.State, &r.Deadline, &r.FailAction, &r.Tries, &r.EphemeralID, &r.MessageID, &r.CreatedAt, &r.Mode, &r.PromptChatID)
 	if err == sql.ErrNoRows {
 		return CaptchaRow{}, false, nil
 	}
@@ -52,7 +54,7 @@ func loadCaptchaTx(tx *sql.Tx, chatID, userID int64) (CaptchaRow, bool, error) {
 	return scanCaptcha(tx.QueryRow(captchaSelect+` WHERE chat_id=? AND user_id=?`, chatID, userID))
 }
 
-func (db *DB) BeginCaptcha(chatID, userID, now, deadline int64) (CaptchaRow, bool, error) {
+func (db *DB) BeginCaptcha(chatID, userID, now, deadline int64, mode string) (CaptchaRow, bool, error) {
 	var row CaptchaRow
 	var started bool
 	err := db.Write(func(tx *sql.Tx) error {
@@ -61,9 +63,9 @@ func (db *DB) BeginCaptcha(chatID, userID, now, deadline int64) (CaptchaRow, boo
 			return err
 		}
 		if !found {
-			row = CaptchaRow{ChatID: chatID, UserID: userID, Attempt: 1, State: CaptchaNew, Deadline: deadline, CreatedAt: now}
-			_, err = tx.Exec(`INSERT INTO captcha_challenges(chat_id, user_id, attempt, state, deadline, fail_action, tries, ephemeral_id, message_id, created_at, updated_at)
-				VALUES(?,?,?,?,?,'',0,0,0,?,?)`, chatID, userID, row.Attempt, row.State, deadline, now, now)
+			row = CaptchaRow{ChatID: chatID, UserID: userID, Attempt: 1, State: CaptchaNew, Deadline: deadline, CreatedAt: now, Mode: mode}
+			_, err = tx.Exec(`INSERT INTO captcha_challenges(chat_id, user_id, attempt, state, deadline, fail_action, tries, ephemeral_id, message_id, created_at, updated_at, mode)
+				VALUES(?,?,?,?,?,'',0,0,0,?,?,?)`, chatID, userID, row.Attempt, row.State, deadline, now, now, mode)
 			started = err == nil
 			return err
 		}
@@ -71,11 +73,11 @@ func (db *DB) BeginCaptcha(chatID, userID, now, deadline int64) (CaptchaRow, boo
 			row = existing
 			return nil
 		}
-		row = CaptchaRow{ChatID: chatID, UserID: userID, Attempt: existing.Attempt + 1, State: CaptchaNew, Deadline: deadline, CreatedAt: now}
+		row = CaptchaRow{ChatID: chatID, UserID: userID, Attempt: existing.Attempt + 1, State: CaptchaNew, Deadline: deadline, CreatedAt: now, Mode: mode}
 		res, err := tx.Exec(`UPDATE captcha_challenges
-			SET attempt=?, state=?, deadline=?, fail_action='', tries=0, ephemeral_id=0, message_id=0, created_at=?, updated_at=?
+			SET attempt=?, state=?, deadline=?, fail_action='', tries=0, ephemeral_id=0, message_id=0, created_at=?, updated_at=?, mode=?, prompt_chat_id=0
 			WHERE chat_id=? AND user_id=? AND state IN (?,?)`,
-			row.Attempt, CaptchaNew, deadline, now, now, chatID, userID, CaptchaFailed, CaptchaCancelled)
+			row.Attempt, CaptchaNew, deadline, now, now, mode, chatID, userID, CaptchaFailed, CaptchaCancelled)
 		if err != nil {
 			return err
 		}
@@ -178,18 +180,18 @@ func (db *DB) RetryCaptcha(chatID, userID, attempt, nextDeadline int64) error {
 	})
 }
 
-func (db *DB) SetCaptchaPrompt(chatID, userID, attempt int64, ephemeralID, messageID int, deadline int64) (CaptchaRow, error) {
+func (db *DB) SetCaptchaPrompt(chatID, userID, attempt, promptChatID int64, ephemeralID, messageID int, deadline int64) (CaptchaRow, error) {
 	var row CaptchaRow
 	err := db.Write(func(tx *sql.Tx) error {
 		// A press can commit `passing` (deadline = now) between the send and
 		// this write. Pushing that deadline out to the full timeout would
-		// hide a failed unmute from the sweep.
+		// hide a failed unmute from the sweep. promptChatID 0 is the group.
 		res, err := tx.Exec(`UPDATE captcha_challenges
-			SET ephemeral_id=?, message_id=?,
+			SET ephemeral_id=?, message_id=?, prompt_chat_id=?,
 				deadline=CASE WHEN state=? THEN ? ELSE deadline END,
 				updated_at=?
 			WHERE chat_id=? AND user_id=? AND attempt=?`,
-			ephemeralID, messageID, CaptchaChallenged, deadline, nowUnix(), chatID, userID, attempt)
+			ephemeralID, messageID, promptChatID, CaptchaChallenged, deadline, nowUnix(), chatID, userID, attempt)
 		if err != nil {
 			return err
 		}

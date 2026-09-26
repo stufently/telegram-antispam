@@ -79,6 +79,35 @@ func handleChatMember(
 	})
 }
 
+// handleChatJoinRequest counts the update, then runs the captcha decision
+// inside the chat's sequencer job. A bot or a request with nowhere to write
+// is counted and dropped.
+func handleChatJoinRequest(
+	ctx context.Context,
+	req *models.ChatJoinRequest,
+	submit func(chatID int64, job func()),
+	captcha *watch.Captcha,
+	count func(kind string),
+) {
+	if req == nil {
+		return
+	}
+	if count != nil {
+		count("chat_join_request")
+	}
+	jr, ok := telegram.JoinRequestFromUpdate(*req)
+	if !ok || submit == nil {
+		return
+	}
+	submit(jr.ChatID, func() {
+		if captcha == nil {
+			return
+		}
+		out, err := captcha.OnJoinRequest(ctx, jr)
+		noteCaptcha(captcha, out, err)
+	})
+}
+
 func noteCaptcha(c *watch.Captcha, out watch.CaptchaOutcome, err error) {
 	if c.Count != nil && out != "" && out != watch.CaptchaSkip {
 		c.Count(string(out))

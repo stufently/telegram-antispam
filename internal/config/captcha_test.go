@@ -75,8 +75,8 @@ func TestCaptchaValidate(t *testing.T) {
 	longText := strings.Repeat("я", 4097)
 	longButton := strings.Repeat("b", 65)
 	cases := []struct{ name, yaml, key, extra string }{
-		{"mode", base + "captcha:\n  mode: join_request\n", "captcha.mode", "not supported"},
-		{"chat mode", base + "captcha:\n  chats:\n    -100:\n      mode: join_request\n", "captcha.chats", "not supported"},
+		{"mode", base + "captcha:\n  mode: foo\n", "captcha.mode", "not supported"},
+		{"chat mode", base + "captcha:\n  chats:\n    -100:\n      mode: foo\n", "captcha.chats", "not supported"},
 		{"on_fail", base + "captcha:\n  on_fail: ban\n", "captcha.on_fail", ""},
 		{"chat on_fail", base + "captcha:\n  chats:\n    -100:\n      on_fail: ban\n", "captcha.chats", ""},
 		{"timeout short", base + "captcha:\n  timeout: 10s\n", "captcha.timeout", ""},
@@ -107,6 +107,31 @@ func TestCaptchaValidate(t *testing.T) {
 		if _, err := Parse([]byte(y)); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestCaptchaJoinRequestModeAccepted(t *testing.T) {
+	base := "bot_token: t\nadmin_chat_id: -1\naction: ban\nchats:\n  mode: auto\n"
+	c, err := Parse([]byte(base + "captcha:\n  enabled: true\n  mode: join_request\n"))
+	if err != nil || c.Captcha.Mode != "join_request" {
+		t.Fatal(err, c.Captcha.Mode)
+	}
+	if pol, ok := c.Captcha.For(-100); !ok || pol.Mode != "join_request" {
+		t.Fatal(pol, ok)
+	}
+	c, err = Parse([]byte(base + "captcha:\n  enabled: true\n  chats:\n    -100:\n      mode: join_request\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Captcha.Mode != "button" {
+		t.Fatal(c.Captcha.Mode)
+	}
+	if pol, ok := c.Captcha.For(-100); !ok || pol.Mode != "join_request" {
+		t.Fatal(pol, ok)
+	}
+	_, err = Parse([]byte(base + "captcha:\n  mode: foo\n"))
+	if err == nil || !strings.Contains(err.Error(), "captcha.mode") {
+		t.Fatal(err)
 	}
 }
 

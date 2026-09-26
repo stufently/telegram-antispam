@@ -44,6 +44,8 @@ type Fake struct {
 	CaptchaEphemeralErr error
 	CaptchaMessageID    int
 	CaptchaMessageErr   error
+	ApproveErr          error
+	DeclineErr          error
 	DeleteEphemeralErr  error
 	Rights              telegram.BotRights
 	RightsErr           error
@@ -93,6 +95,14 @@ type Fake struct {
 		Chat    int64
 		Text    string
 		Buttons [][]telegram.Button
+	}
+	LastApprove struct {
+		Chat int64
+		User int64
+	}
+	LastDecline struct {
+		Chat int64
+		User int64
 	}
 	LastDeleteEphemeral struct {
 		Chat, UserID int64
@@ -280,6 +290,22 @@ func (f *Fake) SendCaptchaEphemeral(_ context.Context, chat, userID int64, text 
 	f.mu.Unlock()
 	f.log("SendCaptchaEphemeral")
 	return f.CaptchaEphemeralID, f.CaptchaEphemeralErr
+}
+
+func (f *Fake) ApproveJoinRequest(_ context.Context, chat, user int64) error {
+	f.mu.Lock()
+	f.LastApprove.Chat, f.LastApprove.User = chat, user
+	f.mu.Unlock()
+	f.log("ApproveJoinRequest")
+	return f.ApproveErr
+}
+
+func (f *Fake) DeclineJoinRequest(_ context.Context, chat, user int64) error {
+	f.mu.Lock()
+	f.LastDecline.Chat, f.LastDecline.User = chat, user
+	f.mu.Unlock()
+	f.log("DeclineJoinRequest")
+	return f.DeclineErr
 }
 
 func (f *Fake) SendCaptchaMessage(_ context.Context, chat int64, text string, buttons [][]telegram.Button) (int, error) {

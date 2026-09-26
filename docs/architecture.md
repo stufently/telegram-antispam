@@ -243,6 +243,19 @@ cancel is counted (`restrict_after_cancel`) and left in place. An explicit
 `timeout: 0s` or an empty captcha text or button label is rejected; omitting
 those keys uses the default.
 
+A chat that admits people by request can use `captcha.mode: join_request`
+instead of the mute. Long polling includes `chat_join_request`. The bot
+sends the same `cap:` button to `user_chat_id` and approves the request when
+that person presses it. The applicant is not a member yet, so a moderation
+sanction is not consulted. `on_fail: kick` declines the request;
+`keep_muted` leaves it for the admins, as do a failed prompt, an orphan
+`new` row, and a chat that is off or in dry-run when the deadline passes.
+Someone who already passed, or who has trust, is approved without a new
+challenge. A blocklisted id is left untouched. An ordinary join in that
+chat does not start the button captcha. An admin who approves the request
+cancels the row and the private button is deleted. The bot needs
+`can_invite_users`.
+
 The blocklist is an atomic in-memory snapshot refreshed from external sources.
 LOLS full, LOLS delta, and CAS full data are retained separately: a failed or
 empty source refresh keeps that source's last-good contribution while a

@@ -645,6 +645,20 @@ func (p *LivePort) SendCaptchaEphemeral(ctx context.Context, chat, userID int64,
 	return p.sendToUser(ctx, "SendCaptchaEphemeral", chat, userID, text, buttons)
 }
 
+func (p *LivePort) ApproveJoinRequest(ctx context.Context, chat, user int64) error {
+	return submitSyncErr(ctx, p.disp, chat, p.prio("ApproveJoinRequest"), func(ctx context.Context) error {
+		_, err := p.b.ApproveChatJoinRequest(ctx, &bot.ApproveChatJoinRequestParams{ChatID: chat, UserID: user})
+		return mapRetry(err)
+	})
+}
+
+func (p *LivePort) DeclineJoinRequest(ctx context.Context, chat, user int64) error {
+	return submitSyncErr(ctx, p.disp, chat, p.prio("DeclineJoinRequest"), func(ctx context.Context) error {
+		_, err := p.b.DeclineChatJoinRequest(ctx, &bot.DeclineChatJoinRequestParams{ChatID: chat, UserID: user})
+		return mapRetry(err)
+	})
+}
+
 func (p *LivePort) SendCaptchaMessage(ctx context.Context, chat int64, text string, buttons [][]Button) (int, error) {
 	msg, err := submitSync(ctx, p.disp, chat, p.prio("SendCaptchaMessage"), func(ctx context.Context) (*models.Message, error) {
 		sent, err := p.b.SendMessage(ctx, &bot.SendMessageParams{

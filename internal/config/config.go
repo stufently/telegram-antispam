@@ -972,10 +972,12 @@ func captchaFields(key, mode, onFail, text, button string, timeout Duration, tim
 }
 
 func captchaMode(key, mode string) error {
-	if mode != "" && mode != "button" {
+	switch mode {
+	case "", "button", "join_request":
+		return nil
+	default:
 		return fmt.Errorf("%s %q is not supported", key, mode)
 	}
-	return nil
 }
 
 func captchaOnFail(key, action string) error {

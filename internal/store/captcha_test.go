@@ -20,7 +20,7 @@ func TestCaptchaLifecycle(t *testing.T) {
 	if err := db.Migrate(); err != nil {
 		t.Fatal(err)
 	}
-	row, started, err := db.BeginCaptcha(-100, 7, 10, 40)
+	row, started, err := db.BeginCaptcha(-100, 7, 10, 40, "button")
 	if err != nil || !started || row.Attempt != 1 || row.State != CaptchaNew || row.Deadline != 40 || row.CreatedAt != 10 {
 		t.Fatal(row, started, err)
 	}
@@ -30,7 +30,7 @@ func TestCaptchaLifecycle(t *testing.T) {
 				t.Fatal(st, moved, err)
 			}
 		}
-		again, started, err := db.BeginCaptcha(-100, 7, 99, 99)
+		again, started, err := db.BeginCaptcha(-100, 7, 99, 99, "button")
 		if err != nil || started || again.Attempt != 1 || again.State != st {
 			t.Fatal(st, again, started, err)
 		}
@@ -45,14 +45,14 @@ func TestCaptchaLifecycle(t *testing.T) {
 	if _, moved, err := db.TransitionCaptcha(-100, 7, 1, []string{CaptchaPassed}, CaptchaFailed); err != nil || !moved {
 		t.Fatal(err)
 	}
-	restart, started, err := db.BeginCaptcha(-100, 7, 20, 50)
+	restart, started, err := db.BeginCaptcha(-100, 7, 20, 50, "button")
 	if err != nil || !started || restart.Attempt != 2 || restart.State != CaptchaNew || restart.Tries != 0 || restart.FailAction != "" || restart.EphemeralID != 0 || restart.MessageID != 0 || restart.CreatedAt != 20 || restart.Deadline != 50 {
 		t.Fatal(restart, started, err)
 	}
 	if _, moved, err := db.TransitionCaptcha(-100, 7, 2, []string{CaptchaNew}, CaptchaCancelled); err != nil || !moved {
 		t.Fatal(err)
 	}
-	restart, started, err = db.BeginCaptcha(-100, 7, 30, 60)
+	restart, started, err = db.BeginCaptcha(-100, 7, 30, 60, "button")
 	if err != nil || !started || restart.Attempt != 3 || restart.State != CaptchaNew {
 		t.Fatal(restart, started, err)
 	}
@@ -78,7 +78,7 @@ func TestCaptchaLifecycle(t *testing.T) {
 		t.Fatal(ok, err)
 	}
 
-	if _, started, err = db.BeginCaptcha(-100, 8, 1, 15); err != nil || !started {
+	if _, started, err = db.BeginCaptcha(-100, 8, 1, 15, "button"); err != nil || !started {
 		t.Fatal(err)
 	}
 	failed, moved, err := db.FailCaptcha(-100, 8, 1, []string{CaptchaNew}, "kick")
@@ -92,30 +92,30 @@ func TestCaptchaLifecycle(t *testing.T) {
 	if err != nil || !found || again.Tries != 1 || again.Deadline != 80 || again.State != CaptchaFailing {
 		t.Fatal(again, found, err)
 	}
-	prompt, err := db.SetCaptchaPrompt(-100, 8, 1, 55, 0, 90)
+	prompt, err := db.SetCaptchaPrompt(-100, 8, 1, 0, 55, 0, 90)
 	if err != nil || prompt.EphemeralID != 55 || prompt.MessageID != 0 || prompt.State != CaptchaFailing || prompt.Deadline != 80 {
 		t.Fatal(prompt, err)
 	}
 
-	if _, started, err = db.BeginCaptcha(-100, 2, 1, 10); err != nil || !started {
+	if _, started, err = db.BeginCaptcha(-100, 2, 1, 10, "button"); err != nil || !started {
 		t.Fatal(err)
 	}
-	if _, started, err = db.BeginCaptcha(-100, 5, 1, 30); err != nil || !started {
+	if _, started, err = db.BeginCaptcha(-100, 5, 1, 30, "button"); err != nil || !started {
 		t.Fatal(err)
 	}
 	if _, moved, err = db.TransitionCaptcha(-100, 5, 1, []string{CaptchaNew}, CaptchaChallenged); err != nil || !moved {
 		t.Fatal(err)
 	}
-	if _, started, err = db.BeginCaptcha(-100, 6, 1, 40); err != nil || !started {
+	if _, started, err = db.BeginCaptcha(-100, 6, 1, 40, "button"); err != nil || !started {
 		t.Fatal(err)
 	}
 	if _, moved, err = db.FailCaptcha(-100, 6, 1, []string{CaptchaNew}, "unrestrict"); err != nil || !moved {
 		t.Fatal(err)
 	}
-	if _, started, err = db.BeginCaptcha(-100, 3, 1, 5000); err != nil || !started {
+	if _, started, err = db.BeginCaptcha(-100, 3, 1, 5000, "button"); err != nil || !started {
 		t.Fatal(err)
 	}
-	if _, started, err = db.BeginCaptcha(-100, 4, 1, 1); err != nil || !started {
+	if _, started, err = db.BeginCaptcha(-100, 4, 1, 1, "button"); err != nil || !started {
 		t.Fatal(err)
 	}
 	if _, moved, err = db.TransitionCaptcha(-100, 4, 1, []string{CaptchaNew}, CaptchaPassed); err != nil || !moved {
@@ -135,7 +135,7 @@ func TestCaptchaLifecycle(t *testing.T) {
 	if len(got) != 4 || got[0] != 2 || got[1] != 5 || got[2] != 6 || got[3] != 8 {
 		t.Fatal(got)
 	}
-	shown, err := db.SetCaptchaPrompt(-100, 5, 1, 0, 9, 45)
+	shown, err := db.SetCaptchaPrompt(-100, 5, 1, 0, 0, 9, 45)
 	if err != nil || shown.State != CaptchaChallenged || shown.MessageID != 9 || shown.Deadline != 45 {
 		t.Fatal(shown, err)
 	}
@@ -168,7 +168,7 @@ func TestCaptchaLifecycle(t *testing.T) {
 	if err != nil || ok {
 		t.Fatal(ok, err)
 	}
-	if _, started, err = db.BeginCaptcha(-100, 11, 1, 1); err != nil || !started {
+	if _, started, err = db.BeginCaptcha(-100, 11, 1, 1, "button"); err != nil || !started {
 		t.Fatal(err)
 	}
 	if _, moved, err = db.TransitionCaptcha(-100, 11, 1, []string{CaptchaNew}, CaptchaPassing); err != nil || !moved {
@@ -226,6 +226,86 @@ func TestSanctionSinceOnlyMuteOrBan(t *testing.T) {
 		if err != nil || ok != tt.want {
 			t.Fatalf("user %d action %s dry=%v at=%d since=%d: ok=%v err=%v want %v", tt.user, tt.action, tt.dry, tt.at, tt.since, ok, err, tt.want)
 		}
+	}
+}
+
+func TestCaptchaModeAndPromptChat(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	row, started, err := db.BeginCaptcha(-100, 7, 10, 40, "button")
+	if err != nil || !started || row.Mode != "button" || row.PromptChatID != 0 {
+		t.Fatal(row, started, err)
+	}
+	if _, ok, err := db.TransitionCaptcha(-100, 7, 1, []string{CaptchaNew}, CaptchaChallenged); err != nil || !ok {
+		t.Fatal(err)
+	}
+	shown, err := db.SetCaptchaPrompt(-100, 7, 1, 0, 0, 9, 50)
+	if err != nil || shown.PromptChatID != 0 || shown.MessageID != 9 || shown.Mode != "button" {
+		t.Fatal(shown, err)
+	}
+	if _, ok, err := db.TransitionCaptcha(-100, 7, 1, []string{CaptchaChallenged}, CaptchaCancelled); err != nil || !ok {
+		t.Fatal(err)
+	}
+	again, started, err := db.BeginCaptcha(-100, 7, 20, 60, "join_request")
+	if err != nil || !started || again.Attempt != 2 || again.Mode != "join_request" || again.PromptChatID != 0 {
+		t.Fatal(again, started, err)
+	}
+	if _, ok, err := db.TransitionCaptcha(-100, 7, 2, []string{CaptchaNew}, CaptchaChallenged); err != nil || !ok {
+		t.Fatal(err)
+	}
+	shown, err = db.SetCaptchaPrompt(-100, 7, 2, 700, 0, 11, 80)
+	if err != nil || shown.Mode != "join_request" || shown.PromptChatID != 700 || shown.MessageID != 11 || shown.Deadline != 80 {
+		t.Fatal(shown, err)
+	}
+	got, found, err := db.GetCaptcha(-100, 7)
+	if err != nil || !found || got.Mode != "join_request" || got.PromptChatID != 700 {
+		t.Fatal(got, found, err)
+	}
+
+	old, err := Open(filepath.Join(t.TempDir(), "old.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = old.Close() })
+	if err := old.Write(func(tx *sql.Tx) error {
+		_, err := tx.Exec(`CREATE TABLE captcha_challenges (
+			chat_id INTEGER NOT NULL,
+			user_id INTEGER NOT NULL,
+			attempt INTEGER NOT NULL,
+			state TEXT NOT NULL,
+			deadline INTEGER NOT NULL,
+			fail_action TEXT NOT NULL DEFAULT '',
+			tries INTEGER NOT NULL DEFAULT 0,
+			ephemeral_id INTEGER NOT NULL DEFAULT 0,
+			message_id INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER,
+			PRIMARY KEY(chat_id, user_id)
+		)`)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(`INSERT INTO captcha_challenges(chat_id, user_id, attempt, state, deadline, fail_action, tries, ephemeral_id, message_id, created_at, updated_at)
+			VALUES(-100, 42, 2, 'challenged', 99, 'kick', 3, 5, 6, 7, 8)`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := old.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := old.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	legacy, found, err := old.GetCaptcha(-100, 42)
+	if err != nil || !found || legacy.Attempt != 2 || legacy.State != CaptchaChallenged || legacy.Deadline != 99 || legacy.FailAction != "kick" || legacy.Tries != 3 || legacy.EphemeralID != 5 || legacy.MessageID != 6 || legacy.CreatedAt != 7 || legacy.Mode != "button" || legacy.PromptChatID != 0 {
+		t.Fatal(legacy, found, err)
 	}
 }
 

@@ -14,7 +14,14 @@ Entries start life under **Unreleased** and are moved under a version heading wh
   The bot mutes them until they press the button or the timeout passes,
   then kicks or leaves the mute (`on_fail`). Deadlines survive a restart.
   An ephemeral button falls back to a normal chat message. Dry-run chats
-  are skipped. `join_request` is not in this version.
+  are skipped.
+
+- Optional join-request captcha (`captcha.mode: join_request`) for chats
+  that admit people by request. The bot listens for `chat_join_request`,
+  sends the button to the applicant in private, and approves the request
+  on a press. `on_fail: kick` declines the request; `keep_muted` leaves it
+  for the admins. The bot needs `can_invite_users`. An ordinary join in
+  that chat does not start the button captcha.
 
 - Optional ephemeral welcome (`welcome`, default off) when a person joins.
   Plain text, global or per chat. Shown only to that person; delivery is
