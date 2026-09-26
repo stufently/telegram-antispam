@@ -49,6 +49,35 @@ welcome:
   #     Welcome. Rules: no advertising, no off-topic spam.
   #     If you were muted by mistake, message @moderator_contact.
 
+# captcha: off unless enabled. mode button mutes a joiner until the button
+# is pressed or the timeout passes. Ephemeral button, with a normal chat
+# message if that cannot be delivered. mode join_request is only for chats
+# that admit people by request: the button goes to the applicant in private
+# (user_chat_id) and a press approves the request. The bot needs
+# can_invite_users ("add members"). Skips dry-run (a mute, kick, approve or
+# decline is a sanction). on_fail kick removes the person (button: they may
+# rejoin; join_request: declineChatJoinRequest). on_fail keep_muted leaves a
+# button mute in place, or leaves a join request for the admins. A chat entry
+# overrides the global switch and any field it sets. In allowlist mode every
+# captcha.chats key must be in chats.allowlist.
+# Omitting timeout, text, or button_text uses the default below. An explicit
+# 0s or an empty text or button_text is rejected. A chat entry's 0 or empty
+# value still means inherit.
+captcha:
+  enabled: false # Default: false.
+  mode: button # button or join_request. Default: button.
+  timeout: 2m # How long the button stays valid. Allowed: 30s to 1h.
+  on_fail: kick # kick or keep_muted. See above for join_request.
+  text: "Press the button below to confirm you are not a bot, otherwise you will be removed from the chat."
+  button_text: "I am not a bot"
+  chats: {} # Per-chat overrides. The id below is fictional.
+  # -1001234567890:
+  #   enabled: true
+  #   timeout: 5m
+  #   on_fail: keep_muted
+  #   text: "Press the button to speak in this chat."
+  #   button_text: "I am not a bot"
+
 # detection configures the M3 detection cascade (internal/detect). Every
 # field below is optional; unset fields fall back to the defaults shown
 # here as comments. Durations are Go duration strings (e.g. "60s", "5m").

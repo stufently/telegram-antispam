@@ -80,6 +80,35 @@ func asOwner(u *models.User) models.ChatMember {
 	return models.ChatMember{Type: models.ChatMemberTypeOwner, Owner: &models.ChatMemberOwner{Status: models.ChatMemberTypeOwner, User: u}}
 }
 
+func TestJoinRequestFromUpdate(t *testing.T) {
+	chat := models.Chat{ID: -100, Type: "supergroup"}
+	ada := models.User{ID: 7, FirstName: "Ada"}
+	cases := []struct {
+		name string
+		in   models.ChatJoinRequest
+		ok   bool
+	}{
+		{"person", models.ChatJoinRequest{Chat: chat, From: ada, UserChatID: 700}, true},
+		{"bot", models.ChatJoinRequest{Chat: chat, From: models.User{ID: 8, IsBot: true, FirstName: "Bot"}, UserChatID: 8}, false},
+		{"zero id", models.ChatJoinRequest{Chat: chat, From: models.User{FirstName: "Ada"}, UserChatID: 700}, false},
+		{"zero user chat", models.ChatJoinRequest{Chat: chat, From: ada}, false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := JoinRequestFromUpdate(tt.in)
+			if ok != tt.ok {
+				t.Fatalf("ok=%v", ok)
+			}
+			if !tt.ok {
+				return
+			}
+			if got.ChatID != -100 || got.UserID != 7 || got.UserChatID != 700 || got.DisplayName != "Ada" {
+				t.Fatal(got)
+			}
+		})
+	}
+}
+
 func TestJoinRejectsZeroUserID(t *testing.T) {
 	user := &models.User{ID: 0}
 	for _, tt := range []struct {

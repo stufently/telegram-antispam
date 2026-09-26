@@ -217,6 +217,46 @@ is low priority. If Telegram answers with a `message_id` and no
 `ephemeral_message_id`, that public copy is deleted and the call returns an
 error, so an unhonored ephemeral parameter cannot leave the text in the chat.
 
+The sequencer job only decides the greeting and reserves a rate-limit slot.
+The send runs on its own goroutine, so a slow welcome cannot block moderation
+for that chat. The reservation stays until the greeting is marked, so a second
+join in that gap is not sent. The stamp on the rolling window is still the
+moment the send finished.
+
+A join can also be challenged (`captcha`, off unless enabled). This is not an
+incident. The bot mutes the joiner (`new`), marks the row `challenged` and
+sends an ephemeral button, or a chat message if that fails. The deadline is
+rewritten when that prompt is stored, counted from that moment; the deadline
+written at insert remains if the prompt never arrives. A press moves the row
+to `passing` and then lifts the mute. Only `passed` means the person is known.
+If the lift fails, the row stays `passing` and the sweep retries it. Deadlines
+live in SQLite. A sweep at startup and every 5s finishes due rows: `kick` bans
+then unbans, `keep_muted` leaves the mute, an orphan `new` is released, and
+`passing` is lifted. `failing` and `passing` retry on the next sweep. The bot
+does not lift a captcha mute when an incident since the challenge started has
+an audit action of `delete_mute`, `mute`, or `ban`. `cap:` callbacks skip the
+admin sequencer. Dry-run, a restricted joiner, a blocklisted id, a chat turned
+off mid-challenge, and a prompt that cannot be stored fail open — unless that
+mute must stay because of such a sanction. An admin change cancels the
+challenge and the bot leaves that mute alone. A mute that lands after the
+cancel is counted (`restrict_after_cancel`) and left in place. An explicit
+`timeout: 0s` or an empty captcha text or button label is rejected; omitting
+those keys uses the default.
+
+A chat that admits people by request can use `captcha.mode: join_request`
+instead of the mute. Long polling includes `chat_join_request`. The bot
+sends the same `cap:` button to `user_chat_id` and approves the request when
+that person presses it. The applicant is not a member yet, so a moderation
+sanction is not consulted. `on_fail: kick` declines the request;
+`keep_muted` leaves it for the admins, as do a failed prompt, an orphan
+`new` row, a `challenged` row whose button was never stored, and a chat
+that is off or in dry-run when the deadline passes.
+Someone who already passed, or who has trust, is approved without a new
+challenge. A blocklisted id is left untouched. An ordinary join in that
+chat does not start the button captcha. An admin who approves the request
+cancels the row and the private button is deleted. The bot needs
+`can_invite_users`.
+
 The blocklist is an atomic in-memory snapshot refreshed from external sources.
 LOLS full, LOLS delta, and CAS full data are retained separately: a failed or
 empty source refresh keeps that source's last-good contribution while a

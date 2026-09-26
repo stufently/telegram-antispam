@@ -10,12 +10,46 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ### Added
 
+- Optional button captcha (`captcha`, default off) when a person joins.
+  The bot mutes them until they press the button or the timeout passes,
+  then kicks or leaves the mute (`on_fail`). Deadlines survive a restart.
+  An ephemeral button falls back to a normal chat message. Dry-run chats
+  are skipped.
+
+- Optional join-request captcha (`captcha.mode: join_request`) for chats
+  that admit people by request. The bot listens for `chat_join_request`,
+  sends the button to the applicant in private, and approves the request
+  on a press. `on_fail: kick` declines the request; `keep_muted` leaves it
+  for the admins. A challenge whose button was never stored is left for
+  the admins too. The bot needs `can_invite_users`. An ordinary join in
+  that chat does not start the button captcha.
+
 - Optional ephemeral welcome (`welcome`, default off) when a person joins.
   Plain text, global or per chat. Shown only to that person; delivery is
   not guaranteed. Dry-run does not apply (it is a notice, not a sanction).
   One greeting per person, plus a per-chat cap on join bursts.
 
 ### Changed
+
+- A welcome is sent outside the per-chat sequencer job. The job only
+  decides and reserves a rate-limit slot; a slow greeting no longer
+  stands in front of moderation for that chat.
+
+### Fixed
+
+- Starting a captcha is counted (`challenged`). A press is stored as
+  `passing` until the mute is actually lifted, and a restart finishes
+  that lift. A failed lift no longer records the person as already
+  passed. The bot does not lift a captcha mute when moderation has
+  applied `delete_mute`, `mute`, or `ban` since the challenge started.
+  The button deadline starts when the prompt is sent. If that prompt
+  cannot be stored, the mute is released unless such a sanction already
+  landed. A mute that lands after an admin cancelled the challenge is
+  counted and left in place.
+- A second join while a welcome is being marked is not greeted again.
+- An explicit `captcha.timeout: 0s`, or an empty `captcha.text` or
+  `captcha.button_text`, is rejected. Omitting those keys still uses
+  the default. A per-chat `0` or empty value still means inherit.
 
 - `github.com/go-telegram/bot` v1.27.0 (Bot API 10.3). Ephemeral sends use
   `ephemeral_message_parameters` instead of the removed `receiver_user_id`.

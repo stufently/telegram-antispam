@@ -82,6 +82,16 @@ const (
 	updateDedupWindow int64 = 100_000
 )
 
+// allowedUpdates is the inbound set long polling subscribes to. Tests read
+// it so a new kind cannot be handled in the switch and forgotten here.
+func allowedUpdates() []string {
+	return []string{
+		"message", "edited_message", "callback_query",
+		"chat_member", "my_chat_member", "message_reaction",
+		"chat_join_request",
+	}
+}
+
 // priorityFor maps a Port method name to its queue priority: destructive
 // moderation calls (delete/ban/restrict) jump ahead of notifications and
 // bookkeeping.
@@ -365,6 +375,7 @@ func main() {
 		adminHandler    *admin.Handler
 		memberWatcher   *watch.MemberWatcher
 		welcomer        *watch.Welcomer
+		captcha         *watch.Captcha
 		reactionCleaner *watch.ReactionCleaner
 		adminCache      *telegram.AdminCache
 		selfCheck       func(context.Context, int64)
@@ -388,10 +399,7 @@ func main() {
 		// deduplication, and message-reaction dedup depend on a single inline
 		// update consumer; do not raise without a concurrent-ordering strategy.
 		tgbot.WithWorkers(1),
-		tgbot.WithAllowedUpdates([]string{
-			"message", "edited_message", "callback_query",
-			"chat_member", "my_chat_member", "message_reaction",
-		}),
+		tgbot.WithAllowedUpdates(allowedUpdates()),
 		tgbot.WithDefaultHandler(func(updateCtx context.Context, b *tgbot.Bot, update *models.Update) {
 			switch {
 			case update.Message != nil:
@@ -412,32 +420,48 @@ func main() {
 				// shutdown drains this job like any other. Use workCtx, not the
 				// per-update context, so an accepted job remains live during the
 				// bounded drain after polling stops.
-				seq.Submit(cfgStore.Current().AdminChatID, func() {
-					// The offending message's tokens were persisted when the
-					// incident was created (store.SaveIncidentTokens), so the
-					// handler loads them itself — nothing message-shaped has
-					// to survive on the callback payload, which carries only
-					// where the button sits.
-					var adminChatID int64
-					var messageID int
-					if cb.Message.Message != nil {
-						adminChatID = cb.Message.Message.Chat.ID
-						messageID = cb.Message.Message.ID
+				dispatchCallback(cb.Data, func() {
+					if captcha == nil {
+						return
 					}
-					err := adminHandler.Handle(workCtx, admin.Callback{
-						ID:          cb.ID,
-						Data:        cb.Data,
-						PresserID:   cb.From.ID,
-						AdminChatID: adminChatID,
-						MessageID:   messageID,
+					press := watch.CaptchaPress{ID: cb.ID, Data: cb.Data, PresserID: cb.From.ID}
+					captcha.Go(func() {
+						if _, err := captcha.OnPress(workCtx, press); err != nil {
+							log.Printf("captcha press: %v", err)
+						}
 					})
-					if err != nil {
-						log.Printf("admin callback: %v", err)
-					}
+				}, func() {
+					seq.Submit(cfgStore.Current().AdminChatID, func() {
+						// The offending message's tokens were persisted when the
+						// incident was created (store.SaveIncidentTokens), so the
+						// handler loads them itself — nothing message-shaped has
+						// to survive on the callback payload, which carries only
+						// where the button sits.
+						var adminChatID int64
+						var messageID int
+						if cb.Message.Message != nil {
+							adminChatID = cb.Message.Message.Chat.ID
+							messageID = cb.Message.Message.ID
+						}
+						err := adminHandler.Handle(workCtx, admin.Callback{
+							ID:          cb.ID,
+							Data:        cb.Data,
+							PresserID:   cb.From.ID,
+							AdminChatID: adminChatID,
+							MessageID:   messageID,
+						})
+						if err != nil {
+							log.Printf("admin callback: %v", err)
+						}
+					})
+				})
+			case update.ChatJoinRequest != nil:
+				handleChatJoinRequest(workCtx, update.ChatJoinRequest, seq.Submit, captcha, func(kind string) {
+					reg.IncCounter("tg_antispam_updates_total", 1, "kind", kind)
 				})
 			case update.ChatMember != nil:
 				reg.IncCounter("tg_antispam_updates_total", 1, "kind", "chat_member")
-				handleChatMember(workCtx, update.ChatMember, adminCache.Invalidate, seq.Submit, memberWatcher, welcomer, func(result string) {
+				handleChatMember(workCtx, update.ChatMember, adminCache.Invalidate, seq.Submit, memberWatcher, captcha, welcomer, func(result string) {
 					reg.IncCounter("tg_antispam_welcome_total", 1, "result", result)
 				})
 			case update.MessageReaction != nil:
@@ -716,6 +740,34 @@ func main() {
 		Blocklist: blocklistSource,
 		Now:       time.Now,
 	}
+	captcha = &watch.Captcha{
+		Config:    cfgStore,
+		Store:     db,
+		Port:      livePort,
+		Blocklist: blocklistSource,
+		SelfID:    selfID,
+		Now:       time.Now,
+		Count: func(result string) {
+			reg.IncCounter("tg_antispam_captcha_total", 1, "result", result)
+		},
+	}
+	startBackground(func() {
+		if _, err := captcha.Sweep(workCtx); err != nil && signalCtx.Err() == nil {
+			log.Printf("captcha sweep: %v", err)
+		}
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-signalCtx.Done():
+				return
+			case <-t.C:
+				if _, err := captcha.Sweep(workCtx); err != nil && signalCtx.Err() == nil {
+					log.Printf("captcha sweep: %v", err)
+				}
+			}
+		}
+	})
 
 	// Sequencer health. Both counters are silent failures by construction:
 	// a dropped job is an update already marked seen in SQLite (so it is
@@ -1028,6 +1080,12 @@ func main() {
 	})
 	handler.Stop()
 	seq.Wait()
+	if welcomer != nil {
+		welcomer.Wait()
+	}
+	if captcha != nil {
+		captcha.Wait()
+	}
 	shutdownTimer.Stop()
 	stopWork()
 	<-dispDone

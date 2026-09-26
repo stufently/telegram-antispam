@@ -97,6 +97,22 @@ CREATE TABLE IF NOT EXISTS welcome_sent (
 	created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
 	PRIMARY KEY(chat_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS captcha_challenges (
+	chat_id      INTEGER NOT NULL,
+	user_id      INTEGER NOT NULL,
+	attempt      INTEGER NOT NULL,
+	state        TEXT    NOT NULL,
+	deadline     INTEGER NOT NULL,
+	fail_action  TEXT    NOT NULL DEFAULT '',
+	tries        INTEGER NOT NULL DEFAULT 0,
+	ephemeral_id INTEGER NOT NULL DEFAULT 0,
+	message_id     INTEGER NOT NULL DEFAULT 0,
+	created_at     INTEGER NOT NULL,
+	updated_at     INTEGER,
+	mode           TEXT    NOT NULL DEFAULT 'button',
+	prompt_chat_id INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY(chat_id, user_id)
+);
 `
 
 // Migrate creates all tables if absent, then applies any additive column
@@ -120,6 +136,17 @@ func (db *DB) Migrate() error {
 		// Without this column the admin-chat undo button had nothing to
 		// pass and silently did nothing.
 		if err := addColumnIfMissing(tx, "incidents", "sender_chat_id",
+			"INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return err
+		}
+		// M2a created captcha_challenges without a mode or a prompt chat.
+		// button rows keep the default; join_request rows record where the
+		// button was sent so a later delete reaches the private chat.
+		if err := addColumnIfMissing(tx, "captcha_challenges", "mode",
+			"TEXT NOT NULL DEFAULT 'button'"); err != nil {
+			return err
+		}
+		if err := addColumnIfMissing(tx, "captcha_challenges", "prompt_chat_id",
 			"INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return err
 		}
