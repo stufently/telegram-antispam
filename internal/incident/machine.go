@@ -504,9 +504,16 @@ func (m *Machine) logOutcome(id int64, inc domain.Incident, what, detail string,
 	if err != nil {
 		tail = ": " + sanitize(err.Error())
 	}
-	log.Printf("chat=%d msg=%d sender=%s: %s incident=%d action=%s %s%s [%s]%s",
+	match := ""
+	for _, sig := range inc.Verdict.Signals {
+		if sig.Name == "fake_admin" && domain.IsFakeAdminDetail(sig.Detail) {
+			match = fmt.Sprintf(" fake_admin_match=%q", sig.Detail)
+			break
+		}
+	}
+	log.Printf("chat=%d msg=%d sender=%s: %s incident=%d action=%s %s%s [%s]%s%s",
 		inc.ChatID, msgID, inc.Sender.Kind, what, id, inc.Verdict.Action,
-		detail, parts, signalNames(inc.Verdict.Signals), tail)
+		detail, parts, signalNames(inc.Verdict.Signals), match, tail)
 }
 
 // outcomeOf names what enforcement actually achieved, because the two halves

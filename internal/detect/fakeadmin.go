@@ -42,6 +42,9 @@ type FakeAdminCfg struct {
 	Enabled        bool
 	SuspiciousTags []string
 	MaxDistance    int
+	// NameMatchSanction restores sanctions for display-name-only matches.
+	// The zero value leaves these coincidences for human review.
+	NameMatchSanction bool
 	// MinFuzzyLen is the minimum rune length (of the shorter string) required
 	// before fuzzy Levenshtein matching is allowed. Below it, only an exact
 	// match counts. Without this floor a distance-1 match on short strings
@@ -67,31 +70,61 @@ func (cfg FakeAdminCfg) nameMatch(a, b string) bool {
 	return LevenshteinWithin(a, b, cfg.MaxDistance)
 }
 
-// CheckFakeAdmin flags a non-admin sender whose name is a near-match to a
-// current admin's identity, or who carries a suspicious "admin-like" sender
-// tag. The caller guarantees the sender is a non-trusted, non-admin user
-// (spec §4 immunity), so any near-match to an admin identity — including an
-// exact identical string — is treated as impersonation.
+// FakeAdminStrength separates display-name coincidences from stronger evidence.
+type FakeAdminStrength uint8
+
+const (
+	FakeAdminNoMatch FakeAdminStrength = iota
+	FakeAdminNameOnly
+	FakeAdminStrong
+)
+
+// CheckFakeAdmin preserves the any-match API, including review-only matches.
+// The caller guarantees the sender is a non-trusted, non-admin user.
 func CheckFakeAdmin(m domain.Message, admins []AdminIdentity, cfg FakeAdminCfg) (domain.Signal, bool) {
+	sig, strength := ClassifyFakeAdmin(m, admins, cfg)
+	return sig, strength != FakeAdminNoMatch
+}
+
+// ClassifyFakeAdmin prefers the first username/custom-title match across all
+// admins over a suspicious tag, then the first display-name-only match.
+// The caller owns the trust and current-admin immunity gates.
+func ClassifyFakeAdmin(m domain.Message, admins []AdminIdentity, cfg FakeAdminCfg) (domain.Signal, FakeAdminStrength) {
 	if !cfg.Enabled {
-		return domain.Signal{}, false
+		return domain.Signal{}, FakeAdminNoMatch
 	}
 
-	senderUsername := strings.ToLower(m.Sender.Username)
-	senderDisplayName := strings.ToLower(m.Sender.DisplayName)
+	type field struct{ name, value string }
+	senderFields := []field{
+		{domain.FakeAdminFieldUsername, strings.ToLower(m.Sender.Username)},
+		{domain.FakeAdminFieldDisplayName, strings.ToLower(m.Sender.DisplayName)},
+	}
+	var nameOnly domain.Signal
 
 	for _, admin := range admins {
-		adminUsername := strings.ToLower(admin.Username)
-		adminDisplayName := strings.ToLower(admin.DisplayName)
-		adminCustomTitle := strings.ToLower(admin.CustomTitle)
-
-		for _, sender := range []string{senderUsername, senderDisplayName} {
-			if sender == "" {
+		adminFields := []field{
+			{domain.FakeAdminFieldUsername, strings.ToLower(admin.Username)},
+			{domain.FakeAdminFieldCustomTitle, strings.ToLower(admin.CustomTitle)},
+			{domain.FakeAdminFieldDisplayName, strings.ToLower(admin.DisplayName)},
+		}
+		for _, sender := range senderFields {
+			if sender.value == "" {
 				continue
 			}
-			for _, adminName := range []string{adminUsername, adminDisplayName, adminCustomTitle} {
-				if cfg.nameMatch(sender, adminName) {
-					return fakeAdminSignal(sender, adminName), true
+			for _, adminField := range adminFields {
+				if !cfg.nameMatch(sender.value, adminField.value) {
+					continue
+				}
+				sig := domain.Signal{
+					Name: "fake_admin",
+					Detail: domain.FakeAdminMatchDetail(sender.name, adminField.name,
+						admin.UserID, sender.value == adminField.value),
+				}
+				if adminField.name != domain.FakeAdminFieldDisplayName {
+					return sig, FakeAdminStrong
+				}
+				if nameOnly.Name == "" {
+					nameOnly = sig
 				}
 			}
 		}
@@ -101,17 +134,16 @@ func CheckFakeAdmin(m domain.Message, admins []AdminIdentity, cfg FakeAdminCfg) 
 	if senderTag != "" {
 		for _, tag := range cfg.SuspiciousTags {
 			if senderTag == strings.ToLower(tag) {
-				return domain.Signal{Name: "fake_admin", Detail: "suspicious sender tag: " + m.SenderTag}, true
+				return domain.Signal{Name: "fake_admin", Detail: domain.FakeAdminTagDetail}, FakeAdminStrong
 			}
 		}
 	}
 
-	return domain.Signal{}, false
-}
-
-func fakeAdminSignal(senderValue, adminValue string) domain.Signal {
-	return domain.Signal{
-		Name:   "fake_admin",
-		Detail: "name '" + senderValue + "' matches admin '" + adminValue + "'",
+	if nameOnly.Name != "" {
+		if cfg.NameMatchSanction {
+			return nameOnly, FakeAdminStrong
+		}
+		return nameOnly, FakeAdminNameOnly
 	}
+	return domain.Signal{}, FakeAdminNoMatch
 }

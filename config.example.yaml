@@ -194,6 +194,10 @@ detection:
   # impersonates a real chat admin (e.g. "Admin Support"). Turn the
   # whole detector on or off. Default: true.
   fake_admin_enabled: true
+  # Matching only an admin's display name sends evidence for review without
+  # sanctions. Username/custom title matches and suspicious sender tags still
+  # sanction. Set sanction to restore the previous display-name behavior.
+  fake_admin_name_match: review
   # Maximum edit distance between a display name and a real admin's name
   # for the detector to flag it as impersonation. 0 is not a meaningful
   # value (it would only match identical strings), so it is always

@@ -68,6 +68,12 @@ func formatCard(id int64, inc domain.Incident, chatTitle, note string, willAct b
 
 	b.WriteString("\nfrom: ")
 	b.WriteString(senderLine(inc.Sender))
+	for _, sig := range inc.Verdict.Signals {
+		if sig.Name == "fake_admin" && sig.Detail != "" {
+			fmt.Fprintf(&b, "\nmatch: %s", clip(sanitize(sig.Detail), maxCardNote))
+			break
+		}
+	}
 
 	return clip(b.String(), maxCard)
 }

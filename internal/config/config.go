@@ -174,6 +174,12 @@ const (
 	BayesScopePerChat = "per_chat"
 )
 
+// Values for Detection.FakeAdminNameMatch.
+const (
+	FakeAdminNameMatchReview   = "review"
+	FakeAdminNameMatchSanction = "sanction"
+)
+
 // BayesThreshold is a *float64 for the same nil-vs-zero reason: 0.0 is
 // this field's own documented default (a non-negative log-ratio is
 // spam-leaning, so threshold 0.0 flags any message the scorer favors
@@ -215,6 +221,10 @@ type Detection struct {
 	// for the usual nil-vs-false reason: an explicit "false" must not be
 	// re-promoted to the default "true". Default: true.
 	FakeAdminEnabled *bool `yaml:"fake_admin_enabled"`
+	// FakeAdminNameMatch chooses review (default) or sanction when only an
+	// admin's display name matches. Username, custom title and tag matches
+	// remain sanctionable in either mode.
+	FakeAdminNameMatch string `yaml:"fake_admin_name_match"`
 	// FakeAdminMaxDistance is the maximum edit distance between a
 	// display name and a trusted admin name for the fake-admin detector
 	// to flag it as an impersonation attempt. A plain int (not a
@@ -710,6 +720,9 @@ func (c *Config) applyDetectionDefaults() {
 		def := true
 		c.Detection.FakeAdminEnabled = &def
 	}
+	if c.Detection.FakeAdminNameMatch == "" {
+		c.Detection.FakeAdminNameMatch = FakeAdminNameMatchReview
+	}
 	if c.Detection.FakeAdminMaxDistance == 0 {
 		c.Detection.FakeAdminMaxDistance = 1
 	}
@@ -876,6 +889,12 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("detection.bayes_scope must be %s|%s, got %q",
 			BayesScopeGlobal, BayesScopePerChat, c.Detection.BayesScope)
+	}
+	switch c.Detection.FakeAdminNameMatch {
+	case "", FakeAdminNameMatchReview, FakeAdminNameMatchSanction:
+	default:
+		return fmt.Errorf("detection.fake_admin_name_match must be %s|%s, got %q",
+			FakeAdminNameMatchReview, FakeAdminNameMatchSanction, c.Detection.FakeAdminNameMatch)
 	}
 	// An enforce entry outside the allowlist can never fire (the allowlist
 	// gate drops the update before moderation), so it is an operator typo
