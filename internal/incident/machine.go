@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stufently/telegram-antispam/internal/domain"
+	"github.com/stufently/telegram-antispam/internal/store"
 	"github.com/stufently/telegram-antispam/internal/telegram"
 )
 
@@ -23,6 +24,7 @@ var errNothingCopied = errors.New("copyMessages copied nothing (message type not
 
 // Repo is the persistence surface the machine needs; *store.DB satisfies it.
 type Repo interface {
+	GetIncident(id int64) (store.IncidentRow, error)
 	InsertPending(chatID int64, messageID int, userID, senderChatID int64, dryRun bool, verdict domain.Verdict) (int64, bool, error)
 	SetIncidentState(id int64, s domain.IncidentState) error
 	AddEvidence(id int64, adminChatID int64, adminMessageIDs []int) error
@@ -104,15 +106,28 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 		// recorded. If that incident never sanctioned anyone — its evidence
 		// copy failed on a probabilistic verdict, or the chat was observing,
 		// or the verdict was review-only — the moderator's order still has
-		// to be carried out; see manualOverride.
+		// to be carried out; see override.
 		if isManual(inc.Verdict) {
-			return m.manualOverride(ctx, id, inc, freshOut)
+			return m.override(ctx, id, inc, freshOut)
+		}
+		// A review card must not immunize a later spam edit. Keep the live
+		// gate here: the manual override path deliberately bypasses dry-run.
+		if !inc.DryRun && !inc.Verdict.ReviewOnly && inc.Verdict.IsActionable() && inc.Verdict.Action != domain.ActionQuarantine {
+			return m.override(ctx, id, inc, freshOut)
 		}
 		// reprocess guard: this incident was already recorded, so evidence
 		// was already copied and any action already taken. Skip entirely.
 		return nil
 	}
 
+	_, err = m.process(ctx, id, inc)
+	return err
+}
+
+// process runs the evidence-first path for both a new incident and a claimed
+// review being promoted after an edit. Its result records whether enforcement
+// landed even when deletion or the final state write failed.
+func (m *Machine) process(ctx context.Context, id int64, inc domain.Incident) (sanctioned bool, err error) {
 	// An album's remaining ids, for a sanction applied later from the admin
 	// chat: the row itself is keyed on one of them. Best-effort — failing to
 	// record them must not stop the moderation that is about to happen; the
@@ -199,16 +214,16 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 			if sendErr != nil {
 				err := fmt.Errorf("evidence copy failed (%v), admins not notified either: %w", copyErr, sendErr)
 				m.logOutcome(id, inc, "not enforced", "stage=admin_notify", err)
-				return err
+				return sanctioned, err
 			}
 			err := fmt.Errorf("evidence copy failed, not acting on a probabilistic verdict: %w", copyErr)
 			m.logOutcome(id, inc, "not enforced", "stage=evidence_copy", err)
-			return err
+			return sanctioned, err
 		}
 		if sendErr != nil {
 			err := fmt.Errorf("send admin: %w", sendErr)
 			m.logOutcome(id, inc, "not enforced", "stage=admin_notify", err)
-			return err
+			return sanctioned, err
 		}
 	} else {
 		key := fmt.Sprintf("%d", id)
@@ -243,12 +258,12 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 		if _, err := m.port.SendAdmin(ctx, m.adminChatID, msg); err != nil {
 			err = fmt.Errorf("send admin: %w", err)
 			m.logOutcome(id, inc, "not enforced", "stage=admin_notify", err)
-			return err
+			return sanctioned, err
 		}
 		if err := m.repo.AddEvidence(id, m.adminChatID, adminIDs); err != nil {
 			err = fmt.Errorf("save evidence: %w", err)
 			m.logOutcome(id, inc, "not enforced", "stage=evidence_store", err)
-			return err
+			return sanctioned, err
 		}
 		m.setState(id, domain.StateEvidenced)
 	}
@@ -259,13 +274,14 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 	// the two disagreeing is a real mute nobody asked for.
 	if inc.DryRun || inc.Verdict.ReviewOnly {
 		m.logOutcome(id, inc, "not enforced", fmt.Sprintf("dry_run=%t review_only=%t", inc.DryRun, inc.Verdict.ReviewOnly), nil)
-		return m.repo.SetIncidentState(id, domain.StateDone)
+		return sanctioned, m.repo.SetIncidentState(id, domain.StateDone)
 	}
 
 	// 2-3. sanction, then delete the originals.
 	out := m.Enforce(ctx, id, inc)
+	sanctioned = out.Sanctioned
 	if out.Err != nil {
-		return out.Err
+		return sanctioned, out.Err
 	}
 
 	if m.EphemeralNotice && m.EphemeralText != "" && inc.Sender.UserID != 0 {
@@ -275,7 +291,7 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 		_, _ = m.port.SendEphemeral(ctx, inc.ChatID, inc.Sender.UserID, m.EphemeralText)
 	}
 
-	return m.repo.SetIncidentState(id, domain.StateDone)
+	return sanctioned, m.repo.SetIncidentState(id, domain.StateDone)
 }
 
 // actsWithoutEvidence reports whether a verdict may be enforced when the
@@ -304,7 +320,7 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 // drawn without an enforce button on purpose. So a manual verdict acts, and
 // the card says it acted. (A /spam that arrives AFTER an automatic verdict
 // already failed closed on the same message takes the other route to the same
-// end: manualOverride.)
+// end: override.)
 //
 // The boundary is exactly "who decided", not "how sure": every detector,
 // including the LLM, stamps Confidence 1.0, so nothing but the signal name
@@ -332,29 +348,32 @@ func isManual(v domain.Verdict) bool {
 	return false
 }
 
-// manualOverride applies a moderator's /spam or /ban to an incident that was
-// recorded earlier but never sanctioned anyone.
+// override reuses the atomic manual-override claim for a moderator's verdict
+// or for an automatic promotion of a review-only incident. Automatic callers
+// are gated by live mode in handle and by the stored quarantine action while
+// holding the claim. Quarantine is the persisted review marker: ReviewOnly is
+// not stored, and quarantine is not a configurable moderation action.
 //
-// Without it the most common manual case did nothing at all: the detector
-// flags a message, the evidence copy fails (a quiz poll — Telegram skips it
-// and reports success), a probabilistic verdict fails closed, and the
-// moderator who then types /spam hit the duplicate guard and was told the
-// message was "already handled". The same held for dry-run and review-only
-// incidents.
-//
-// The eligibility check and the claim are one conditional write
-// (store.ClaimManualOverride), so an incident that DID sanction — or that
-// another moderator is acting on right now — is never sanctioned twice; for
-// those this returns with fresh=false, exactly as before. Evidence is not
-// copied again: it is either already in the admin chat or it already failed
-// to arrive, and the moderator typed the command looking at the message.
-func (m *Machine) manualOverride(ctx context.Context, id int64, inc domain.Incident, freshOut *bool) error {
+// Manual verdicts may use the existing evidence: the moderator saw the message.
+// Automatic edits must run process again so fresh evidence and its card precede
+// enforcement, with the same fail-closed evidence policy as a new incident.
+func (m *Machine) override(ctx context.Context, id int64, inc domain.Incident, freshOut *bool) error {
 	claimed, ids, evidenceIDs, err := m.repo.ClaimManualOverride(id)
 	if err != nil {
 		return fmt.Errorf("claim manual override: %w", err)
 	}
 	if !claimed {
 		return nil
+	}
+	automatic := !isManual(inc.Verdict)
+	if automatic {
+		// Check AFTER claiming: an admin button may have enforced or decided
+		// the incident since InsertPending observed the duplicate.
+		row, readErr := m.repo.GetIncident(id)
+		if readErr != nil || row.Action != domain.ActionQuarantine {
+			finishErr := m.repo.FinishManualOverride(id, inc.Verdict, false)
+			return errors.Join(readErr, finishErr)
+		}
 	}
 	if freshOut != nil {
 		*freshOut = true
@@ -364,13 +383,22 @@ func (m *Machine) manualOverride(ctx context.Context, id int64, inc domain.Incid
 	if len(ids) > 0 {
 		inc.MessageIDs = ids
 	}
-	log.Printf("incident %d: manual override (%s) of an incident that applied no sanction", id, inc.Verdict.Reason)
-	out := m.Enforce(ctx, id, inc)
+	var out Outcome
+	if automatic {
+		out.Sanctioned, out.Err = m.process(ctx, id, inc)
+	} else {
+		log.Printf("incident %d: manual override (%s) of an incident that applied no sanction", id, inc.Verdict.Reason)
+		out = m.Enforce(ctx, id, inc)
+	}
 	if ferr := m.repo.FinishManualOverride(id, inc.Verdict, out.Sanctioned); ferr != nil {
 		// The claim stays taken, and with it the only guard against a
 		// second sanction; the cost is undo buttons that answer "already
 		// decided" until an operator looks.
 		log.Printf("incident %d: recording manual override failed: %v", id, ferr)
+	}
+	if automatic {
+		// process already sent a new card and the optional notice.
+		return out.Err
 	}
 	if out.Sanctioned && out.Err == nil {
 		m.setState(id, domain.StateDone)
