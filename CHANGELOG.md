@@ -8,6 +8,8 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-10-05
+
 ### Fixed
 
 - Manual overrides keep the decision claim until the replacement card is
