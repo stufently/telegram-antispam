@@ -2,6 +2,7 @@ package incident
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"reflect"
@@ -291,5 +292,102 @@ func TestPromotionInFlightKeepsNewCardButtons(t *testing.T) {
 	pressTailCard(t, h, id, 20, "fp")
 	if trained != 1 || count(f.Calls(), "UnrestrictMember") != 1 || len(p.markups) != 0 {
 		t.Fatalf("new card must stay usable: trained=%d markups=%+v calls=%v", trained, p.markups, f.Calls())
+	}
+}
+
+func TestInFlightCardDeleteEvidenceKeepsButtons(t *testing.T) {
+	db, f, _, _, edited := newEditRig(t)
+	id := onlyIncidentID(t, db)
+	p := &tailPort{Port: f}
+	m := New(p, db, 999)
+	m.SetButtons(admin.Buttons)
+	h := admin.NewHandler(p, db, map[int64]bool{7: true})
+	trained := 0
+	h.SetTrainer(func(int64, string, []string) error { trained++; return nil })
+	pressed := false
+	p.duringSend = func() {
+		// Card 20 is published but not registered: deletion takes no claim.
+		pressed = true
+		pressTailCard(t, h, id, 20, "delevi")
+		if !strings.Contains(p.reply, "устарело") || len(p.markups) != 0 || len(p.deletions) != 0 {
+			t.Fatalf("in-flight delete: reply=%q markups=%+v deletions=%+v", p.reply, p.markups, p.deletions)
+		}
+	}
+	f.SendAdminID = 20
+	requireEditPromotion(t, m, f, edited)
+	if !pressed {
+		t.Fatal("send hook did not run")
+	}
+	pressTailCard(t, h, id, 20, "fp")
+	if trained != 1 || count(f.Calls(), "UnrestrictMember") != 1 || len(p.markups) != 0 {
+		t.Fatalf("new card must stay usable: trained=%d markups=%+v calls=%v", trained, p.markups, f.Calls())
+	}
+}
+
+func TestSendFailureKeepsEvidenceCopies(t *testing.T) {
+	_, f, m := newOverrideRig(t)
+	f.SendAdminErr = errors.New("send unavailable")
+	if err := m.Handle(context.Background(), autoIncident(false)); err == nil {
+		t.Fatal("send failure must be reported")
+	}
+	if n := count(f.Calls(), "DeleteMessages"); n != 0 {
+		t.Fatalf("plain send failure must not delete evidence copies: %v", f.Calls())
+	}
+}
+
+func TestManualOverrideFinishesIncidentState(t *testing.T) {
+	db, f, m := newOverrideRig(t)
+	f.SendAdminID = 10
+	if err := m.Handle(context.Background(), autoIncident(true)); err != nil {
+		t.Fatal(err)
+	}
+	id := onlyIncidentID(t, db)
+	f.SendAdminID = 20
+	if fresh, err := m.HandleReport(context.Background(), manualIncident("manual_spam", domain.ActionDeleteMute)); err != nil || !fresh {
+		t.Fatalf("override: fresh=%v err=%v", fresh, err)
+	}
+	if st, err := db.GetIncidentState(id); err != nil || st != domain.StateDone {
+		t.Fatalf("manual override state = %q (%v), want done", st, err)
+	}
+}
+
+func TestDecidedCardLookupErrorIsReported(t *testing.T) {
+	db, f, m, _, edited := newEditRig(t)
+	f.SendAdminID = 20
+	requireEditPromotion(t, m, f, edited)
+	id := onlyIncidentID(t, db)
+	p := &tailPort{Port: f}
+	h := admin.NewHandler(p, db, map[int64]bool{7: true})
+	h.SetTrainer(func(int64, string, []string) error { return nil })
+	pressTailCard(t, h, id, 20, "confirm")
+	if err := db.Write(func(tx *sql.Tx) error {
+		_, err := tx.Exec("DROP TABLE incident_cards")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p.reply = ""
+	err := h.Handle(context.Background(), admin.Callback{Data: fmt.Sprintf("fp:%d", id), PresserID: 7, AdminChatID: 999, MessageID: 0})
+	if err == nil || p.reply != "" {
+		t.Fatalf("card lookup failure must surface: err=%v reply=%q", err, p.reply)
+	}
+}
+
+func TestStaleCardKeepsSettledDecision(t *testing.T) {
+	db, f, m, _, edited := newEditRig(t)
+	f.SendAdminID = 20
+	requireEditPromotion(t, m, f, edited)
+	id := onlyIncidentID(t, db)
+	p := &tailPort{Port: f}
+	h := admin.NewHandler(p, db, map[int64]bool{7: true})
+	trained := 0
+	h.SetTrainer(func(int64, string, []string) error { trained++; return nil })
+	pressTailCard(t, h, id, 20, "confirm")
+	pressTailCard(t, h, id, 0, "confirm")
+	if !strings.Contains(p.reply, "устарело") || trained != 1 {
+		t.Fatalf("stale confirm: reply=%q trained=%d", p.reply, trained)
+	}
+	if got := readAudit(t, db, id).decision; got != string(admin.ActConfirmSpam) {
+		t.Fatalf("stale press released the settled decision: %q", got)
 	}
 }

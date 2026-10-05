@@ -264,6 +264,12 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 		if err != nil {
 			return "", err
 		}
+		if act == ActDeleteEvidence {
+			// Deletion takes no claim, so it cannot tell a retired card from
+			// one Telegram has published but the machine has not registered
+			// yet. Leave the keyboard: stripping it could orphan the new card.
+			return staleText, nil
+		}
 		return h.staleCard(ctx, cb), nil
 	}
 
@@ -375,8 +381,10 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 
 func (h *Handler) staleCard(ctx context.Context, cb Callback) string {
 	_ = h.port.EditAdminMarkup(ctx, cb.AdminChatID, cb.MessageID, nil)
-	return "устарело, см. новую карточку"
+	return staleText
 }
+
+const staleText = "устарело, см. новую карточку"
 
 // enforceReply says what actually happened, because the two halves of
 // enforcement fail independently and a moderator who is told "done" while
