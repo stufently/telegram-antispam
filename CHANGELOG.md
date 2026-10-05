@@ -8,6 +8,8 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-05
+
 ### Changed
 
 - CAS now checks users individually through `/check`, with a 24h positive /
@@ -16,6 +18,8 @@ Entries start life under **Unreleased** and are moved under a version heading wh
   requests for 60s. Outcomes are counted by
   `tg_antispam_cas_check_total{result}`. LOLS remains a scheduled snapshot
   and is checked first.
+- CAS checks share the shutdown drain deadline: once it expires, in-flight
+  checks are cancelled and new ones fail open without a request.
 
 ### Removed
 
