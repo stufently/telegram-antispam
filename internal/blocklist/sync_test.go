@@ -19,130 +19,100 @@ func scriptedFetch(ids map[string][]int64, errs map[string]error) fetchFn {
 	}
 }
 
-func TestRefreshFullBothSucceedUnion(t *testing.T) {
+func TestRefreshFullAndDeltaUnion(t *testing.T) {
 	b := New()
-	b.cfg = Config{LolsFullURL: "lols", CasFullURL: "cas"}
-	b.fetch = scriptedFetch(map[string][]int64{
-		"lols": {1, 2, 3},
-		"cas":  {3, 4, 5},
-	}, nil)
-
-	if err := b.RefreshFull(context.Background()); err != nil {
-		t.Fatalf("RefreshFull() error = %v, want nil", err)
-	}
-
-	for _, id := range []int64{1, 2, 3, 4, 5} {
-		if !b.Listed(id) {
-			t.Errorf("Listed(%d) = false, want true (union)", id)
-		}
-	}
-	if b.Len() != 5 {
-		t.Fatalf("Len() = %d, want 5", b.Len())
-	}
-}
-
-func TestRefreshFullOneFailsPartialAppliedWithError(t *testing.T) {
-	b := New()
-	b.cfg = Config{LolsFullURL: "lols", CasFullURL: "cas"}
-	b.fetch = scriptedFetch(map[string][]int64{
-		"cas": {10, 20},
-	}, map[string]error{
-		"lols": errors.New("lols down"),
-	})
-
-	err := b.RefreshFull(context.Background())
-	if err == nil {
-		t.Fatal("RefreshFull() error = nil, want non-nil (informational, partial failure)")
-	}
-
-	if !b.Listed(10) || !b.Listed(20) {
-		t.Error("partial snapshot should contain the succeeding source's ids")
-	}
-	if b.Len() != 2 {
-		t.Fatalf("Len() = %d, want 2 (only cas ids)", b.Len())
-	}
-}
-
-func TestRefreshFullPartialFailureKeepsFailedSourceLastGood(t *testing.T) {
-	b := New()
-	b.cfg = Config{LolsFullURL: "lols", CasFullURL: "cas"}
-	b.fetch = scriptedFetch(map[string][]int64{
-		"lols": {1, 2},
-		"cas":  {10, 20},
-	}, nil)
+	b.cfg = Config{LolsFullURL: "lols", LolsDeltaURL: "delta"}
+	b.fetch = scriptedFetch(map[string][]int64{"lols": {3, 1, 2, 3}, "delta": {3, 4, 5}}, nil)
 	if err := b.RefreshFull(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-
-	// CAS advances while LOLS is unavailable. The new CAS list replaces the
-	// old CAS contribution, but the last-good LOLS contribution must survive.
-	b.fetch = scriptedFetch(map[string][]int64{
-		"cas": {30},
-	}, map[string]error{
-		"lols": errors.New("lols down"),
-	})
-	if err := b.RefreshFull(context.Background()); err == nil {
-		t.Fatal("expected informational partial-refresh error")
-	}
-
-	for _, id := range []int64{1, 2, 30} {
-		if !b.Listed(id) {
-			t.Errorf("last-good partial snapshot lost id %d", id)
-		}
-	}
-	if b.Listed(10) || b.Listed(20) {
-		t.Fatal("successful CAS refresh did not replace its own old contribution")
-	}
-}
-
-func TestRefreshFullPartialFailurePreservesAccumulatedDelta(t *testing.T) {
-	b := New()
-	b.cfg = Config{LolsFullURL: "lols", CasFullURL: "cas", LolsDeltaURL: "delta"}
-	b.fetch = scriptedFetch(map[string][]int64{
-		"lols": {1},
-		"cas":  {10},
-	}, nil)
-	if err := b.RefreshFull(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	b.fetch = scriptedFetch(map[string][]int64{"delta": {2}}, nil)
 	if err := b.RefreshDelta(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-
-	b.fetch = scriptedFetch(map[string][]int64{"cas": {20}}, map[string]error{
-		"lols": errors.New("lols down"),
-	})
-	if err := b.RefreshFull(context.Background()); err == nil {
-		t.Fatal("expected informational partial-refresh error")
-	}
-	for _, id := range []int64{1, 2, 20} {
+	for _, id := range []int64{1, 2, 3, 4, 5} {
 		if !b.Listed(id) {
-			t.Errorf("partial refresh lost id %d", id)
+			t.Errorf("Listed(%d)=false want true (union)", id)
 		}
+	}
+	if b.Len() != 5 {
+		t.Fatalf("Len()=%d want 5", b.Len())
 	}
 }
 
-func TestRefreshFullBothFailKeepsLastGood(t *testing.T) {
+func TestRefreshFullFailureAllowsDelta(t *testing.T) {
 	b := New()
-	b.cfg = Config{LolsFullURL: "lols", CasFullURL: "cas"}
+	b.cfg = Config{LolsFullURL: "lols", LolsDeltaURL: "delta"}
+	b.fetch = scriptedFetch(map[string][]int64{"delta": {10, 20}}, map[string]error{"lols": errors.New("lols down")})
+	if err := b.RefreshFull(context.Background()); err == nil {
+		t.Fatal("expected full refresh error")
+	}
+	if b.Len() != 0 {
+		t.Fatal("failed bootstrap populated snapshot")
+	}
+	if err := b.RefreshDelta(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !b.Listed(10) || !b.Listed(20) || b.Len() != 2 {
+		t.Fatal("delta did not populate snapshot during full-list outage")
+	}
+}
+
+func TestRefreshFullFailureKeepsLastGoodWhileDeltaAdvances(t *testing.T) {
+	b := New()
+	b.cfg = Config{LolsFullURL: "lols", LolsDeltaURL: "delta"}
+	b.fetch = scriptedFetch(map[string][]int64{"lols": {1, 2}, "delta": {10, 20}}, nil)
+	if err := b.RefreshFull(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.RefreshDelta(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	b.fetch = scriptedFetch(map[string][]int64{"delta": {30}}, map[string]error{"lols": errors.New("lols down")})
+	if err := b.RefreshFull(context.Background()); err == nil {
+		t.Fatal("expected full refresh error")
+	}
+	if err := b.RefreshDelta(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{1, 2, 10, 20, 30} {
+		if !b.Listed(id) {
+			t.Errorf("last-good full/delta snapshot lost id %d", id)
+		}
+	}
+	if b.Len() != 5 {
+		t.Fatalf("Len()=%d want 5", b.Len())
+	}
+}
+
+func TestRefreshFullFailurePreservesAccumulatedDelta(t *testing.T) {
+	b := New()
+	b.cfg = Config{LolsFullURL: "lols", LolsDeltaURL: "delta"}
+	b.fetch = scriptedFetch(map[string][]int64{"lols": {1}, "delta": {2}}, nil)
+	if err := b.RefreshFull(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.RefreshDelta(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	b.fetch = scriptedFetch(nil, map[string]error{"lols": errors.New("lols down")})
+	if err := b.RefreshFull(context.Background()); err == nil {
+		t.Fatal("expected full refresh error")
+	}
+	if !b.Listed(1) || !b.Listed(2) || b.Len() != 2 {
+		t.Fatal("failed full refresh lost accumulated delta")
+	}
+}
+
+func TestRefreshFullFailureKeepsLastGood(t *testing.T) {
+	b := New()
+	b.cfg = Config{LolsFullURL: "lols"}
 	b.Swap(BuildSet([]int64{111}))
-
-	b.fetch = scriptedFetch(nil, map[string]error{
-		"lols": errors.New("lols down"),
-		"cas":  errors.New("cas down"),
-	})
-
-	err := b.RefreshFull(context.Background())
-	if err == nil {
-		t.Fatal("RefreshFull() error = nil, want non-nil when both sources fail")
+	b.fetch = scriptedFetch(nil, map[string]error{"lols": errors.New("lols down")})
+	if err := b.RefreshFull(context.Background()); err == nil {
+		t.Fatal("expected full refresh error")
 	}
-
-	if !b.Listed(111) {
-		t.Error("prior snapshot lost after both-fail refresh; fail-open violated")
-	}
-	if b.Len() != 1 {
-		t.Fatalf("Len() = %d, want 1 (unchanged snapshot)", b.Len())
+	if !b.Listed(111) || b.Len() != 1 {
+		t.Fatal("prior snapshot lost after failed refresh")
 	}
 }
 
@@ -199,14 +169,12 @@ func TestRunBootstrapsAndStopsOnCancel(t *testing.T) {
 	b := New()
 	b.cfg = Config{
 		LolsFullURL:   "lols",
-		CasFullURL:    "cas",
 		LolsDeltaURL:  "delta",
 		FullInterval:  time.Hour,
 		DeltaInterval: time.Hour,
 	}
 	b.fetch = scriptedFetch(map[string][]int64{
 		"lols": {1, 2},
-		"cas":  {3},
 	}, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -224,46 +192,46 @@ func TestRunBootstrapsAndStopsOnCancel(t *testing.T) {
 	}
 }
 
-// TestRefreshFullEmptyBothKeepsLastGood guards the CDN-challenge footgun: a
-// 2xx response that parses to zero ids must be treated as a FAILURE, never a
-// successful empty list — otherwise both sources returning empty would swap
-// in an empty set and silently wipe the last-good snapshot (total, silent
-// loss of protection). The real LOLS/CAS full lists are never empty.
-func TestRefreshFullEmptyBothKeepsLastGood(t *testing.T) {
+// A 2xx response with zero parsed IDs (e.g. a CDN challenge) must never
+// erase the last-good LOLS snapshot.
+func TestRefreshFullEmptyKeepsLastGood(t *testing.T) {
 	b := New()
-	b.cfg = Config{LolsFullURL: "lols", CasFullURL: "cas"}
+	b.cfg = Config{LolsFullURL: "lols"}
 	b.Swap(BuildSet([]int64{111, 222}))
-
-	// Both sources succeed at the HTTP level but parse to zero ids.
-	b.fetch = scriptedFetch(map[string][]int64{"lols": {}, "cas": {}}, nil)
-
-	err := b.RefreshFull(context.Background())
-	if err == nil {
-		t.Fatal("RefreshFull() error = nil, want non-nil when both sources return empty")
+	b.fetch = scriptedFetch(map[string][]int64{"lols": {}}, nil)
+	if err := b.RefreshFull(context.Background()); err == nil {
+		t.Fatal("expected error for empty full list")
 	}
 	if !b.Listed(111) || !b.Listed(222) || b.Len() != 2 {
-		t.Fatalf("empty-both refresh wiped snapshot (Len=%d); fail-open violated", b.Len())
+		t.Fatal("empty full refresh wiped snapshot")
 	}
 }
 
-// TestRefreshFullOneEmptyOtherRealSwapsToReal: one source empty (treated as
-// failure), the other returns a real list ⇒ swap to the real one, with an
-// informational error for the empty source.
-func TestRefreshFullOneEmptyOtherRealSwapsToReal(t *testing.T) {
+func TestRefreshFullEmptyAllowsDeltaThenFullSupersedesDelta(t *testing.T) {
 	b := New()
-	b.cfg = Config{LolsFullURL: "lols", CasFullURL: "cas"}
-	b.Swap(BuildSet([]int64{999}))
-
-	b.fetch = scriptedFetch(map[string][]int64{"lols": {}, "cas": {7, 8}}, nil)
-
-	err := b.RefreshFull(context.Background())
-	if err == nil {
-		t.Fatal("expected informational error for the empty source")
+	b.cfg = Config{LolsFullURL: "lols", LolsDeltaURL: "delta"}
+	b.fetch = scriptedFetch(map[string][]int64{"lols": {999}, "delta": {7, 8}}, nil)
+	if err := b.RefreshFull(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	if !b.Listed(7) || !b.Listed(8) {
-		t.Fatal("expected snapshot to contain the real (cas) ids")
+	b.fetch = scriptedFetch(map[string][]int64{"lols": {}, "delta": {7, 8}}, nil)
+	if err := b.RefreshFull(context.Background()); err == nil {
+		t.Fatal("expected error for empty full list")
 	}
-	if b.Listed(999) {
-		t.Error("prior-only id should be gone after a partial full refresh swap")
+	if err := b.RefreshDelta(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !b.Listed(999) || !b.Listed(7) || !b.Listed(8) || b.Len() != 3 {
+		t.Fatal("delta lost last-good full contribution")
+	}
+	b.fetch = scriptedFetch(map[string][]int64{"lols": {7, 9}, "delta": {}}, nil)
+	if err := b.RefreshFull(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.RefreshDelta(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !b.Listed(7) || !b.Listed(9) || b.Listed(8) || b.Listed(999) || b.Len() != 2 {
+		t.Fatal("successful full refresh failed to supersede old full and delta")
 	}
 }

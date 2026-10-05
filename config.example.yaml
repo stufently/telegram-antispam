@@ -269,13 +269,12 @@ detection:
   # ephemeral_notice_enabled is true. Default: "" (no default text).
   ephemeral_notice_text: ""
 
-# blocklist configures the M6 external blocklist syncer (internal/blocklist),
-# which pulls spam user-ID lists from lols.bot and cas.chat on a schedule
-# and checks new members/messages against the merged set. Every field
-# below is optional; unset fields fall back to the defaults shown here as
-# comments. Durations are Go duration strings (e.g. "6h", "30s").
+# blocklist checks a scheduled LOLS snapshot first, then CAS per user with
+# a bounded in-memory cache. LOLS refresh failures retain the last-good data;
+# CAS errors fail open (no blocklist hit). Every field is optional; defaults
+# are shown below. Durations are Go duration strings (e.g. "6h", "30s").
 blocklist:
-  # Turn the whole M6 blocklist syncer on or off. Default: true.
+  # Turn both LOLS snapshots and CAS checks on or off. Default: true.
   enabled: true
   # Full lols.bot ban list, re-fetched every full_refresh interval.
   # Default: "https://lols.bot/spam/banlist.txt".
@@ -283,17 +282,31 @@ blocklist:
   # Incremental (last-hour) lols.bot ban list, re-fetched every
   # delta_refresh interval. Default: "https://lols.bot/spam/banlist-1h.txt".
   lols_delta_url: "https://lols.bot/spam/banlist-1h.txt"
-  # Full Combot Anti-Spam (CAS) ban list, re-fetched every full_refresh
-  # interval. Default: "https://api.cas.chat/export.csv".
-  cas_full_url: "https://api.cas.chat/export.csv"
-  # How often the full ban lists (lols_full_url, cas_full_url) are
-  # re-fetched. Default: 6h.
+  # Enable cached per-user CAS checks after a LOLS miss. Default: true.
+  cas_check_enabled: true
+  # CAS endpoint (only user_id is sent; no API key required).
+  # Default: "https://api.cas.chat/check".
+  cas_check_url: "https://api.cas.chat/check"
+  # How long a listed CAS result is cached. Default: 24h.
+  cas_positive_ttl: 24h
+  # How long a clean CAS result is cached. Default: 6h.
+  cas_negative_ttl: 6h
+  # Whole CAS request timeout, including response body. Default: 2s.
+  cas_timeout: 2s
+  # Local request limit (not a published CAS requirement). No waiting:
+  # exceeding it fails open. Default: 10 requests per second.
+  cas_rate_per_sec: 10
+  # Allowed CAS request burst. Default: 20.
+  cas_burst: 20
+  # CAS cache holds at most 100000 entries. Errors are never cached.
+  # Three consecutive errors pause requests for 60s; valid cached results
+  # remain usable. Counters: tg_antispam_cas_check_total{result}, with
+  # listed, clean, error, rate_limited and breaker_open outcomes.
+  # How often the full LOLS ban list is re-fetched. Default: 6h.
   full_refresh: 6h
-  # How often the incremental ban list (lols_delta_url) is re-fetched.
-  # Default: 1h.
+  # How often the incremental ban list is re-fetched. Default: 1h.
   delta_refresh: 1h
-  # Per-request timeout used when fetching any of the blocklist sources
-  # above. Default: 30s.
+  # Per-request timeout for LOLS snapshots. Default: 30s.
   http_timeout: 30s
 
 # ops configures the M7 observability surface: the metrics HTTP server and

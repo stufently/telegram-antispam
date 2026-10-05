@@ -8,11 +8,10 @@ import (
 	"time"
 )
 
-// Config holds the URLs and timing parameters the background syncer needs.
+// Config holds the LOLS URLs and timing parameters the background syncer needs.
 type Config struct {
 	LolsFullURL   string
 	LolsDeltaURL  string
-	CasFullURL    string
 	FullInterval  time.Duration
 	DeltaInterval time.Duration
 	HTTPTimeout   time.Duration
@@ -22,18 +21,17 @@ type Config struct {
 // can script fetch behavior without making real HTTP calls.
 type fetchFn func(ctx context.Context, url string) ([]int64, error)
 
-// Blocklist holds the current blocklist snapshot behind an atomic pointer so
+// Blocklist holds the current LOLS snapshot behind an atomic pointer so
 // a background syncer can swap it race-free while readers (e.g. the
 // moderation cascade) look up user IDs concurrently.
 type Blocklist struct {
 	snap atomic.Pointer[Set]
 
 	// refreshMu serializes full/delta refreshes and protects the last-good
-	// data kept separately for each source. Keeping sources separate prevents
-	// a partial outage from erasing the failed provider's previous IDs.
+	// LOLS full and accumulated delta data. A failed full refresh must not
+	// erase either contribution.
 	refreshMu sync.Mutex
 	lolsFull  []int64
-	casFull   []int64
 	lolsDelta []int64
 
 	cfg    Config

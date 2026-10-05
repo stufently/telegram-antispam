@@ -2,7 +2,7 @@
 
 > **Антиспам-бот для Telegram-чатов** — лёгкая, самодостаточная альтернатива tg-spam на Go.
 > A fast, self-hosted **Telegram anti-spam / moderation bot** written in Go: a multi-stage
-> detection cascade, shared CAS/LOLS blocklists, a Bayesian spam filter, and an optional
+> detection cascade, LOLS snapshots and cached CAS checks, a Bayesian spam filter, and an optional
 > LLM check — no CGO, one static binary, SQLite storage.
 
 [![CI](https://github.com/stufently/telegram-antispam/actions/workflows/ci.yml/badge.svg)](https://github.com/stufently/telegram-antispam/actions/workflows/ci.yml)
@@ -30,9 +30,11 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
   optional LLM. First hit wins; admins are always immune.
 - **Text normalizer / de-obfuscation** — folds homoglyphs, zero-width characters, and
   look-alike Unicode so `Ｃ𝗮𝘀іno` reads as `casino`.
-- **Shared blocklists (CAS + LOLS)** — pulls the Combot Anti-Spam (`cas.chat`) and
-  `lols.bot` ban lists on a schedule into an atomically swapped in-memory set; each source's
-  last-good data survives a partial outage, so refresh failures never block your chat.
+- **Shared blocklists (CAS + LOLS)** — checks an atomically swapped `lols.bot` snapshot
+  first, retaining its last-good full/delta data on refresh failure. Combot Anti-Spam
+  (`cas.chat`) is checked per user through `/check`, with a bounded cache (listed: 24h,
+  clean: 6h), a 2s timeout and a local 10 requests/s limit. CAS errors fail open;
+  three consecutive errors pause requests for 60s while valid cached results remain usable.
 - **Bayesian spam filter** — log-space naive Bayes with Laplace smoothing, an idempotent
   `import` command to train from labeled samples, and offline precision/recall calibration.
 - **Fake-admin / impersonation detection** — bounded Levenshtein match against the real
@@ -299,7 +301,7 @@ A clean, testable layering keeps the detection core pure and the side effects at
 | `internal/detect` | **Pure** detection cascade — normalizer, rules, behavioral, Bayes, fake-admin (stdlib + `x/text` only) |
 | `internal/telegram` | The only package that talks to the Telegram Bot API; rate-limited outbound queue with 429 retry |
 | `internal/incident` | Evidence-before-action state machine with durable incident/audit state |
-| `internal/blocklist` | CAS + LOLS syncer with atomic snapshots and per-source last-good data |
+| `internal/blocklist` | LOLS atomic snapshots with last-good data; cached, fail-open CAS checks |
 | `internal/llm` | Opt-in OpenAI / Anthropic borderline adjudication with consensus |
 | `internal/store` | SQLite (WAL, single writer), migrations, audit log |
 | `internal/ops` | Prometheus metrics, `/healthz`, daily admin digest |

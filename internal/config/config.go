@@ -315,14 +315,13 @@ type Detection struct {
 	EphemeralNoticeText string `yaml:"ephemeral_notice_text"`
 }
 
-// Blocklist configures the M6 external blocklist syncer, which pulls spam
-// user-ID lists from lols.bot and cas.chat on a schedule and checks new
-// members/messages against the merged set (internal/blocklist).
+// Blocklist configures LOLS snapshots and cached per-user CAS checks for new
+// members/messages (internal/blocklist).
 //
 // Enabled is a *bool for the usual nil-vs-false reason: an explicit "false"
 // must not be re-promoted to the default "true". Default: true.
 type Blocklist struct {
-	// Enabled turns the whole M6 blocklist syncer on or off. Default: true.
+	// Enabled turns both LOLS snapshots and CAS checks on or off. Default: true.
 	Enabled *bool `yaml:"enabled"`
 
 	// LolsFullURL is the source of the full lols.bot ban list, fetched
@@ -332,19 +331,27 @@ type Blocklist struct {
 	// ban list, fetched every DeltaRefresh interval.
 	// Default: "https://lols.bot/spam/banlist-1h.txt".
 	LolsDeltaURL string `yaml:"lols_delta_url"`
-	// CasFullURL is the source of the full Combot Anti-Spam (CAS) ban
-	// list, fetched every FullRefresh interval.
-	// Default: "https://api.cas.chat/export.csv".
-	CasFullURL string `yaml:"cas_full_url"`
+	// CasCheckEnabled enables per-user CAS checks. Default: true.
+	CasCheckEnabled *bool `yaml:"cas_check_enabled"`
+	// CasCheckURL is the CAS endpoint. Default: "https://api.cas.chat/check".
+	CasCheckURL string `yaml:"cas_check_url"`
+	// CasPositiveTTL caches listed users. Default: 24h.
+	CasPositiveTTL Duration `yaml:"cas_positive_ttl"`
+	// CasNegativeTTL caches clean users. Default: 6h.
+	CasNegativeTTL Duration `yaml:"cas_negative_ttl"`
+	// CasTimeout bounds a whole CAS request. Default: 2s.
+	CasTimeout Duration `yaml:"cas_timeout"`
+	// CasRatePerSec caps CAS requests without waiting. Default: 10.
+	CasRatePerSec float64 `yaml:"cas_rate_per_sec"`
+	// CasBurst allows a short burst of CAS requests. Default: 20.
+	CasBurst int `yaml:"cas_burst"`
 
-	// FullRefresh is how often the full ban lists (LolsFullURL,
-	// CasFullURL) are re-fetched. Default: 6h.
+	// FullRefresh is how often the full LOLS list is re-fetched. Default: 6h.
 	FullRefresh Duration `yaml:"full_refresh"`
 	// DeltaRefresh is how often the incremental ban list (LolsDeltaURL)
 	// is re-fetched. Default: 1h.
 	DeltaRefresh Duration `yaml:"delta_refresh"`
-	// HTTPTimeout is the per-request timeout used when fetching any of
-	// the blocklist sources above. Default: 30s.
+	// HTTPTimeout is the per-request timeout for LOLS snapshots. Default: 30s.
 	HTTPTimeout Duration `yaml:"http_timeout"`
 }
 
@@ -748,11 +755,10 @@ func (c *Config) applyDetectionDefaults() {
 }
 
 // applyBlocklistDefaults fills in sane defaults for any Blocklist field
-// left unset in the YAML. Enabled is treated as unset only when nil, so an
+// left unset in the YAML. Booleans are treated as unset only when nil, so an
 // explicit "false" in the config file is always honored rather than
-// clobbered (see Blocklist doc). The URL strings and Duration fields are
-// treated as unset at their zero value, since an empty URL or a 0 interval
-// is not a documented, meaningful configuration for any of them.
+// clobbered (see Blocklist doc). Empty URLs and nonpositive durations/numbers
+// use defaults; they are not meaningful configurations for these fields.
 func (c *Config) applyBlocklistDefaults() {
 	if c.Blocklist.Enabled == nil {
 		def := true
@@ -764,8 +770,27 @@ func (c *Config) applyBlocklistDefaults() {
 	if c.Blocklist.LolsDeltaURL == "" {
 		c.Blocklist.LolsDeltaURL = "https://lols.bot/spam/banlist-1h.txt"
 	}
-	if c.Blocklist.CasFullURL == "" {
-		c.Blocklist.CasFullURL = "https://api.cas.chat/export.csv"
+	if c.Blocklist.CasCheckEnabled == nil {
+		def := true
+		c.Blocklist.CasCheckEnabled = &def
+	}
+	if c.Blocklist.CasCheckURL == "" {
+		c.Blocklist.CasCheckURL = "https://api.cas.chat/check"
+	}
+	if c.Blocklist.CasPositiveTTL <= 0 {
+		c.Blocklist.CasPositiveTTL = Duration(24 * time.Hour)
+	}
+	if c.Blocklist.CasNegativeTTL <= 0 {
+		c.Blocklist.CasNegativeTTL = Duration(6 * time.Hour)
+	}
+	if c.Blocklist.CasTimeout <= 0 {
+		c.Blocklist.CasTimeout = Duration(2 * time.Second)
+	}
+	if c.Blocklist.CasRatePerSec <= 0 {
+		c.Blocklist.CasRatePerSec = 10
+	}
+	if c.Blocklist.CasBurst <= 0 {
+		c.Blocklist.CasBurst = 20
 	}
 	// Intervals are clamped at <= 0 (not just == 0): a negative full/delta
 	// interval would panic time.NewTicker inside the syncer goroutine and

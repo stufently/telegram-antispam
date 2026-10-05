@@ -8,6 +8,21 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+### Changed
+
+- CAS now checks users individually through `/check`, with a 24h positive /
+  6h negative cache, a 2s request timeout and a local 10 requests/s limit
+  (burst 20). Checks fail open on errors; three consecutive errors pause
+  requests for 60s. Outcomes are counted by
+  `tg_antispam_cas_check_total{result}`. LOLS remains a scheduled snapshot
+  and is checked first.
+
+### Removed
+
+- `cas_full_url` and CAS `export.csv` downloads: CAS discontinued the export
+  endpoint, which now returns HTTP 404. Old configurations using this key
+  receive the existing unknown-key warning.
+
 ## [0.19.1] - 2026-10-05
 
 ### Fixed

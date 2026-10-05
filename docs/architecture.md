@@ -257,12 +257,22 @@ chat does not start the button captcha. An admin who approves the request
 cancels the row and the private button is deleted. The bot needs
 `can_invite_users`.
 
-The blocklist is an atomic in-memory snapshot refreshed from external sources.
-LOLS full, LOLS delta, and CAS full data are retained separately: a failed or
-empty source refresh keeps that source's last-good contribution while a
-successful source can advance independently. The LLM stage is disabled by
-default, bounded by a timeout, and errors toward not-spam. No message text is
-sent to an LLM unless the stage is explicitly enabled.
+The blocklist checks the atomic in-memory LOLS snapshot first, then a per-user
+CAS `/check` endpoint. LOLS full and accumulated delta data are retained
+separately: a failed or empty full refresh keeps the last-good snapshot, a
+successful full refresh supersedes the deltas, and delta failures leave it
+unchanged. CAS caches listed results for 24h and clean results for 6h, with
+at most 100000 entries. Each request has a 2s budget and a local 10 requests/s
+limit (burst 20); rate-limited checks fail open without waiting. Three
+consecutive errors open a breaker for 60s; errors are not cached and never
+manufacture a blocklist hit. Valid cached results remain usable while the
+breaker is open. Outcomes are counted in `tg_antispam_cas_check_total{result}`
+as `listed`, `clean`, `error`, `rate_limited` or `breaker_open`; cache hits and
+nonpositive user IDs do not increment it. The snapshot size gauge counts only
+LOLS. The cascade, welcome and captcha paths share the same combined source.
+
+The LLM stage is disabled by default, bounded by a timeout, and errors toward
+not-spam. No message text is sent to an LLM unless the stage is explicitly enabled.
 
 What that stage is shown is assembled by `llmMessageText` in the wiring layer,
 not by the cascade: the message text, one line of the message's own structural
@@ -320,7 +330,7 @@ stores update IDs, chat lifecycle, incident/audit/evidence metadata, trust and
 identity state, sample hashes, and Bayes counts. It intentionally does not
 persist raw offending message text.
 
-Behavioral windows, the blocklist snapshot, admin-list cache, rate limiters,
+Behavioral windows, the LOLS snapshot, CAS cache, admin-list cache, rate limiters,
 and metrics are in memory and are rebuilt on restart. SQLite-backed chat,
 incident, trust, identity, and Bayes state survives restart.
 
@@ -334,8 +344,8 @@ process restart to take effect.
 ## Error and shutdown policy
 
 - An admin-list lookup outage defers all message moderation and grants no trust.
-- LLM failures return not-spam; blocklist refresh failures retain per-source
-  last-good data rather than clearing protection or inventing new IDs.
+- LLM failures return not-spam; LOLS refresh failures retain last-good data,
+  and CAS request failures return no hit without caching the error.
 - Failure to read a stored chat lifecycle gate fails safe by suppressing live
   moderation.
 - Unauthorized admin callbacks are answered but produce no action or learning

@@ -685,7 +685,7 @@ func main() {
 		ShortWindow:         cfg.Detection.Behavior.ShortWindow.Duration(),
 		FlagEdits:           cfg.Detection.Behavior.FlagEdits,
 	}
-	// Blocklist mirror (LOLS + CAS). Declared as the interface so a disabled
+	// LOLS snapshot + cached CAS checks. Declared as the interface so a disabled
 	// blocklist leaves cascade.Blocklist a true nil interface — assigning a
 	// typed-nil *blocklist.Blocklist would make `c.Blocklist != nil` true and
 	// risk a nil-receiver call. The syncer stops with the background producers
@@ -695,13 +695,29 @@ func main() {
 		bl := blocklist.NewWithConfig(blocklist.Config{
 			LolsFullURL:   cfg.Blocklist.LolsFullURL,
 			LolsDeltaURL:  cfg.Blocklist.LolsDeltaURL,
-			CasFullURL:    cfg.Blocklist.CasFullURL,
 			FullInterval:  cfg.Blocklist.FullRefresh.Duration(),
 			DeltaInterval: cfg.Blocklist.DeltaRefresh.Duration(),
 			HTTPTimeout:   cfg.Blocklist.HTTPTimeout.Duration(),
 		})
 		startBackground(func() { bl.Run(signalCtx) })
 		blocklistSource = bl
+		if *cfg.Blocklist.CasCheckEnabled {
+			cas := blocklist.NewCASChecker(blocklist.CASConfig{
+				URL:         cfg.Blocklist.CasCheckURL,
+				PositiveTTL: cfg.Blocklist.CasPositiveTTL.Duration(),
+				NegativeTTL: cfg.Blocklist.CasNegativeTTL.Duration(),
+				Timeout:     cfg.Blocklist.CasTimeout.Duration(),
+				RatePerSec:  cfg.Blocklist.CasRatePerSec,
+				Burst:       cfg.Blocklist.CasBurst,
+				MaxEntries:  100000,
+			}, nil)
+			cas.Count = func(result string) {
+				reg.IncCounter("tg_antispam_cas_check_total", 1, "result", result)
+			}
+			// A LOLS hit needs no CAS request. Share this source with the
+			// cascade, welcome and captcha paths.
+			blocklistSource = blocklist.AnyOf(bl, cas)
+		}
 
 		// tg_antispam_blocklist_size gauge: sampled on a ticker rather than pushed from
 		// the syncer itself, so the ops package stays decoupled from

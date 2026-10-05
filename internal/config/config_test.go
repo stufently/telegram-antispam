@@ -280,9 +280,6 @@ func TestBlocklistDefaultsAppliedWhenUnset(t *testing.T) {
 	if bl.LolsDeltaURL != "https://lols.bot/spam/banlist-1h.txt" {
 		t.Errorf("LolsDeltaURL: want default, got %q", bl.LolsDeltaURL)
 	}
-	if bl.CasFullURL != "https://api.cas.chat/export.csv" {
-		t.Errorf("CasFullURL: want default, got %q", bl.CasFullURL)
-	}
 	if bl.FullRefresh.Duration() != 6*time.Hour {
 		t.Errorf("FullRefresh: want 6h default, got %v", bl.FullRefresh.Duration())
 	}
@@ -319,9 +316,6 @@ func TestBlocklistExplicitValuesNotOverridden(t *testing.T) {
 	}
 	if bl.LolsDeltaURL != "https://lols.bot/spam/banlist-1h.txt" {
 		t.Errorf("LolsDeltaURL: want default, got %q", bl.LolsDeltaURL)
-	}
-	if bl.CasFullURL != "https://api.cas.chat/export.csv" {
-		t.Errorf("CasFullURL: want default, got %q", bl.CasFullURL)
 	}
 	if bl.DeltaRefresh.Duration() != 1*time.Hour {
 		t.Errorf("DeltaRefresh: want 1h default, got %v", bl.DeltaRefresh.Duration())
