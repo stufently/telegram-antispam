@@ -60,6 +60,10 @@ type casEntry struct {
 type CASChecker struct {
 	Now   func() time.Time // nil means time.Now; used for TTLs, limiter and breaker.
 	Count func(result string)
+	// Context bounds every request; nil means context.Background. Once it is
+	// done, uncached checks return false at once without a request or count,
+	// so a shutdown drain is not held up by CAS.
+	Context context.Context
 
 	cfg       CASConfig
 	client    *http.Client
@@ -125,6 +129,10 @@ func (c *CASChecker) Listed(userID int64) bool {
 		c.mu.Unlock()
 		return entry.listed
 	}
+	if c.Context != nil && c.Context.Err() != nil {
+		c.mu.Unlock()
+		return false
+	}
 	if now.Before(c.openUntil) {
 		c.mu.Unlock()
 		c.count("breaker_open")
@@ -177,7 +185,11 @@ func (c *CASChecker) Listed(userID int64) bool {
 }
 
 func (c *CASChecker) check(userID int64) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.Timeout)
+	parent := c.Context
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, c.cfg.Timeout)
 	defer cancel()
 	u, err := url.Parse(c.cfg.URL)
 	if err != nil {

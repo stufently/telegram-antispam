@@ -2,6 +2,7 @@ package blocklist
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -148,7 +149,7 @@ func TestCASCheckErrorsFailOpenUncached(t *testing.T) {
 func TestCASCheckTimeout(t *testing.T) {
 	for _, bodyStarted := range []bool{false, true} {
 		t.Run(fmt.Sprintf("body_started_%t", bodyStarted), func(t *testing.T) {
-			c, p := newCASTest(t, CASConfig{Timeout: 50 * time.Millisecond}, func(w http.ResponseWriter, r *http.Request) {
+			c, p := newCASTest(t, CASConfig{Timeout: 100 * time.Millisecond}, func(w http.ResponseWriter, r *http.Request) {
 				if bodyStarted {
 					_, _ = io.WriteString(w, `{"ok":`)
 					w.(http.Flusher).Flush()
@@ -163,7 +164,7 @@ func TestCASCheckTimeout(t *testing.T) {
 			if c.Listed(1) {
 				t.Fatal("timeout returned listed")
 			}
-			if elapsed := time.Since(start); elapsed > 1050*time.Millisecond {
+			if elapsed := time.Since(start); elapsed > 700*time.Millisecond {
 				t.Fatalf("timeout took %v", elapsed)
 			}
 			p.assert(t, 1, map[string]int{"error": 1})
@@ -379,4 +380,50 @@ func TestCASCheckerDefaults(t *testing.T) {
 			t.Fatal("nil client did not get default timeout")
 		}
 	}
+}
+
+func TestCASCheckContextCanceled(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	started := make(chan struct{}, 1)
+	c, p := newCASTest(t, CASConfig{Timeout: 5 * time.Second}, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("user_id") == "1" {
+			_, _ = io.WriteString(w, `{"ok":true}`)
+			return
+		}
+		started <- struct{}{}
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	c.Context = ctx
+	if !c.Listed(1) {
+		t.Fatal("seed cache failed")
+	}
+	done := make(chan bool, 1)
+	start := time.Now()
+	go func() { done <- c.Listed(2) }()
+	<-started
+	cancel()
+	select {
+	case got := <-done:
+		if got {
+			t.Fatal("canceled in-flight check returned listed")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("in-flight check ignored context cancellation")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("canceled check took %v", elapsed)
+	}
+	p.assert(t, 2, map[string]int{"listed": 1, "error": 1})
+	if c.Listed(3) {
+		t.Fatal("check after cancellation returned listed")
+	}
+	if !c.Listed(1) {
+		t.Fatal("cancellation hid cached hit")
+	}
+	p.assert(t, 2, map[string]int{"listed": 1, "error": 1})
 }

@@ -711,6 +711,9 @@ func main() {
 				Burst:       cfg.Blocklist.CasBurst,
 				MaxEntries:  100000,
 			}, nil)
+			// Accepted work drains on workCtx; its grace deadline must also
+			// cut short CAS checks still queued behind it.
+			cas.Context = workCtx
 			cas.Count = func(result string) {
 				reg.IncCounter("tg_antispam_cas_check_total", 1, "result", result)
 			}
