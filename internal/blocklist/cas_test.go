@@ -241,7 +241,8 @@ func TestCASCheckBreaker(t *testing.T) {
 	}
 	p.assert(t, 4, map[string]int{"listed": 1, "error": 3, "breaker_open": 2})
 	now = now.Add(time.Nanosecond)
-	if c.Listed(1) || c.Listed(1) {
+	first, second := c.Listed(1), c.Listed(1)
+	if first || second {
 		t.Fatal("failed probe returned listed")
 	}
 	p.assert(t, 5, map[string]int{"listed": 1, "error": 4, "breaker_open": 3})
@@ -294,7 +295,8 @@ func TestCASCheckCacheBounded(t *testing.T) {
 	}
 	p.assert(t, 4, map[string]int{"listed": 4})
 	now = now.Add(time.Hour)
-	if !c.Listed(3) || !c.Listed(3) {
+	first, second := c.Listed(3), c.Listed(3)
+	if !first || !second {
 		t.Fatal("expired entries prevented new cache entry")
 	}
 	p.assert(t, 5, map[string]int{"listed": 5})
