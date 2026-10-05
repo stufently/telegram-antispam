@@ -263,3 +263,33 @@ func TestDecidedLegacyCardStillAlreadyDecided(t *testing.T) {
 		t.Fatalf("legacy response changed: reply=%q calls=%v markups=%v", p.reply, f.Calls(), p.markups)
 	}
 }
+
+func TestPromotionInFlightKeepsNewCardButtons(t *testing.T) {
+	db, f, _, _, edited := newEditRig(t)
+	id := onlyIncidentID(t, db)
+	p := &tailPort{Port: f}
+	m := New(p, db, 999)
+	m.SetButtons(admin.Buttons)
+	h := admin.NewHandler(p, db, map[int64]bool{7: true})
+	trained := 0
+	h.SetTrainer(func(int64, string, []string) error { trained++; return nil })
+	pressed := false
+	p.duringSend = func() {
+		// Telegram has published card 20, the machine has not registered it.
+		pressed = true
+		pressTailCard(t, h, id, 20, "fp")
+		if p.reply != "already decided: enforced" || len(p.markups) != 0 || trained != 0 {
+			t.Fatalf("in-flight card judged stale: reply=%q markups=%+v trained=%d", p.reply, p.markups, trained)
+		}
+	}
+	f.SendAdminID = 20
+	requireEditPromotion(t, m, f, edited)
+	if !pressed {
+		t.Fatal("send hook did not run")
+	}
+	requireTailCard(t, db, id, 20)
+	pressTailCard(t, h, id, 20, "fp")
+	if trained != 1 || count(f.Calls(), "UnrestrictMember") != 1 || len(p.markups) != 0 {
+		t.Fatalf("new card must stay usable: trained=%d markups=%+v calls=%v", trained, p.markups, f.Calls())
+	}
+}

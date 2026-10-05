@@ -224,7 +224,11 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 		if err != nil {
 			return "", err
 		}
-		if !claimed {
+		// An "enf" claim is transient: an enforce press or an override that
+		// may be publishing a replacement card not yet registered. Judging
+		// staleness then would strip the new card's buttons, so only a
+		// settled decision retires a non-current card here.
+		if !claimed && existing != string(ActEnforce) {
 			current, err := h.db.IsIncidentCard(inc.ID, card)
 			if err != nil {
 				return "", err
@@ -232,6 +236,8 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 			if !current {
 				return h.staleCard(ctx, cb), nil
 			}
+		}
+		if !claimed {
 			return "already decided: " + decisionLabel(existing), nil
 		}
 		// Re-read now that the claim is ours. The row Handle loaded was read

@@ -16,7 +16,9 @@ Entries start life under **Unreleased** and are moved under a version heading wh
   copies, so retries do not leave duplicates. If card deletion fails, the bot
   attempts to remove its buttons instead.
 - Old cards now answer "устарело, см. новую карточку" and lose their buttons even
-  when the incident already has a decision or an override is in progress.
+  when the incident already has a decision. While an enforcement or override is
+  in progress, presses answer "already decided: enforced" and keep the buttons,
+  so a replacement card that is not registered yet keeps working.
 
 ## [0.19.0] - 2026-10-05
 
