@@ -24,6 +24,7 @@ var errNothingCopied = errors.New("copyMessages copied nothing (message type not
 
 // Repo is the persistence surface the machine needs; *store.DB satisfies it.
 type Repo interface {
+	SaveIncidentCard(id int64, card store.IncidentCard) error
 	GetIncident(id int64) (store.IncidentRow, error)
 	InsertPending(chatID int64, messageID int, userID, senderChatID int64, dryRun bool, verdict domain.Verdict) (int64, bool, error)
 	SetIncidentState(id int64, s domain.IncidentState) error
@@ -209,7 +210,7 @@ func (m *Machine) process(ctx context.Context, id int64, inc domain.Incident) (s
 			// acting card is still reversible.
 			msg.Buttons = m.buttonsFor(key, false)
 		}
-		_, sendErr := m.port.SendAdmin(ctx, m.adminChatID, msg)
+		sendErr := m.sendCard(ctx, id, msg)
 		if !acting {
 			if sendErr != nil {
 				err := fmt.Errorf("evidence copy failed (%v), admins not notified either: %w", copyErr, sendErr)
@@ -255,7 +256,7 @@ func (m *Machine) process(ctx context.Context, id int64, inc domain.Incident) (s
 			// gets the extra button that does it. See admin.Buttons.
 			msg.Buttons = m.buttonsFor(key, inc.DryRun)
 		}
-		if _, err := m.port.SendAdmin(ctx, m.adminChatID, msg); err != nil {
+		if err := m.sendCard(ctx, id, msg); err != nil {
 			err = fmt.Errorf("send admin: %w", err)
 			m.logOutcome(id, inc, "not enforced", "stage=admin_notify", err)
 			return sanctioned, err
@@ -422,7 +423,7 @@ func (m *Machine) override(ctx context.Context, id int64, inc domain.Incident, f
 	if m.buttonsFor != nil {
 		msg.Buttons = m.buttonsFor(key, false)
 	}
-	if _, sendErr := m.port.SendAdmin(ctx, m.adminChatID, msg); sendErr != nil {
+	if sendErr := m.sendCard(ctx, id, msg); sendErr != nil {
 		log.Printf("incident %d: manual override card not sent: %v", id, sendErr)
 	}
 
@@ -433,6 +434,15 @@ func (m *Machine) override(ctx context.Context, id int64, inc domain.Incident, f
 		_, _ = m.port.SendEphemeral(ctx, inc.ChatID, inc.Sender.UserID, m.EphemeralText)
 	}
 	return nil
+}
+
+// sendCard persists the card identity before enforcement or claim release.
+func (m *Machine) sendCard(ctx context.Context, id int64, msg telegram.AdminMessage) error {
+	mid, err := m.port.SendAdmin(ctx, m.adminChatID, msg)
+	if err != nil {
+		return err
+	}
+	return m.repo.SaveIncidentCard(id, store.IncidentCard{ChatID: m.adminChatID, MessageID: mid})
 }
 
 // setState records how far the incident got, logging a write failure rather

@@ -20,6 +20,8 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 - A later spam edit can promote an unreviewed review-only incident to enforcement.
   The bot copies the edited evidence and sends its new verdict before acting;
   repeated reviews and already enforced incidents remain deduplicated.
+- Promoting a review invalidates its old card buttons. Evidence deletion keeps
+  track of new copies added while the Telegram delete request is in flight.
 
 ## [0.18.0] - 2026-09-26
 

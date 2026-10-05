@@ -28,6 +28,11 @@ CREATE TABLE IF NOT EXISTS incidents (
 	created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
 	UNIQUE(chat_id, message_id)
 );
+CREATE TABLE IF NOT EXISTS incident_cards (
+ incident_id INTEGER PRIMARY KEY REFERENCES incidents(id),
+ chat_id INTEGER NOT NULL,
+ message_id INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS evidence (
 	incident_id      INTEGER NOT NULL,
 	admin_chat_id    INTEGER NOT NULL,
