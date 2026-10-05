@@ -8,6 +8,16 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+### Fixed
+
+- Manual overrides keep the decision claim until the replacement card is
+  registered, preventing old buttons from undoing or training during the update.
+- Cards whose registration fails are deleted, along with their new evidence
+  copies, so retries do not leave duplicates. If card deletion fails, the bot
+  attempts to remove its buttons instead.
+- Old cards now answer "устарело, см. новую карточку" and lose their buttons even
+  when the incident already has a decision or an override is in progress.
+
 ## [0.19.0] - 2026-10-05
 
 ### Changed

@@ -22,6 +22,10 @@ import (
 // deliberately routed down the same branch instead of getting one of its own.
 var errNothingCopied = errors.New("copyMessages copied nothing (message type not copyable?)")
 
+// errCardNotRecorded distinguishes a published but unregistered card from a
+// send failure, so callers can also roll back its untracked evidence copies.
+var errCardNotRecorded = errors.New("admin card not recorded")
+
 // Repo is the persistence surface the machine needs; *store.DB satisfies it.
 type Repo interface {
 	SaveIncidentCard(id int64, card store.IncidentCard) error
@@ -257,6 +261,11 @@ func (m *Machine) process(ctx context.Context, id int64, inc domain.Incident) (s
 			msg.Buttons = m.buttonsFor(key, inc.DryRun)
 		}
 		if err := m.sendCard(ctx, id, msg); err != nil {
+			if errors.Is(err, errCardNotRecorded) {
+				if delErr := m.port.DeleteMessages(ctx, m.adminChatID, adminIDs); delErr != nil {
+					log.Printf("incident %d: rolling back untracked evidence failed: %v", id, delErr)
+				}
+			}
 			err = fmt.Errorf("send admin: %w", err)
 			m.logOutcome(id, inc, "not enforced", "stage=admin_notify", err)
 			return sanctioned, err
@@ -390,6 +399,31 @@ func (m *Machine) override(ctx context.Context, id int64, inc domain.Incident, f
 	} else {
 		log.Printf("incident %d: manual override (%s) of an incident that applied no sanction", id, inc.Verdict.Reason)
 		out = m.Enforce(ctx, id, inc)
+		if out.Sanctioned && out.Err == nil {
+			m.setState(id, domain.StateDone)
+		}
+
+		// Keep the claim until the new card is registered: neither card may
+		// undo or train on the verdict while it is being replaced. Sending
+		// is best-effort; on failure the old card remains current and can
+		// lift the sanction once FinishManualOverride releases the claim.
+		key := fmt.Sprintf("%d", id)
+		msg := telegram.AdminMessage{
+			IncidentKey:      key,
+			SourceChatID:     inc.ChatID,
+			CopiedFromChatID: inc.ChatID,
+			// Threaded under existing evidence when there is any (a dry-run
+			// or review incident); evidence_failed incidents have none.
+			CopyMessageIDs: evidenceIDs,
+			Text: formatCard(id, inc, "", fmt.Sprintf("manual override of an incident that applied no sanction: %s",
+				outcomeOf(out)), out.Sanctioned),
+		}
+		if m.buttonsFor != nil {
+			msg.Buttons = m.buttonsFor(key, false)
+		}
+		if sendErr := m.sendCard(ctx, id, msg); sendErr != nil {
+			log.Printf("incident %d: manual override card not sent: %v", id, sendErr)
+		}
 	}
 	if ferr := m.repo.FinishManualOverride(id, inc.Verdict, out.Sanctioned); ferr != nil {
 		// The claim stays taken, and with it the only guard against a
@@ -401,32 +435,6 @@ func (m *Machine) override(ctx context.Context, id int64, inc domain.Incident, f
 		// process already sent a new card and the optional notice.
 		return out.Err
 	}
-	if out.Sanctioned && out.Err == nil {
-		m.setState(id, domain.StateDone)
-	}
-
-	// The card already in the admin chat says nothing was done; this one
-	// says what was, and carries the undo buttons for it. Best-effort: the
-	// sanction has happened, and the old card's buttons can lift it too.
-	key := fmt.Sprintf("%d", id)
-	msg := telegram.AdminMessage{
-		IncidentKey:      key,
-		SourceChatID:     inc.ChatID,
-		CopiedFromChatID: inc.ChatID,
-		// Threaded under the evidence when there is any (a dry-run or
-		// review-only incident), so the card cannot be paired with the
-		// wrong message; an evidence_failed incident has none.
-		CopyMessageIDs: evidenceIDs,
-		Text: formatCard(id, inc, "", fmt.Sprintf("manual override of an incident that applied no sanction: %s",
-			outcomeOf(out)), out.Sanctioned),
-	}
-	if m.buttonsFor != nil {
-		msg.Buttons = m.buttonsFor(key, false)
-	}
-	if sendErr := m.sendCard(ctx, id, msg); sendErr != nil {
-		log.Printf("incident %d: manual override card not sent: %v", id, sendErr)
-	}
-
 	if out.Err != nil {
 		return out.Err
 	}
@@ -442,7 +450,16 @@ func (m *Machine) sendCard(ctx context.Context, id int64, msg telegram.AdminMess
 	if err != nil {
 		return err
 	}
-	return m.repo.SaveIncidentCard(id, store.IncidentCard{ChatID: m.adminChatID, MessageID: mid})
+	if err := m.repo.SaveIncidentCard(id, store.IncidentCard{ChatID: m.adminChatID, MessageID: mid}); err != nil {
+		if delErr := m.port.DeleteMessages(ctx, m.adminChatID, []int{mid}); delErr != nil {
+			log.Printf("incident %d: deleting unregistered card failed: %v", id, delErr)
+			if editErr := m.port.EditAdminMarkup(ctx, m.adminChatID, mid, nil); editErr != nil {
+				log.Printf("incident %d: removing unregistered card buttons failed: %v", id, editErr)
+			}
+		}
+		return fmt.Errorf("%w: %w", errCardNotRecorded, err)
+	}
+	return nil
 }
 
 // setState records how far the incident got, logging a write failure rather

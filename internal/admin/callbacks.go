@@ -212,6 +212,7 @@ func (h *Handler) Handle(ctx context.Context, cb Callback) error {
 // call — so the reply text says so rather than implying a full rollback.
 func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRow, cb Callback) (string, error) {
 	key := strconv.FormatInt(inc.ID, 10)
+	card := store.IncidentCard{ChatID: cb.AdminChatID, MessageID: cb.MessageID}
 
 	// One decision per incident. The buttons stay in the admin chat forever,
 	// so without this claim a press on an old evidence message would issue a
@@ -224,6 +225,13 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 			return "", err
 		}
 		if !claimed {
+			current, err := h.db.IsIncidentCard(inc.ID, card)
+			if err != nil {
+				return "", err
+			}
+			if !current {
+				return h.staleCard(ctx, cb), nil
+			}
 			return "already decided: " + decisionLabel(existing), nil
 		}
 		// Re-read now that the claim is ours. The row Handle loaded was read
@@ -242,7 +250,6 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 
 	// Decision callbacks hold the claim, so promotion cannot replace this card
 	// after validation. Deletion also validates in its evidence snapshot query.
-	card := store.IncidentCard{ChatID: cb.AdminChatID, MessageID: cb.MessageID}
 	current, err := h.db.IsIncidentCard(inc.ID, card)
 	if err != nil || !current {
 		if act != ActDeleteEvidence {
@@ -251,8 +258,7 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 		if err != nil {
 			return "", err
 		}
-		_ = h.port.EditAdminMarkup(ctx, cb.AdminChatID, cb.MessageID, nil)
-		return "устарело, см. новую карточку", nil
+		return h.staleCard(ctx, cb), nil
 	}
 
 	switch act {
@@ -359,6 +365,11 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 	default:
 		return "unknown action", nil
 	}
+}
+
+func (h *Handler) staleCard(ctx context.Context, cb Callback) string {
+	_ = h.port.EditAdminMarkup(ctx, cb.AdminChatID, cb.MessageID, nil)
+	return "устарело, см. новую карточку"
 }
 
 // enforceReply says what actually happened, because the two halves of
