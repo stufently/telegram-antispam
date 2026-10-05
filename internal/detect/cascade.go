@@ -86,6 +86,8 @@ const ReasonAdminLookupUnavailable = "admin_lookup_unavailable"
 // try hard rules, fake-admin impersonation, behavioral checks, and Bayes in
 // order (first hit wins). It returns the resulting Verdict and whether it
 // is actionable.
+// Display-name-only fake-admin matches normally fall through to the later
+// detectors and the caller's LLM step; ReviewCandidate handles them last.
 //
 // Decide is pure: it does not bump trust and performs no action of its own.
 // The injected History may record state as part of CheckBehavior (e.g.
@@ -163,7 +165,7 @@ func (c Cascade) Decide(m domain.Message, edited bool) (domain.Verdict, bool) {
 	}
 
 	if c.FakeAdmin.Enabled && !trusted {
-		if sig, hit := CheckFakeAdmin(m, admins, c.FakeAdmin); hit {
+		if sig, strength := ClassifyFakeAdmin(m, admins, c.FakeAdmin); strength == FakeAdminStrong {
 			return c.actionable(sig), true
 		}
 	}
@@ -221,29 +223,28 @@ func (c Cascade) Decide(m domain.Message, edited bool) (domain.Verdict, bool) {
 	return domain.Verdict{Action: domain.ActionNone}, false
 }
 
-// ReviewCandidate reports an untrusted sender's attachment that carries
-// (almost) no text, as a review-only verdict.
+// ReviewCandidate reports an untrusted sender's captionless attachment, bot
+// keyboard, or display-name-only admin match as a review-only verdict.
 //
 // It is deliberately NOT a stage inside Decide. Decide is first-hit-wins and
 // its Bayes branches return early, so a stage placed anywhere in that chain
 // either preempts a stronger detector or is preempted by a "pass" — and in
 // both cases the caller's LLM step, which only runs on a non-actionable
 // result, would be skipped. The caller runs this LAST, after the text
-// cascade AND after the LLM have declined to act, so it is a fallback for
-// the one message shape none of them can read rather than a competitor to
-// them.
+// cascade AND after the LLM have declined to act, so weak signals cannot
+// preempt those decisions.
 //
 // The kinds travel in Detail because "photo" and "sticker" call for
 // different judgements from the moderator who sees the evidence; they are
 // attachment type names, never user content.
 func (c Cascade) ReviewCandidate(m domain.Message) (domain.Verdict, bool) {
-	if c.CaptionMinLen <= 0 && !c.ReviewKeyboard {
+	if c.CaptionMinLen <= 0 && !c.ReviewKeyboard && !c.FakeAdmin.Enabled {
 		return domain.Verdict{}, false
 	}
 	n := Normalize(m)
-	sig, hit := c.reviewSignal(n)
-	if !hit {
-		return domain.Verdict{}, false
+	var signals []domain.Signal
+	if sig, hit := c.reviewSignal(n); hit {
+		signals = append(signals, sig)
 	}
 	if IsTrusted(c.Trust, m.ChatID, m.Sender.UserID, c.TrustThreshold) {
 		return domain.Verdict{}, false
@@ -258,8 +259,16 @@ func (c Cascade) ReviewCandidate(m domain.Message) (domain.Verdict, bool) {
 		if err != nil || isCurrentAdmin(admins, m.Sender.UserID) {
 			return domain.Verdict{}, false
 		}
+		if sig, strength := ClassifyFakeAdmin(m, admins, c.FakeAdmin); strength == FakeAdminNameOnly {
+			signals = append(signals, sig)
+		}
 	}
-	return c.review(sig), true
+	if len(signals) == 0 {
+		return domain.Verdict{}, false
+	}
+	v := c.review(signals[0])
+	v.Signals = signals
+	return v, true
 }
 
 // reviewSignal picks which review-worthy shape this message has, if any.

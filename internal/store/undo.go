@@ -207,11 +207,16 @@ WHERE i.id = ?`, id).Scan(&r.ID, &r.ChatID, &r.UserID, &r.SenderChatID, &message
 // "Delete evidence" can remove exactly what the bot posted. All rows for one
 // incident share an admin chat (the machine writes them in one call), so a
 // single chat id is returned alongside the message ids.
-func (db *DB) ListEvidence(incidentID int64) (adminChatID int64, messageIDs []int, err error) {
-	rows, err := db.Read().Query(
-		"SELECT admin_chat_id, admin_message_id FROM evidence WHERE incident_id=? ORDER BY admin_message_id",
-		incidentID,
-	)
+func (db *DB) ListEvidence(incidentID int64, card ...IncidentCard) (adminChatID int64, messageIDs []int, err error) {
+	query := "SELECT admin_chat_id, admin_message_id FROM evidence WHERE incident_id=?"
+	args := []any{incidentID}
+	if len(card) > 0 {
+		// Validate and snapshot together: a stale callback may not select the
+		// new copies if promotion finished after Handle read the incident.
+		query += ` AND NOT EXISTS (SELECT 1 FROM incident_cards c WHERE c.incident_id=evidence.incident_id AND (c.chat_id!=? OR c.message_id!=?))`
+		args = append(args, card[0].ChatID, card[0].MessageID)
+	}
+	rows, err := db.Read().Query(query+" ORDER BY admin_message_id", args...)
 	if err != nil {
 		return 0, nil, err
 	}

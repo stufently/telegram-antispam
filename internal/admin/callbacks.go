@@ -240,6 +240,21 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 		inc = fresh
 	}
 
+	// Decision callbacks hold the claim, so promotion cannot replace this card
+	// after validation. Deletion also validates in its evidence snapshot query.
+	card := store.IncidentCard{ChatID: cb.AdminChatID, MessageID: cb.MessageID}
+	current, err := h.db.IsIncidentCard(inc.ID, card)
+	if err != nil || !current {
+		if act != ActDeleteEvidence {
+			h.releaseClaim(inc.ID, act)
+		}
+		if err != nil {
+			return "", err
+		}
+		_ = h.port.EditAdminMarkup(ctx, cb.AdminChatID, cb.MessageID, nil)
+		return "устарело, см. новую карточку", nil
+	}
+
 	switch act {
 	case ActFalsePositive:
 		// Order matters, and it is the reverse of what it used to be. The
@@ -332,7 +347,7 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 		return joinReply(enforceReply(sanctioned, deleted), "", trained), nil
 
 	case ActDeleteEvidence:
-		n, err := h.deleteEvidence(ctx, inc.ID)
+		n, err := h.deleteEvidence(ctx, inc.ID, card)
 		if err != nil {
 			return "", err
 		}
@@ -534,8 +549,8 @@ func (h *Handler) dropTokens(incidentID int64) {
 // forgets them, returning how many messages were deleted. The bookkeeping
 // rows are dropped only after Telegram accepted the delete, so a failed
 // call leaves the evidence discoverable instead of silently orphaned.
-func (h *Handler) deleteEvidence(ctx context.Context, incidentID int64) (int, error) {
-	adminChatID, ids, err := h.db.ListEvidence(incidentID)
+func (h *Handler) deleteEvidence(ctx context.Context, incidentID int64, card store.IncidentCard) (int, error) {
+	adminChatID, ids, err := h.db.ListEvidence(incidentID, card)
 	if err != nil {
 		return 0, err
 	}
@@ -545,7 +560,7 @@ func (h *Handler) deleteEvidence(ctx context.Context, incidentID int64) (int, er
 	if err := h.port.DeleteMessages(ctx, adminChatID, ids); err != nil {
 		return 0, fmt.Errorf("delete evidence in chat %d: %w", adminChatID, err)
 	}
-	if err := h.db.DeleteEvidenceRows(incidentID); err != nil {
+	if err := h.db.DeleteEvidenceSet(incidentID, adminChatID, ids); err != nil {
 		return 0, err
 	}
 	return len(ids), nil

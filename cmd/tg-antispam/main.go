@@ -850,10 +850,11 @@ func main() {
 		BayesAlwaysBorderline: cfg.LLM.AlwaysForUntrusted && llmJudge != nil,
 		Admins:                adminCache,
 		FakeAdmin: detect.FakeAdminCfg{
-			Enabled:        *cfg.Detection.FakeAdminEnabled,
-			SuspiciousTags: cfg.Detection.FakeAdminSuspiciousTags,
-			MaxDistance:    cfg.Detection.FakeAdminMaxDistance,
-			MinFuzzyLen:    cfg.Detection.FakeAdminMinFuzzyLen,
+			NameMatchSanction: cfg.Detection.FakeAdminNameMatch == config.FakeAdminNameMatchSanction,
+			Enabled:           *cfg.Detection.FakeAdminEnabled,
+			SuspiciousTags:    cfg.Detection.FakeAdminSuspiciousTags,
+			MaxDistance:       cfg.Detection.FakeAdminMaxDistance,
+			MinFuzzyLen:       cfg.Detection.FakeAdminMinFuzzyLen,
 		},
 		Blocklist:        blocklistSource,
 		BlocklistEnabled: *cfg.Blocklist.Enabled,
@@ -906,8 +907,8 @@ func main() {
 				ok = true
 			}
 		}
-		// Captionless-media fallback, last: only when the text cascade AND
-		// the LLM have both declined to act, and never over a deferral (an
+		// Review fallback (media, keyboard, admin name), last: only when the
+		// text cascade AND the LLM have declined to act, never over a deferral (an
 		// unresolved admin list means we may not judge this sender at all).
 		if !ok && v.Reason != detect.ReasonAdminLookupUnavailable {
 			if rv, hit := cascade.ReviewCandidate(m); hit {

@@ -8,6 +8,21 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+### Changed
+
+- Fake-admin matches against only an admin's display name now send a review-only
+  card without sanctions; stronger detectors and the optional LLM still run.
+  Username, custom title and suspicious sender-tag matches remain sanctionable.
+  `detection.fake_admin_name_match` defaults to `review`; `sanction` restores the
+  previous behavior. Outcome logs include `fake_admin_match=` and evidence cards
+  include `match:` with the matched fields, admin ID and exact/fuzzy indicator,
+  without the names or sender-tag text.
+- A later spam edit can promote an unreviewed review-only incident to enforcement.
+  The bot copies the edited evidence and sends its new verdict before acting;
+  repeated reviews and already enforced incidents remain deduplicated.
+- Promoting a review invalidates its old card buttons. Evidence deletion keeps
+  track of new copies added while the Telegram delete request is in flight.
+
 ## [0.18.0] - 2026-09-26
 
 ### Added
