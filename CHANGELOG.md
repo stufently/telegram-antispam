@@ -8,6 +8,8 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-05
+
 ### Changed
 
 - Fake-admin matches against only an admin's display name now send a review-only
