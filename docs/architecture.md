@@ -36,6 +36,16 @@ uses inline handlers with one polling worker. Handler work that can block is
 submitted to a per-chat sequencer, preserving order within a chat while
 allowing different chats to progress concurrently.
 
+Admin-card callbacks first enter a separate routing queue, which looks up the
+incident's source chat off the polling goroutine. Decisions then join that
+source chat's sequencer, behind the original sanction and the entire moderator
+command (including its training). A False-positive press during RestrictMember
+therefore waits and sees the completed state before undoing it. A failed scope
+lookup never falls back to execution on the routing queue. On shutdown the
+routing queue drains before the source queues close; its drop/panic counts are
+included in the existing job metrics. Captcha callbacks retain their separate
+path.
+
 Every outbound `telegram.Port` operation is implemented by
 `internal/telegram.LivePort` and submitted to `internal/queue.Dispatcher` (the
 client library owns the long-polling transport itself). This includes the
@@ -51,8 +61,9 @@ For a new or edited message, `internal/telegram.Handler`:
 
 1. Persists the Telegram `update_id` dedup marker.
 2. Checks the configured chat admission policy and sender-kind immunity.
-3. Buffers media groups for 700 ms or immediately submits a standalone message
-   to the chat sequencer.
+3. Buffers new media groups for 700 ms or immediately submits a standalone
+   message to the chat sequencer. Edits always bypass the album buffer and keep
+   their edited flag, so editing one caption never earns new participation trust.
 4. Registers a previously unseen chat without overwriting stored lifecycle
    state.
 5. Runs the detection hook against the album part that carries text (the
@@ -122,6 +133,15 @@ verdict may be missing`. The wording is deliberate: an album is judged on the
 single part carrying its text, and the copy result is destination ids with no
 mapping back to the sources, so the count is known and the identity of the
 missing parts is not.
+
+`evidence_failed` now means a definitive stop with no sanction: a manual or
+blocklist verdict that can act without evidence stays `pending` until its action
+finishes. Other completed failures before a sanction lands (including notification
+or restriction failures) become `not_acted`; a later moderator command may retry
+them. An applied sanction remains `acted` even if deleting originals fails.
+These states are ordinary values in the existing TEXT column; no schema migration
+is needed. Rows left `pending`/`evidenced` by a process crash remain conservatively
+ambiguous, rather than assuming that Telegram applied nothing.
 
 Both outcomes are logged, and symmetrically: `internal/telegram` writes
 `observed` for a message that passed, `internal/incident` writes `enforced`
@@ -234,7 +254,13 @@ live in SQLite. A sweep at startup and every 5s finishes due rows: `kick` bans
 then unbans, `keep_muted` leaves the mute, an orphan `new` is released, and
 `passing` is lifted. `failing` and `passing` retry on the next sweep. The bot
 does not lift a captcha mute when an incident since the challenge started has
-an audit action of `delete_mute`, `mute`, or `ban`. `cap:` callbacks skip the
+an applied or potentially in-flight `delete_mute`, `mute`, or `ban`. Terminal
+`evidence_failed`/`not_acted` rows do not count. An active enforce/override claim
+also blocks the lift even before the old action or dry-run flag is rewritten.
+The verdict's audit row alone is not proof of enforcement. A button challenge
+without either saved prompt id is released as an orphan, with the same sanction
+check and retries as other fail-open releases. A prompt send tracked in this
+process is still in flight and is skipped by the sweep. `cap:` callbacks skip the
 admin sequencer. Dry-run, a restricted joiner, a blocklisted id, a chat turned
 off mid-challenge, and a prompt that cannot be stored fail open — unless that
 mute must stay because of such a sanction. An admin change cancels the
@@ -256,6 +282,13 @@ challenge. A blocklisted id is left untouched. An ordinary join in that
 chat does not start the button captcha. An admin who approves the request
 cancels the row and the private button is deleted. The bot needs
 `can_invite_users`.
+
+Link-count limits count occurrences, not unique destination strings. The
+normalizer merges overlapping regex and Telegram entity spans (UTF-16 offsets
+are converted to byte boundaries), counts hidden `text_link` and scheme-less
+`url` entities, and preserves repeated links in separate places. Other message
+text surfaces are counted independently. The deduplicated `Links` list used by
+domain rules remains unchanged.
 
 The blocklist checks the atomic in-memory LOLS snapshot first, then a per-user
 CAS `/check` endpoint. LOLS full and accumulated delta data are retained
@@ -366,7 +399,7 @@ process restart to take effect.
   rather than blocking the single polling consumer.
 - On shutdown, polling and background producers stop first, bounded by their
   own 10s budget. A separate work context keeps the dispatcher alive while
-  albums flush and accepted sequencer work drains, under its own 30s deadline
+  albums flush, accepted callback routing completes, and source-chat sequencer work drains, under its own 30s deadline
   armed only once the producers are done. After the drain completes—or after
   that deadline cancels remaining work—the dispatcher exits and the database
   closes last.
@@ -382,7 +415,7 @@ what `main` wires today:
   `False positive` and `Lift (no learn)` call Telegram to unban or fully unmute
   (`UnrestrictMember`, not a permissive `RestrictMember`), `Delete evidence`
   deletes the copied messages, and `Confirm spam` / `False positive` /
-  `Enforce` train Bayes. Training reads the tokens captured at detection time
+  `Enforce` train Bayes. Training relabels an existing opposite sample (also for CLI `decide`), and reads the tokens captured at detection time
   and stored with the incident, so the callback payload carries no evidence
   text and does not need to; `Lift (no learn)` drops those tokens instead of
   feeding them. Each incident admits one decision, so a press on an old card

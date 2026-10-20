@@ -198,9 +198,10 @@ func (h *Handler) onUpdate(_ context.Context, updateID int64, m domain.Message, 
 	if ImmuneSender(m.Sender) {
 		return
 	}
-	// Standalone messages (Add returns true) are handled immediately; album
-	// parts are buffered and flushed together as one incident.
-	if h.album.Add(m) {
+	// Edits retain their media group ID but are individual updates, not new
+	// album parts. Keep their edited flag and sequencer ordering intact.
+	// Fresh album parts are buffered and flushed together as one incident.
+	if edited || h.album.Add(m) {
 		h.seq.Submit(m.ChatID, func() {
 			h.process(h.rootCtx, []domain.Message{m}, edited)
 		})

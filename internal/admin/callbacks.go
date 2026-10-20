@@ -345,15 +345,19 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 		if err != nil {
 			log.Printf("incident %d: partial enforcement: %v", inc.ID, err)
 		}
-		// Hand the claim back if — and only if — the row now records the
-		// incident as enforced. That row is what refuses a SECOND enforce
+		// If a sanction landed, hand the claim back only when the row
+		// records the incident as enforced. That row is what refuses a SECOND enforce
 		// ("already enforced" above), so with it in place the claim is no
 		// longer the thing preventing a double sanction, and holding it
 		// would only block the undo buttons: an incident whose sanction is
 		// live and unliftable is exactly the state every other branch here
 		// is written to avoid. If the row did NOT flip (the marking write
 		// failed), the claim stays — then it is the only guard left.
-		if row, rerr := h.db.GetIncident(inc.ID); rerr == nil && !row.DryRun {
+		if !sanctioned {
+			// Deletion alone cannot leave an in-flight sanction claim behind.
+			// Release it so captcha can finish and the moderator can retry.
+			h.releaseClaim(inc.ID, act)
+		} else if row, rerr := h.db.GetIncident(inc.ID); rerr == nil && !row.DryRun {
 			h.releaseClaim(inc.ID, act)
 		} else if rerr != nil {
 			log.Printf("incident %d: re-reading after enforcement failed, undo stays claimed: %v", inc.ID, rerr)

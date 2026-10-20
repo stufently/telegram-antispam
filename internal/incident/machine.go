@@ -133,6 +133,14 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 // review being promoted after an edit. Its result records whether enforcement
 // landed even when deletion or the final state write failed.
 func (m *Machine) process(ctx context.Context, id int64, inc domain.Incident) (sanctioned bool, err error) {
+	// Keep pending/evidenced reserved for work that may still sanction. A
+	// finished failed attempt must not strand a concurrent captcha mute.
+	stoppedForEvidence := false
+	defer func() {
+		if err != nil && !sanctioned && !stoppedForEvidence {
+			m.setState(id, domain.StateNotActed)
+		}
+	}()
 	// An album's remaining ids, for a sanction applied later from the admin
 	// chat: the row itself is keyed on one of them. Best-effort — failing to
 	// record them must not stop the moderation that is about to happen; the
@@ -180,8 +188,13 @@ func (m *Machine) process(ctx context.Context, id int64, inc domain.Incident) (s
 		log.Printf("incident %d: chat title lookup failed: %v", id, titleErr)
 	}
 	if copyErr != nil {
-		m.setState(id, domain.StateEvidenceFailed)
 		acting := actsWithoutEvidence(inc.Verdict)
+		if !acting {
+			stoppedForEvidence = true
+			m.setState(id, domain.StateEvidenceFailed)
+		}
+		// A manual/blocklist verdict can still sanction with no copy. Leave
+		// it pending until that call finishes; evidence_failed is terminal.
 		// Tell the admins either way, and BEFORE deciding whether to act:
 		// "detected but not acted on" is exactly the outcome that must not
 		// be silent, and the notification is the only trace left once the
@@ -502,6 +515,9 @@ type Outcome struct {
 func (m *Machine) Enforce(ctx context.Context, id int64, inc domain.Incident) Outcome {
 	var out Outcome
 	actErr := m.applyAction(ctx, inc)
+	if actErr != nil {
+		m.setState(id, domain.StateNotActed)
+	}
 	if actErr == nil {
 		out.Sanctioned = true
 		m.setState(id, domain.StateActed)

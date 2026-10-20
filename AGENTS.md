@@ -125,6 +125,16 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   out — it counts the same text as evidence for both classes and moves the
   decision boundary in a direction nobody chose. Counts floor at zero: a
   negative count would read as evidence for the other class.
+- Admin-card callbacks must resolve the incident's source chat off the polling
+  goroutine and join its sequencer, behind initial enforcement AND command
+  training. Drain the callback routing queue before closing the source queues.
+  Calling the admin handler concurrently with the initial machine can consume
+  False positive before the sanction lands and leave a mute with no undo.
+- `evidence_failed` and `not_acted` are terminal no-sanction outcomes. Allowed
+  enforcement without evidence stays pending until its action finishes; failed
+  pre-sanction attempts become `not_acted` and remain manually retryable. Captcha
+  ignores those terminal failures but protects pending/evidenced attempts and
+  active override claims. Never infer sanction success from the audit alone.
 - An incident accepts exactly ONE decision (`store.RecordDecision`, a conditional
   UPDATE). The buttons live in the admin chat forever, so a late press would
   otherwise lift a newer, unrelated sanction on the same user — Telegram gives no

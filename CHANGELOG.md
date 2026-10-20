@@ -8,6 +8,28 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-10-20
+
+### Fixed
+
+- Album-caption edits now reach edit detection and cannot increase trust.
+- Admin-card callbacks run after moderation and command training in the source
+  chat's queue, so an early False positive reliably undoes the applied sanction.
+  Callback routing drains before those queues close during shutdown.
+- False positive, confirmation and CLI `decide` relabel earlier Bayes samples
+  instead of retaining the same tokenized sample in both classes, preserving
+  the configured training origin.
+- Orphaned button captchas with no saved prompt release the captcha mute instead
+  of kicking the user; in-flight prompts and real sanctions remain protected.
+- Captcha no longer treats a terminal evidence failure or failed moderation
+  attempt as an applied sanction. Failed attempts use `not_acted`, remain
+  manually retryable, and in-flight enforcement still protects its mute.
+  A failed sanction releases the enforce claim even if message deletion succeeded.
+- Moderator commands protect anonymous administrators and linked-channel posts,
+  including Telegram's technical sender identities.
+- Link limits count hidden/entity links and repeated occurrences correctly,
+  without double-counting overlapping `https://t.me/...` matches.
+
 ## [0.21.0] - 2026-10-20
 
 ### Added

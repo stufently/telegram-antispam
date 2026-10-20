@@ -8,6 +8,7 @@ import (
 
 	"github.com/stufently/telegram-antispam/internal/detect"
 	"github.com/stufently/telegram-antispam/internal/domain"
+	"github.com/stufently/telegram-antispam/internal/telegram"
 )
 
 // Command is a moderator command typed in a moderated chat (not the admin
@@ -201,10 +202,15 @@ func (c *Commands) authorize(ctx context.Context, m domain.Message) (bool, error
 }
 
 // targetRefusal rejects targets no command may touch: the bot itself,
-// senderless service messages, and this chat's own administrators (the same
-// immunity the cascade grants them — a compromised or careless moderator
-// must not be able to turn the bot on the moderators).
+// senderless service messages, linked-channel posts, and this chat's own
+// administrators (the same immunity the cascade grants them). A compromised
+// or careless moderator must not turn the bot on protected senders.
 func (c *Commands) targetRefusal(ctx context.Context, chatID int64, target *domain.Message) (string, bool) {
+	// Anonymous admins may carry Telegram's technical user ID, which is not
+	// in the live admin roster. Their sender identity is the chat itself.
+	if telegram.ImmuneSender(target.Sender) || (target.Sender.SenderChatID != 0 && target.Sender.SenderChatID == chatID) {
+		return "Сообщение от защищённого отправителя (администратор или связанный канал) — команда неприменима.", false
+	}
 	if target.Sender.UserID == c.botID && c.botID != 0 {
 		return "Это сообщение бота — обрабатывать его нечего.", false
 	}

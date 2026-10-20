@@ -6,6 +6,7 @@ package detect
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -65,6 +66,10 @@ func Normalize(m domain.Message) NormalizedMessage {
 	parts = append(parts, m.PollOptionTexts...)
 	parts = append(parts, m.SenderTag)
 	raw := strings.Join(parts, " ")
+	linkCount := countLinkOccurrences(m.Text, m.Entities)
+	for _, part := range parts[1:] {
+		linkCount += countLinkOccurrences(part, nil)
+	}
 
 	hasCustomEmoji := false
 	for _, e := range m.Entities {
@@ -81,7 +86,7 @@ func Normalize(m domain.Message) NormalizedMessage {
 		HasCustomEmoji:     hasCustomEmoji,
 		SenderTagNorm:      Deobfuscate(m.SenderTag),
 		RawLen:             utf8.RuneCountInString(m.Text),
-		LinkCount:          len(urlRe.FindAllString(raw, -1)) + len(tMeRe.FindAllString(raw, -1)),
+		LinkCount:          linkCount,
 		MentionCount:       len(mentionRe.FindAllString(raw, -1)),
 		EmojiCount:         countEmoji(raw) + countCustomEmoji(m.Entities),
 		MediaKinds:         m.MediaKinds,
@@ -92,6 +97,51 @@ func Normalize(m domain.Message) NormalizedMessage {
 		HasKeyboard:        m.HasKeyboard,
 		ViaBot:             m.ViaBot,
 	}
+}
+
+// countLinkOccurrences combines entity and regex spans in one text surface.
+// Overlapping spans describe one occurrence; equal URLs at different positions
+// remain separate. Entity offsets are UTF-16 units, regex offsets are bytes.
+func countLinkOccurrences(text string, entities []domain.Entity) int {
+	spans := urlRe.FindAllStringIndex(text, -1)
+	spans = append(spans, tMeRe.FindAllStringIndex(text, -1)...)
+	if len(entities) > 0 {
+		boundaries := make(map[int]int)
+		units := 0
+		for i, r := range text {
+			boundaries[units] = i
+			units++
+			if r > 0xFFFF {
+				units++
+			}
+		}
+		boundaries[units] = len(text)
+		for _, e := range entities {
+			if e.Type != "url" && (e.Type != "text_link" || e.URL == "") {
+				continue
+			}
+			// Check before adding to avoid overflow as well as out-of-range spans.
+			if e.Offset < 0 || e.Length <= 0 || e.Offset > units || e.Length > units-e.Offset {
+				continue
+			}
+			start, startOK := boundaries[e.Offset]
+			end, endOK := boundaries[e.Offset+e.Length]
+			if startOK && endOK {
+				spans = append(spans, []int{start, end})
+			}
+		}
+	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i][0] < spans[j][0] })
+	count, end := 0, -1
+	for _, span := range spans {
+		if span[0] >= end {
+			count++
+		}
+		if span[1] > end {
+			end = span[1]
+		}
+	}
+	return count
 }
 
 func normalizedMetadata(values []string) []string {

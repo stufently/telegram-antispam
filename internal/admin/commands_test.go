@@ -205,14 +205,19 @@ func TestCommandRefusesBotAndServiceTargets(t *testing.T) {
 // owners often enough that refusing them would make the commands useless in
 // exactly the chats that need them.
 func TestCommandAllowsAnonymousAdmin(t *testing.T) {
-	fx := newCmdFixture(t)
-	m := spamCmd(0, target(42))
-	m.Sender = domain.Sender{SenderChatID: testChat, Kind: domain.SenderAnonAdmin}
+	for _, command := range []string{"/spam", "/ban"} {
+		t.Run(command, func(t *testing.T) {
+			fx := newCmdFixture(t)
+			m := spamCmd(0, target(42))
+			m.Text = command
+			m.Sender = domain.Sender{SenderChatID: testChat, Kind: domain.SenderAnonAdmin}
 
-	fx.c.Handle(context.Background(), m)
+			fx.c.Handle(context.Background(), m)
 
-	if len(fx.reported) != 1 {
-		t.Fatalf("anonymous admin must be able to report spam, got %d incidents", len(fx.reported))
+			if len(fx.reported) != 1 {
+				t.Fatalf("anonymous admin must be able to moderate, got %d incidents", len(fx.reported))
+			}
+		})
 	}
 }
 
@@ -284,5 +289,77 @@ func TestCommandBanSanctionsWithoutTraining(t *testing.T) {
 	}
 	if len(got.Tokens) != 0 {
 		t.Fatalf("tokens = %v, want none — they only exist so the buttons can train later", got.Tokens)
+	}
+}
+
+func TestCommandsRefuseAnonymousAdminTargets(t *testing.T) {
+	for _, command := range []string{"/spam", "/ban"} {
+		for _, sender := range []domain.Sender{
+			{Kind: domain.SenderAnonAdmin, UserID: 1087968824, SenderChatID: testChat},
+			{Kind: domain.SenderAnonAdmin, UserID: 1087968824},
+			{Kind: domain.SenderExternalChannel, UserID: 1087968824, SenderChatID: testChat},
+		} {
+			t.Run(command+"/"+string(sender.Kind), func(t *testing.T) {
+				fx := newCmdFixture(t)
+				reply := target(sender.UserID)
+				reply.Sender = sender
+				cmd := spamCmd(testAdmin, reply)
+				cmd.Text = command
+				fx.c.Handle(context.Background(), cmd)
+				if len(fx.reported) != 0 || len(fx.trained) != 0 {
+					t.Errorf("anonymous admin target produced incidents=%d training=%v", len(fx.reported), fx.trained)
+				}
+				for _, call := range fx.f.Calls() {
+					switch call {
+					case "DeleteMessages", "BanMember", "BanSenderChat", "RestrictMember":
+						t.Errorf("protected target triggered %s", call)
+					}
+				}
+				if fx.f.LastEphemeral.Text == "" {
+					t.Error("expected refusal explanation")
+				}
+			})
+		}
+	}
+}
+
+func TestCommandsAllowExternalChannelTargets(t *testing.T) {
+	for _, command := range []string{"/spam", "/ban"} {
+		t.Run(command, func(t *testing.T) {
+			fx := newCmdFixture(t)
+			reply := target(0)
+			reply.Sender = domain.Sender{Kind: domain.SenderExternalChannel, SenderChatID: -100888}
+			cmd := spamCmd(testAdmin, reply)
+			cmd.Text = command
+			fx.c.Handle(context.Background(), cmd)
+			if len(fx.reported) != 1 {
+				t.Fatalf("external channel target incidents=%d, want 1", len(fx.reported))
+			}
+		})
+	}
+}
+
+func TestCommandsRefuseLinkedChannelTargets(t *testing.T) {
+	for _, command := range []string{"/spam", "/ban", "/ham"} {
+		t.Run(command, func(t *testing.T) {
+			fx := newCmdFixture(t)
+			reply := target(0)
+			reply.Sender = domain.Sender{Kind: domain.SenderLinkedChannel, SenderChatID: -100888}
+			cmd := spamCmd(testAdmin, reply)
+			cmd.Text = command
+			fx.c.Handle(context.Background(), cmd)
+			if len(fx.reported) != 0 || len(fx.trained) != 0 {
+				t.Errorf("linked channel target produced incidents=%d training=%v", len(fx.reported), fx.trained)
+			}
+			for _, call := range fx.f.Calls() {
+				switch call {
+				case "DeleteMessages", "BanMember", "BanSenderChat", "RestrictMember", "UnbanMember", "UnbanSenderChat", "UnrestrictMember":
+					t.Errorf("protected linked channel triggered %s", call)
+				}
+			}
+			if fx.f.LastEphemeral.Text == "" {
+				t.Error("expected refusal explanation")
+			}
+		})
 	}
 }

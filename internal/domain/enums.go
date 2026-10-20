@@ -39,4 +39,6 @@ const (
 	StateCleaned        IncidentState = "cleaned"
 	StateDone           IncidentState = "done"
 	StateEvidenceFailed IncidentState = "evidence_failed"
+	// StateNotActed is a finished attempt whose sanction did not land.
+	StateNotActed IncidentState = "not_acted"
 )

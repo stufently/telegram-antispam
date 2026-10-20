@@ -11,7 +11,6 @@ import (
 	"github.com/stufently/telegram-antispam/internal/admin"
 	"github.com/stufently/telegram-antispam/internal/config"
 	"github.com/stufently/telegram-antispam/internal/store"
-	"github.com/stufently/telegram-antispam/internal/train"
 )
 
 // runDecide implements the `decide` subcommand: it confirms one or more
@@ -93,10 +92,7 @@ func runDecide(args []string, openDB func(string) (*store.DB, error)) (err error
 	// still worth recording; the sample is not.
 	var trainer func(chatID int64, label string, tokens []string) error
 	if !*noTrain {
-		trainer = func(chatID int64, label string, tokens []string) error {
-			_, recErr := train.RecordTokens(db, scopeFor(chatID), label, *origin, tokens)
-			return recErr
-		}
+		trainer = feedbackTrainer(db, scopeFor, *origin)
 	}
 
 	var failed int

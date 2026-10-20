@@ -829,3 +829,34 @@ func TestServiceMessagesNeverReachTheDetector(t *testing.T) {
 		t.Fatal("a leave notice was handed to the detector")
 	}
 }
+
+func TestEditedAlbumUsesEditedHookWithoutEarningTrust(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.NewStore(&config.Config{Chats: config.ChatsPolicy{Mode: "auto"}})
+	seq := telegram.NewSequencer()
+	h := telegram.NewHandler(db, seq, cfg, incident.New(fake.New(), db, 999))
+	var ordinary, edited int
+	h.SetDecide(func(domain.Message) (domain.Verdict, bool) { ordinary++; return domain.Verdict{}, false })
+	h.SetEditedDecide(func(domain.Message) (domain.Verdict, bool) { edited++; return domain.Verdict{}, false })
+	msg := domain.Message{ChatID: -100123, MessageID: 55, MediaGroupID: "album", Sender: domain.Sender{UserID: 7, Kind: domain.SenderUser}, Text: "вполне обычное сообщение в чате"}
+	h.OnEditedMessage(context.Background(), 1, msg)
+	h.Stop() // Flush any accidentally buffered edit deterministically.
+	seq.Wait()
+	if ordinary != 0 || edited != 1 {
+		t.Errorf("ordinary=%d edited=%d, want 0 and 1", ordinary, edited)
+	}
+	count, err := db.TrustCount(msg.ChatID, msg.Sender.UserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("edited album earned trust: %d", count)
+	}
+}

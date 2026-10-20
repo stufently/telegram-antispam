@@ -108,7 +108,7 @@ const ManualOverrideClaim = "enf"
 //
 //   - dry_run=1: the chat was observing, or the verdict was review-only;
 //     nothing was done to the sender.
-//   - state pending / evidenced / evidence_failed: the machine stopped
+//   - state pending / evidenced / evidence_failed / not_acted: the machine stopped
 //     before the sanction landed (a failed evidence copy on a probabilistic
 //     verdict, the production case; or a failed sanction or admin notice).
 //     Enforce moves the state to acted the moment the sanction succeeds, so
@@ -126,11 +126,11 @@ func (db *DB) ClaimManualOverride(id int64) (claimed bool, messageIDs, evidenceI
 UPDATE incidents SET decision=?
 WHERE id=? AND decision=''
   AND (dry_run=1
-       OR state IN (?,?,?)
+       OR state IN (?,?,?,?)
        OR NOT EXISTS (SELECT 1 FROM audit a WHERE a.incident_id=incidents.id
                       AND a.action IN (?,?,?,?)))`,
 			ManualOverrideClaim, id,
-			string(domain.StatePending), string(domain.StateEvidenced), string(domain.StateEvidenceFailed),
+			string(domain.StatePending), string(domain.StateEvidenced), string(domain.StateEvidenceFailed), string(domain.StateNotActed),
 			string(domain.ActionBan), string(domain.ActionMute), string(domain.ActionDeleteMute), string(domain.ActionDeleteOnly),
 		)
 		if execErr != nil {

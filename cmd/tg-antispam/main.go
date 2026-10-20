@@ -380,6 +380,11 @@ func main() {
 		adminCache      *telegram.AdminCache
 		selfCheck       func(context.Context, int64)
 	)
+	callbackRouter := newAdminCallbackRouter(db, seq, func(cb admin.Callback) {
+		if err := adminHandler.Handle(workCtx, cb); err != nil {
+			log.Printf("admin callback: %v", err)
+		}
+	})
 
 	opts := []tgbot.Option{
 		// Bot.New otherwise performs a direct GetMe before LivePort exists.
@@ -411,15 +416,9 @@ func main() {
 			case update.CallbackQuery != nil:
 				reg.IncCounter("tg_antispam_updates_total", 1, "kind", "callback")
 				cb := update.CallbackQuery
-				// Offload onto the sequencer: WithNotAsyncHandlers runs this
-				// inline on the single poll-consumer goroutine, and
-				// adminHandler.Handle does DB + GetChatAdministrators
-				// (network) + AnswerCallback work that would otherwise stall
-				// polling. All admin callbacks share one bucket (cfg's admin
-				// chat id) — fine since they're low volume; seq.Wait() at
-				// shutdown drains this job like any other. Use workCtx, not the
-				// per-update context, so an accepted job remains live during the
-				// bounded drain after polling stops.
+				// Resolve callback scope off the polling goroutine, then run
+				// it after moderation and command training in the source chat.
+				// The routing queue drains before seq during shutdown.
 				dispatchCallback(cb.Data, func() {
 					if captcha == nil {
 						return
@@ -431,28 +430,15 @@ func main() {
 						}
 					})
 				}, func() {
-					seq.Submit(cfgStore.Current().AdminChatID, func() {
-						// The offending message's tokens were persisted when the
-						// incident was created (store.SaveIncidentTokens), so the
-						// handler loads them itself — nothing message-shaped has
-						// to survive on the callback payload, which carries only
-						// where the button sits.
-						var adminChatID int64
-						var messageID int
-						if cb.Message.Message != nil {
-							adminChatID = cb.Message.Message.Chat.ID
-							messageID = cb.Message.Message.ID
-						}
-						err := adminHandler.Handle(workCtx, admin.Callback{
-							ID:          cb.ID,
-							Data:        cb.Data,
-							PresserID:   cb.From.ID,
-							AdminChatID: adminChatID,
-							MessageID:   messageID,
-						})
-						if err != nil {
-							log.Printf("admin callback: %v", err)
-						}
+					var adminChatID int64
+					var messageID int
+					if cb.Message.Message != nil {
+						adminChatID = cb.Message.Message.Chat.ID
+						messageID = cb.Message.Message.ID
+					}
+					callbackRouter.Submit(admin.Callback{
+						ID: cb.ID, Data: cb.Data, PresserID: cb.From.ID,
+						AdminChatID: adminChatID, MessageID: messageID,
 					})
 				})
 			case update.ChatJoinRequest != nil:
@@ -609,10 +595,7 @@ func main() {
 	// Moderator feedback trains the same corpus the message was SCORED
 	// against, so a confirm/false-positive press in the crypto chat does not
 	// teach the hookah chats that "куплю usdt" is fine.
-	adminHandler.SetTrainer(func(chatID int64, label string, tokens []string) error {
-		_, err := train.RecordTokens(db, bayesScopeFor(chatID), label, "user", tokens)
-		return err
-	})
+	adminHandler.SetTrainer(feedbackTrainer(db, bayesScopeFor, "user"))
 	// The "Spam: delete + mute" button on a card where nothing was done yet
 	// (a review verdict, or a chat still observing). It reuses the incident
 	// machine's own enforcement so the ordering — sanction, then delete, then
@@ -797,8 +780,8 @@ func main() {
 	// metrics registry.
 	startBackground(func() {
 		sample := func() {
-			reg.SetGauge("tg_antispam_jobs_dropped", float64(seq.Dropped()))
-			reg.SetGauge("tg_antispam_jobs_panicked", float64(seq.Panicked()))
+			reg.SetGauge("tg_antispam_jobs_dropped", float64(seq.Dropped()+callbackRouter.routing.Dropped()))
+			reg.SetGauge("tg_antispam_jobs_panicked", float64(seq.Panicked()+callbackRouter.routing.Panicked()))
 		}
 		sample()
 		t := time.NewTicker(30 * time.Second)
@@ -1077,6 +1060,7 @@ func main() {
 		stopWork()
 	})
 	handler.Stop()
+	callbackRouter.Wait()
 	seq.Wait()
 	if welcomer != nil {
 		welcomer.Wait()

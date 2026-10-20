@@ -497,10 +497,10 @@ func TestCaptchaSurvivesRestart(t *testing.T) {
 	if _, err := e.c.Sweep(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if e.row(1).State != store.CaptchaFailed || e.row(2).State != store.CaptchaCancelled {
+	if e.row(1).State != store.CaptchaCancelled || e.row(2).State != store.CaptchaCancelled {
 		t.Fatal(e.row(1).State, e.row(2).State, e.calls())
 	}
-	if !called(e.calls(), "BanMember") || !called(e.calls(), "UnbanMember") || !called(e.calls(), "UnrestrictMember") {
+	if called(e.calls(), "BanMember") || called(e.calls(), "UnbanMember") || !called(e.calls(), "UnrestrictMember") {
 		t.Fatal(e.calls())
 	}
 }

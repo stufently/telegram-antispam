@@ -507,6 +507,11 @@ func (c *Captcha) Sweep(ctx context.Context) (int, error) {
 				c.fail(ctx, failed)
 			}
 		case store.CaptchaChallenged:
+			// Button challenges enter this state before the prompt is sent.
+			// A live send is not a restart orphan, even past its old deadline.
+			if row.Mode != "join_request" && c.tracking(row.ChatID, row.UserID) {
+				continue
+			}
 			n++
 			if row.Mode == "join_request" {
 				c.sweepJoinChallenged(ctx, row)
@@ -531,7 +536,10 @@ func (c *Captcha) sweepChallenged(ctx context.Context, row store.CaptchaRow) {
 		return
 	}
 	action := pol.OnFail
-	if out != "" {
+	// With no persisted prompt, a crash interrupted challenge delivery.
+	// Never punish someone who had no button to press; fail() still checks
+	// for a real sanction before releasing them, including on retries.
+	if out != "" || (row.EphemeralID == 0 && row.MessageID == 0) {
 		action = "unrestrict"
 	} else {
 		sanctioned, serr := c.Store.SanctionSince(row.ChatID, row.UserID, row.CreatedAt)

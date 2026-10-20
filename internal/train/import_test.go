@@ -108,3 +108,22 @@ func TestSampleHashIsDeobfuscatedAndDeterministic(t *testing.T) {
 		t.Fatal("different text produced the same hash")
 	}
 }
+
+func TestRelabelTokensPreservesOrigin(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+	tokens := []string{"example"}
+	if _, err := RecordTokens(db, "global", "ham", "import", tokens); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := RelabelTokens(db, "global", "ham", "spam", "cli", tokens); err != nil {
+		t.Fatal(err)
+	}
+	var origin string
+	if err := db.Read().QueryRow("SELECT origin FROM samples WHERE label='spam'").Scan(&origin); err != nil {
+		t.Fatal(err)
+	}
+	if origin != "cli" {
+		t.Fatalf("origin=%q, want cli", origin)
+	}
+}

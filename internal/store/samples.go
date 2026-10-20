@@ -74,6 +74,11 @@ func (db *DB) RecordSample(scope, label, origin, hash string, tokens []string) (
 // which of the two happened; added reports whether the `to` sample is new
 // (false means it was already labeled that way and nothing was written).
 func (db *DB) RelabelSample(scope, from, to, hash string, tokens []string) (relabeled, added bool, err error) {
+	return db.RelabelSampleWithOrigin(scope, from, to, "user", hash, tokens)
+}
+
+// RelabelSampleWithOrigin records the source of the correction alongside its new label.
+func (db *DB) RelabelSampleWithOrigin(scope, from, to, origin, hash string, tokens []string) (relabeled, added bool, err error) {
 	err = db.Write(func(tx *sql.Tx) error {
 		res, err := tx.Exec(
 			`DELETE FROM samples WHERE scope = ? AND label = ? AND normalized_hash = ?`,
@@ -95,7 +100,7 @@ func (db *DB) RelabelSample(scope, from, to, hash string, tokens []string) (rela
 
 		ins, err := tx.Exec(
 			`INSERT OR IGNORE INTO samples(scope, label, origin, normalized_hash) VALUES(?,?,?,?)`,
-			scope, to, "user", hash,
+			scope, to, origin, hash,
 		)
 		if err != nil {
 			return err

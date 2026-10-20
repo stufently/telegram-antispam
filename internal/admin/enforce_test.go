@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stufently/telegram-antispam/internal/domain"
+	"github.com/stufently/telegram-antispam/internal/incident"
 	"github.com/stufently/telegram-antispam/internal/store"
 	"github.com/stufently/telegram-antispam/internal/telegram/fake"
 )
@@ -273,5 +274,48 @@ func TestEnforceRereadsTheIncidentAfterClaiming(t *testing.T) {
 	}
 	if called || reply != "already enforced" {
 		t.Fatalf("enforce on a stale row: called=%v reply=%q, want no second sanction", called, reply)
+	}
+}
+
+func TestEnforceDeletionWithoutSanctionReleasesClaim(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+	id := reportedIncident(t, db, nil)
+	f := fake.New()
+	f.RestrictErr = context.DeadlineExceeded
+	m := incident.New(f, db, 999)
+	h := NewHandler(f, db, map[int64]bool{7: true})
+	attempts := 0
+	h.SetEnforcer(func(ctx context.Context, row store.IncidentRow) (bool, bool, error) {
+		attempts++
+		out := m.Enforce(ctx, row.ID, domain.Incident{ChatID: row.ChatID, MessageIDs: row.MessageIDs, Sender: domain.Sender{UserID: row.UserID}, Verdict: domain.Verdict{Action: domain.ActionDeleteMute}})
+		if out.Sanctioned {
+			if err := db.MarkIncidentEnforced(row.ID, domain.ActionDeleteMute); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return out.Sanctioned, out.Deleted, out.Err
+	})
+	cb := Callback{ID: "partial", Data: encode(ActEnforce, strconv.FormatInt(id, 10)), PresserID: 7}
+	if err := h.Handle(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+	row, err := db.GetIncident(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.State != domain.StateNotActed {
+		t.Fatalf("state=%s", row.State)
+	}
+	protected, err := db.SanctionSince(row.ChatID, row.UserID, 0)
+	if err != nil || protected {
+		t.Fatalf("failed sanction still protects captcha: %v %v", protected, err)
+	}
+	f.RestrictErr = nil
+	if err := h.Handle(context.Background(), cb); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts=%d, want retry", attempts)
 	}
 }

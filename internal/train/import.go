@@ -107,5 +107,5 @@ func RelabelTokens(db *store.DB, scope, from, to, origin string, tokens []string
 	if len(tokens) == 0 {
 		return false, false, nil
 	}
-	return db.RelabelSample(scope, from, to, TokenHash(tokens), tokens)
+	return db.RelabelSampleWithOrigin(scope, from, to, origin, TokenHash(tokens), tokens)
 }

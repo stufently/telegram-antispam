@@ -240,18 +240,24 @@ func (db *DB) DueCaptchas(now int64, limit int) ([]CaptchaRow, error) {
 
 func (db *DB) SanctionSince(chatID, userID, since int64) (bool, error) {
 	var one int
-	// A review, quarantine, delete-only or dry-run incident did not mute
-	// this person. Only an audit action that is itself a mute or a ban —
-	// written in the same transaction as the incident — means the captcha
-	// must leave that mute alone.
+	// Audit rows are verdicts, not proof of a sanction. Pending/evidenced
+	// mute or ban verdicts may still be in flight, so protect them as well
+	// as applied actions. evidence_failed means enforcement stopped before
+	// acting. A manual override claim is independently protected: it may
+	// already be applying a sanction while the old dry-run/action remains.
 	err := db.Read().QueryRow(`SELECT 1 FROM incidents i
-		WHERE i.chat_id=? AND i.user_id=? AND i.dry_run=0 AND i.created_at>=?
-		  AND EXISTS (
-		    SELECT 1 FROM audit a
-		    WHERE a.incident_id=i.id AND a.action IN (?,?,?)
-		  )
+		WHERE i.chat_id=? AND i.user_id=? AND i.created_at>=?
+		  AND (i.decision=? OR (
+		    i.dry_run=0 AND i.state IN (?,?,?,?,?)
+		    AND EXISTS (
+		      SELECT 1 FROM audit a
+		      WHERE a.incident_id=i.id AND a.action IN (?,?,?)
+		    )
+		  ))
 		LIMIT 1`,
-		chatID, userID, since,
+		chatID, userID, since, ManualOverrideClaim,
+		string(domain.StatePending), string(domain.StateEvidenced),
+		string(domain.StateActed), string(domain.StateCleaned), string(domain.StateDone),
 		string(domain.ActionDeleteMute), string(domain.ActionMute), string(domain.ActionBan)).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
