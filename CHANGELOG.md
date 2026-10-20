@@ -8,6 +8,12 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+### Changed
+
+- Build with Go 1.27.3 (minimum Go 1.27), including Docker and release CI.
+  Update golangci-lint to 2.15.0 and Go dependencies, including SQLite 1.60.1,
+  x/text 0.43.0 and x/time 0.16.0.
+
 ## [0.20.0] - 2026-10-05
 
 ### Changed
