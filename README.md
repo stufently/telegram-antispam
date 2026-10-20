@@ -42,8 +42,8 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
 - **Behavioral heuristics** — duplicate-message, short-message flood, and edit-after-post
   detection over a rolling window.
 - **Optional LLM adjudication (opt-in)** — for messages whose Bayes score sits near the
-  threshold (or, with `always_for_untrusted`, for every newcomer message), consult OpenAI
-  and/or Anthropic with an `any`/`all` consensus policy.
+  threshold (or, with `always_for_untrusted`, for every newcomer message), consult OpenAI,
+  Anthropic and/or JEV with an `any`/`all` consensus policy.
   **Disabled by default** — no message text ever leaves the process unless you opt in.
 - **Captionless-media review** — a newcomer's photo, video or sticker with (almost) no
   caption reaches no text detector at all: rules, Bayes and the LLM all read words. Such a
@@ -190,8 +190,8 @@ helm install tg-antispam ./deploy/helm/tg-antispam \
 The bot token is injected as the `BOT_TOKEN` env var from a Secret, so it never lands in the
 ConfigMap. Use `--set existingSecret=<name>` to reference a pre-created Secret (recommended),
 or `--set botToken=<token>` to let the chart manage one. LLM keys work the same way — set
-`llmSecret.name` plus `llmSecret.openaiKey` / `llmSecret.anthropicKey` and they arrive as
-`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`, so no credential is written into the ConfigMap.
+`llmSecret.name` plus `llmSecret.openaiKey` / `llmSecret.anthropicKey` / `llmSecret.jevKey` and they arrive as
+`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `JEV_TOKEN`, so no credential is written into the ConfigMap.
 
 The chart runs as a non-root user with a read-only root filesystem, no service-account token
 and all capabilities dropped, on a PVC-backed `/data` volume with a `Recreate` strategy and
@@ -290,6 +290,49 @@ llm:
       model: claude-3-5-haiku-latest
 ```
 
+JEV can be the only provider; it needs no OpenAI or Anthropic key. Supply its
+credential through `JEV_TOKEN` (overrides `api_key`), then configure:
+
+```yaml
+llm:
+  enabled: true
+  policy: any
+  providers:
+    - kind: jev
+      model: jev-1.13.0
+      threshold: 0.30
+      max_symbols: 6000
+```
+
+JEV calls the [TypeSafe System One API](https://docs.typesafe.ai/primitives/noul)
+and compares the typed spam probability with `threshold` (inclusive, valid range
+`(0, 1]`). The defaults shown above follow the model and threshold used by
+[Umputun's integration](https://github.com/umputun/tg-spam/blob/master/lib/tgspam/jev.go);
+our question is tailored to this bot, so this is a starting threshold, not an
+accuracy guarantee. Evaluate your chats in dry-run before enforcement, and again
+when changing the model or instructions.
+
+`max_symbols` limits the complete outgoing message, including structural metadata,
+to Unicode characters; zero is rejected. `api_base`, if supplied for JEV, is the
+**complete** endpoint (default `https://api.typesafe.ai/v1/systemone`). `llm.prompt`
+and per-chat `prompt_overrides` replace JEV's spam-question instructions; use a
+spam classification policy, not a request to generate prose. JEV ignores
+`temperature` and `max_tokens`. Malformed answers, HTTP errors and timeouts count
+as provider failures in the existing LLM metrics and cannot supply a spam vote.
+With `any`, another successful provider can still vote spam; `all` requires every
+provider to succeed and agree.
+
+Add JEV to the same provider list to combine it with other providers. The existing
+`always_for_untrusted: true` option expands checks beyond the borderline band;
+admin immunity, trust and earlier detectors still apply. JEV does not veto earlier
+verdicts. It shares the LLM timeout, evidence requirements and restart requirement.
+The optional stage remains off by default and sends message text externally only
+when enabled. No live API call is needed for the test suite.
+
+For Helm, set `llmSecret.name` and `llmSecret.jevKey` to reference a pre-existing
+Secret; the token is injected as `JEV_TOKEN`, never into the ConfigMap. Deploy an
+image built from this change when using these settings.
+
 See [`config.example.yaml`](config.example.yaml) for every option with documented defaults.
 
 ## Architecture
@@ -302,7 +345,7 @@ A clean, testable layering keeps the detection core pure and the side effects at
 | `internal/telegram` | The only package that talks to the Telegram Bot API; rate-limited outbound queue with 429 retry |
 | `internal/incident` | Evidence-before-action state machine with durable incident/audit state |
 | `internal/blocklist` | LOLS atomic snapshots with last-good data; cached, fail-open CAS checks |
-| `internal/llm` | Opt-in OpenAI / Anthropic borderline adjudication with consensus |
+| `internal/llm` | Opt-in OpenAI / Anthropic / JEV borderline adjudication with consensus |
 | `internal/store` | SQLite (WAL, single writer), migrations, audit log |
 | `internal/ops` | Prometheus metrics, `/healthz`, daily admin digest |
 | `internal/config` | YAML config load, validation, and hot-reload |

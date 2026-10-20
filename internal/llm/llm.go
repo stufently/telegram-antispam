@@ -1,5 +1,5 @@
 // Package llm implements the optional borderline-only LLM adjudication stage
-// (spec §5.4). It runs one or two paid, official LLM APIs over a message whose
+// (spec §5.4). It runs configured external classification APIs over a message whose
 // Bayes score sits near the threshold and combines their verdicts under a
 // consensus policy. It is entirely opt-in (config-gated) because it sends
 // message text to an external service (spec §9 privacy rules).

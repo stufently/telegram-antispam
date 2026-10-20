@@ -8,6 +8,15 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in JEV (TypeSafe) provider for the existing LLM stage, alone or in
+  `any`/`all` consensus with OpenAI and Anthropic. Supports a configurable
+  probability threshold, Unicode request bound and per-chat instructions.
+  Invalid answers and API failures are observable provider failures and fail
+  open. Configure `kind: jev` and supply `JEV_TOKEN`; Helm exposes
+  `llmSecret.jevKey`. The stage remains disabled by default.
+
 ### Changed
 
 - Build with Go 1.27.3 (minimum Go 1.27), including Docker and release CI.

@@ -125,6 +125,13 @@ spec:
                   name: {{ .Values.llmSecret.name }}
                   key: {{ .Values.llmSecret.anthropicKey }}
             {{- end }}
+            {{- if and .Values.llmSecret.name .Values.llmSecret.jevKey }}
+            - name: JEV_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.llmSecret.name }}
+                  key: {{ .Values.llmSecret.jevKey }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.metricsPort }}

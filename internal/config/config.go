@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -379,7 +380,7 @@ type Ops struct {
 }
 
 // LLMProvider is one configured LLM backend for the borderline stage (§5.4).
-// Kind selects the API ("openai" or "anthropic"); APIKey and Model are the
+// Kind selects the API ("openai", "anthropic" or "jev"); APIKey and Model are the
 // credentials and model name for that API.
 type LLMProvider struct {
 	Kind   string `yaml:"kind"`
@@ -391,6 +392,10 @@ type LLMProvider struct {
 	// OpenAI-compatible server) without a code change; the client code
 	// already supported it and only the config did not expose it.
 	APIBase string `yaml:"api_base"`
+	// Threshold and MaxSymbols apply only to JEV. Pointers distinguish omitted
+	// defaults (0.30 and 6000) from explicitly invalid zero values.
+	Threshold  *float64 `yaml:"threshold"`
+	MaxSymbols *int     `yaml:"max_symbols"`
 }
 
 // PromptFor returns the system prompt to use for chatID: its override when one
@@ -403,7 +408,7 @@ func (l LLM) PromptFor(chatID int64) string {
 }
 
 // LLM configures the optional, opt-in borderline LLM adjudication stage
-// (spec §5.4). It runs one or two paid official LLM APIs over a message whose
+// (spec §5.4). It runs configured external classification APIs over a message whose
 // Bayes score sits within BorderlineBand of the threshold and combines their
 // verdicts under Policy. It is disabled by default because it sends message
 // text to an external service (spec §9 privacy rules).
@@ -434,7 +439,7 @@ type LLM struct {
 	AlwaysForUntrusted bool `yaml:"always_for_untrusted"`
 	// HTTPTimeout bounds each provider call. Default: 10s.
 	HTTPTimeout Duration `yaml:"http_timeout"`
-	// Providers lists the LLM backends (1 or 2). An empty list disables the
+	// Providers lists the classification backends. An empty list disables the
 	// stage regardless of Enabled.
 	Providers []LLMProvider `yaml:"providers"`
 	// PromptOverrides replaces Prompt for specific chats, keyed by chat id.
@@ -642,6 +647,8 @@ func Parse(b []byte) (*Config, error) {
 			envKey = "OPENAI_API_KEY"
 		case "anthropic":
 			envKey = "ANTHROPIC_API_KEY"
+		case "jev":
+			envKey = "JEV_TOKEN"
 		default:
 			continue
 		}
@@ -882,6 +889,23 @@ func (c *Config) applyCaptchaDefaults() {
 // (external calls are opt-in), so — unlike the other blocks — a nil Enabled
 // stays disabled.
 func (c *Config) applyLLMDefaults() {
+	for i := range c.LLM.Providers {
+		p := &c.LLM.Providers[i]
+		if p.Kind != "jev" {
+			continue
+		}
+		if p.Model == "" {
+			p.Model = "jev-1.13.0"
+		}
+		if p.Threshold == nil {
+			v := 0.30
+			p.Threshold = &v
+		}
+		if p.MaxSymbols == nil {
+			v := 6000
+			p.MaxSymbols = &v
+		}
+	}
 	if c.LLM.Enabled == nil {
 		def := false
 		c.LLM.Enabled = &def
@@ -948,9 +972,19 @@ func (c *Config) Validate() error {
 		}
 		for i, p := range c.LLM.Providers {
 			switch p.Kind {
-			case "openai", "anthropic":
+			case "openai", "anthropic", "jev":
 			default:
-				return fmt.Errorf("llm.providers[%d].kind must be openai|anthropic, got %q", i, p.Kind)
+				return fmt.Errorf("llm.providers[%d].kind must be openai|anthropic|jev, got %q", i, p.Kind)
+			}
+			if p.Kind == "jev" {
+				if p.Threshold == nil || math.IsNaN(*p.Threshold) || math.IsInf(*p.Threshold, 0) || *p.Threshold <= 0 || *p.Threshold > 1 {
+					return fmt.Errorf("llm.providers[%d].threshold must be finite and in (0, 1]", i)
+				}
+				if p.MaxSymbols == nil || *p.MaxSymbols <= 0 {
+					return fmt.Errorf("llm.providers[%d].max_symbols must be positive", i)
+				}
+			} else if p.Threshold != nil || p.MaxSymbols != nil {
+				return fmt.Errorf("llm.providers[%d]: threshold and max_symbols require kind jev", i)
 			}
 			if p.APIKey == "" {
 				return fmt.Errorf("llm.providers[%d] (%s) missing api_key", i, p.Kind)

@@ -334,7 +334,7 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   far more expensive than getting it right here.
 - Put focused tests beside the changed package. Use `telegram/fake` for port
   behavior and `httptest` for external HTTP integrations; unit tests must not
-  require Telegram, CAS, LOLS, OpenAI, or Anthropic credentials.
+  require Telegram, CAS, LOLS, OpenAI, Anthropic, or JEV credentials.
 - A new config key normally needs the struct field, defaulting, validation,
   explicit-value tests, `config.example.yaml`, and startup wiring.
 - A new Telegram operation needs a `Port` method, `LivePort` implementation,
@@ -346,7 +346,7 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   name and add cascade-order tests when introducing or moving a stage.
 - Do not commit `config.yaml`, `.env`, database files, bot tokens, or LLM API
   keys. `BOT_TOKEN` overrides the YAML token and is the preferred secret path;
-  `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` do the same for the LLM providers.
+  `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `JEV_TOKEN` do the same for the LLM providers.
 - The Helm chart under `deploy/helm` is part of the delivery surface. Its image
   tag comes from `Chart.appVersion` and the CI image job publishes that exact
   semver, so a release is: bump `appVersion` + `version`, then push a `v*` tag.

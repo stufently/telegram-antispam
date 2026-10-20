@@ -820,29 +820,7 @@ func main() {
 	var llmJudge *llm.Judge
 	var bayesBorderlineBand float64
 	if *cfg.LLM.Enabled && len(cfg.LLM.Providers) > 0 {
-		provs := make([]llm.Provider, 0, len(cfg.LLM.Providers))
-		for _, pc := range cfg.LLM.Providers {
-			switch pc.Kind {
-			case "openai":
-				provs = append(provs, llm.OpenAI{
-					APIKey:      pc.APIKey,
-					Model:       pc.Model,
-					BaseURL:     pc.APIBase,
-					Prompt:      cfg.LLM.Prompt,
-					Temperature: cfg.LLM.Temperature,
-					MaxTokens:   cfg.LLM.MaxTokens,
-				})
-			case "anthropic":
-				provs = append(provs, llm.Anthropic{
-					APIKey:      pc.APIKey,
-					Model:       pc.Model,
-					BaseURL:     pc.APIBase,
-					Prompt:      cfg.LLM.Prompt,
-					Temperature: cfg.LLM.Temperature,
-					MaxTokens:   cfg.LLM.MaxTokens,
-				})
-			}
-		}
+		provs := llmProviders(cfg.LLM)
 		llmJudge = &llm.Judge{Providers: provs, Policy: llm.Policy(cfg.LLM.Policy)}
 		bayesBorderlineBand = cfg.LLM.BorderlineBand
 		log.Printf("LLM borderline stage enabled: %d provider(s), policy=%s, band=%.3g",

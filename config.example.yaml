@@ -324,7 +324,7 @@ ops:
   digest_interval: 24h
 
 # llm configures the optional, opt-in borderline LLM adjudication stage
-# (spec §5.4). It runs one or two paid, official LLM APIs over a message whose
+# (spec §5.4). It runs configured external classification APIs over a message whose
 # Bayes score sits just below the threshold (within borderline_band) and
 # combines their verdicts under a consensus policy. DISABLED by default: it
 # sends message text to an external service, so it is strictly opt-in
@@ -379,11 +379,11 @@ llm:
   always_for_untrusted: false
   # Per-provider call timeout. Default: 10s.
   http_timeout: 10s
-  # 1 or 2 backends. kind is "openai" or "anthropic"; api_key and model are
+  # Backends: kind is "openai", "anthropic" or "jev"; api_key and model are
   # that API's credentials and model name. Fail-open: any provider error errs
   # toward "not spam", so an outage or quota exhaustion never causes a ban.
   #
-  # api_key can also come from the OPENAI_API_KEY / ANTHROPIC_API_KEY env
+  # api_key can also come from the OPENAI_API_KEY / ANTHROPIC_API_KEY / JEV_TOKEN env
   # vars (env wins), exactly like BOT_TOKEN — necessary wherever this file is
   # not a secret, e.g. a Kubernetes ConfigMap kept in version control.
   providers: []
@@ -397,3 +397,16 @@ llm:
   #  - kind: anthropic
   #    api_key: "sk-ant-..."
   #    model: claude-3-5-haiku-latest
+
+  #  - kind: jev
+  #    # JEV_TOKEN overrides api_key; keep credentials in a Secret.
+  #    api_key: ""
+  #    model: jev-1.13.0       # default; pinned for repeatable decisions
+  #    threshold: 0.30        # spam when probability >= threshold; (0, 1]
+  #    max_symbols: 6000      # positive Unicode character limit, includes metadata
+  #    # Unlike OpenAI/Anthropic, api_base is the COMPLETE endpoint.
+  #    api_base: "https://api.typesafe.ai/v1/systemone"
+  # JEV uses a typed spam question; llm.prompt and prompt_overrides replace
+  # its instructions. temperature/max_tokens do not apply. The default
+  # threshold is a starting point, not a measured accuracy guarantee for
+  # your chat: evaluate in dry-run, especially after changing model/prompt.

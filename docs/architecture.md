@@ -271,6 +271,18 @@ as `listed`, `clean`, `error`, `rate_limited` or `breaker_open`; cache hits and
 nonpositive user IDs do not increment it. The snapshot size gauge counts only
 LOLS. The cascade, welcome and captcha paths share the same combined source.
 
+The optional stage accepts OpenAI, Anthropic and JEV providers through the same
+`llm.Provider` interface. JEV posts a bounded Unicode message and a typed `spam`
+question to TypeSafe's System One endpoint, validates a `noul` probability in
+[0, 1], and votes spam at or above its configured threshold (default 0.30).
+Missing, null, malformed or out-of-range answers count as failures. Response
+bodies and transport URLs never enter JEV error logs. Per-chat prompts replace
+the question instructions on each call; generative tuning parameters do not
+apply. `JEV_TOKEN` overrides the configured credential; Helm can inject it from
+`llmSecret.jevKey`. JEV uses the existing `any`/`all` consensus, failure counters,
+borderline/always-for-untrusted selection and evidence-first incident path.
+It introduces neither a veto nor a new immunity bypass.
+
 The LLM stage is disabled by default, bounded by a timeout, and errors toward
 not-spam. No message text is sent to an LLM unless the stage is explicitly enabled.
 

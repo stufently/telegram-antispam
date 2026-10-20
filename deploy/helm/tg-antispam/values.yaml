@@ -61,12 +61,13 @@ existingSecretKey: bot_token # key within existingSecret
 # The optional borderline LLM stage needs an API key, and the config below is
 # rendered into a ConfigMap — i.e. into version control in a GitOps setup.
 # So the keys come from a Secret as env vars instead (OPENAI_API_KEY /
-# ANTHROPIC_API_KEY override llm.providers[].api_key exactly like BOT_TOKEN
+# ANTHROPIC_API_KEY / JEV_TOKEN override llm.providers[].api_key exactly like BOT_TOKEN
 # overrides bot_token). Leave empty when the LLM stage is off.
 llmSecret:
   name: "" # name of a pre-existing Secret holding the API key(s)
   openaiKey: "" # key within that Secret holding the OpenAI API key
   anthropicKey: "" # key within that Secret holding the Anthropic API key
+  jevKey: "" # key within that Secret holding the JEV token
 
 # --- Bayes corpus seeding (optional) ----------------------------------------
 # Point this at a ConfigMap holding labeled samples (one per line) and the
