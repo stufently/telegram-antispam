@@ -8,6 +8,8 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-20
+
 ### Added
 
 - Opt-in JEV (TypeSafe) provider for the existing LLM stage, alone or in
