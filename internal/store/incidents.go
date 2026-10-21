@@ -112,7 +112,9 @@ const ManualOverrideClaim = "enf"
 //     before the sanction landed (a failed evidence copy on a probabilistic
 //     verdict, the production case; or a failed sanction or admin notice).
 //     Enforce moves the state to acted the moment the sanction succeeds, so
-//     none of these states can hide a live one. Moderator commands run on the
+//     none of these states can hide a live one. sanction_unknown MAY hide
+//     one, but re-applying a mute or ban is idempotent, and refusing would
+//     leave the moderator no way to finish the job. Moderator commands run on the
 //     same per-chat sequencer as the automatic path, so none of them is an
 //     incident still in flight either.
 //   - the stored action never sanctions anything (quarantine / none).
@@ -126,11 +128,11 @@ func (db *DB) ClaimManualOverride(id int64) (claimed bool, messageIDs, evidenceI
 UPDATE incidents SET decision=?
 WHERE id=? AND decision=''
   AND (dry_run=1
-       OR state IN (?,?,?,?)
+       OR state IN (?,?,?,?,?)
        OR NOT EXISTS (SELECT 1 FROM audit a WHERE a.incident_id=incidents.id
                       AND a.action IN (?,?,?,?)))`,
 			ManualOverrideClaim, id,
-			string(domain.StatePending), string(domain.StateEvidenced), string(domain.StateEvidenceFailed), string(domain.StateNotActed),
+			string(domain.StatePending), string(domain.StateEvidenced), string(domain.StateEvidenceFailed), string(domain.StateNotActed), string(domain.StateSanctionUnknown),
 			string(domain.ActionBan), string(domain.ActionMute), string(domain.ActionDeleteMute), string(domain.ActionDeleteOnly),
 		)
 		if execErr != nil {

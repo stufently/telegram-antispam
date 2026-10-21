@@ -141,8 +141,9 @@ blocklist verdict that can act without evidence stays `pending` until its action
 finishes. Other completed failures before a sanction lands (including notification
 or restriction failures that Telegram itself refused) become `not_acted`; a later
 moderator command may retry them. A sanction call that failed without a refusal
-(timeout, cancelled context) may have been applied, so it keeps its in-flight
-state rather than releasing the captcha's hold on the user. An applied sanction remains `acted` even if deleting originals fails.
+(timeout, cancelled context) may have been applied, so it becomes
+`sanction_unknown`: captcha keeps its hold on the user even when the row is a
+dry-run incident, and a moderator may retry the sanction. An applied sanction remains `acted` even if deleting originals fails.
 These states are ordinary values in the existing TEXT column; no schema migration
 is needed. Rows left `pending`/`evidenced` by a process crash remain conservatively
 ambiguous, rather than assuming that Telegram applied nothing.

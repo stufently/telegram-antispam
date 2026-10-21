@@ -135,7 +135,8 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   pre-sanction attempts become `not_acted` and remain manually retryable. A
   sanction call is `not_acted` only when Telegram itself refused it
   (`telegram.ErrRefused`): a timeout or cancelled context may have been
-  applied, so that attempt keeps its in-flight state. Captcha
+  applied, so that attempt becomes `sanction_unknown`, which captcha protects
+  regardless of `dry_run` and a moderator may retry. Captcha
   ignores those terminal failures but protects pending/evidenced attempts and
   active override claims. Never infer sanction success from the audit alone.
 - An incident accepts exactly ONE decision (`store.RecordDecision`, a conditional

@@ -41,4 +41,8 @@ const (
 	StateEvidenceFailed IncidentState = "evidence_failed"
 	// StateNotActed is a finished attempt whose sanction did not land.
 	StateNotActed IncidentState = "not_acted"
+	// StateSanctionUnknown is an attempt whose sanction call failed without
+	// Telegram refusing it (a timeout, a cancelled context): it may have been
+	// applied. Captcha treats it as a sanction; a moderator may retry it.
+	StateSanctionUnknown IncidentState = "sanction_unknown"
 )

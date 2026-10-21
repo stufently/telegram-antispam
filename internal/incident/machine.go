@@ -515,12 +515,17 @@ func (m *Machine) Enforce(ctx context.Context, id int64, inc domain.Incident) Ou
 	actErr := m.applyAction(ctx, inc)
 	// Only Telegram's own refusal proves the sanction did not land. A
 	// timeout or a cancelled context may have lost the answer to a call that
-	// was applied, so such an attempt keeps its in-flight state: captcha
-	// still leaves the user muted, and a moderator can re-apply it (a second
-	// mute or ban is idempotent). Recording not_acted there would let the
-	// captcha sweep lift a real sanction.
-	if actErr != nil && errors.Is(actErr, telegram.ErrRefused) {
-		m.setState(id, domain.StateNotActed)
+	// was applied, so such an attempt is sanction_unknown: captcha leaves the
+	// user muted whatever the row's dry_run or audit say (a manual enforce of
+	// a dry-run incident has neither), and a moderator can re-apply it (a
+	// second mute or ban is idempotent). Recording not_acted there would let
+	// the captcha sweep lift a real sanction.
+	if actErr != nil {
+		if errors.Is(actErr, telegram.ErrRefused) {
+			m.setState(id, domain.StateNotActed)
+		} else {
+			m.setState(id, domain.StateSanctionUnknown)
+		}
 	}
 	if actErr == nil {
 		out.Sanctioned = true

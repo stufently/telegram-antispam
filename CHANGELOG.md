@@ -12,9 +12,9 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 - A sanction call that failed without Telegram refusing it (timeout, cancelled
   context, lost connection) is no longer recorded as `not_acted`: it may have
-  been applied, so the incident keeps its in-flight state, captcha leaves the
-  mute alone and a moderator can re-apply it. Only Telegram's own error
-  response marks the attempt `not_acted`.
+  been applied, so the incident becomes `sanction_unknown` — captcha leaves the
+  mute alone (also for a manual enforce of a dry-run incident) and a moderator
+  can re-apply it. Only Telegram's own error response marks it `not_acted`.
 - A late failure (such as the final state write of a dry-run incident) no
   longer rewrites an observed incident as `not_acted`.
 - Enforce that deleted the message but failed the sanction no longer records

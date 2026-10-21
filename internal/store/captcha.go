@@ -245,9 +245,12 @@ func (db *DB) SanctionSince(chatID, userID, since int64) (bool, error) {
 	// as applied actions. evidence_failed means enforcement stopped before
 	// acting. A manual override claim is independently protected: it may
 	// already be applying a sanction while the old dry-run/action remains.
+	// sanction_unknown is protected on its own, for the same reason: a manual
+	// enforce of a dry-run incident may have muted the user while the row
+	// still reads dry_run=1 with a placeholder action.
 	err := db.Read().QueryRow(`SELECT 1 FROM incidents i
 		WHERE i.chat_id=? AND i.user_id=? AND i.created_at>=?
-		  AND (i.decision=? OR (
+		  AND (i.decision=? OR i.state=? OR (
 		    i.dry_run=0 AND i.state IN (?,?,?,?,?)
 		    AND EXISTS (
 		      SELECT 1 FROM audit a
@@ -255,7 +258,7 @@ func (db *DB) SanctionSince(chatID, userID, since int64) (bool, error) {
 		    )
 		  ))
 		LIMIT 1`,
-		chatID, userID, since, ManualOverrideClaim,
+		chatID, userID, since, ManualOverrideClaim, string(domain.StateSanctionUnknown),
 		string(domain.StatePending), string(domain.StateEvidenced),
 		string(domain.StateActed), string(domain.StateCleaned), string(domain.StateDone),
 		string(domain.ActionDeleteMute), string(domain.ActionMute), string(domain.ActionBan)).Scan(&one)

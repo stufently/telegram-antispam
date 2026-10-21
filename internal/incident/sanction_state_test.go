@@ -114,8 +114,8 @@ func TestUncertainSanctionFailureStaysProtected(t *testing.T) {
 	if err := db.Read().QueryRow("SELECT id,state FROM incidents WHERE chat_id=?", ovChat).Scan(&id, &state); err != nil {
 		t.Fatal(err)
 	}
-	if state != "evidenced" {
-		t.Errorf("state=%s, want evidenced (outcome unknown)", state)
+	if state != "sanction_unknown" {
+		t.Errorf("state=%s, want sanction_unknown", state)
 	}
 	protected, err := db.SanctionSince(ovChat, ovUser, 0)
 	if err != nil || !protected {

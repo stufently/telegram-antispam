@@ -359,3 +359,39 @@ func TestHandleAnswersWhenLookupFails(t *testing.T) {
 		t.Fatal("failed press left unanswered")
 	}
 }
+
+// A manual enforce of a dry-run incident whose sanction call timed out may
+// have muted the user while the row still reads dry_run=1 with a placeholder
+// action. Releasing the claim must not let captcha lift that mute.
+func TestEnforceUncertainSanctionKeepsCaptchaProtection(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+	id := reportedIncident(t, db, nil)
+	f := fake.New()
+	f.RestrictErr = context.DeadlineExceeded
+	f.DeleteErr = context.DeadlineExceeded
+	m := incident.New(f, db, 999)
+	h := NewHandler(f, db, map[int64]bool{7: true})
+	h.SetEnforcer(func(ctx context.Context, row store.IncidentRow) (bool, bool, error) {
+		out := m.Enforce(ctx, row.ID, domain.Incident{ChatID: row.ChatID, MessageIDs: row.MessageIDs, Sender: domain.Sender{UserID: row.UserID}, Verdict: domain.Verdict{Action: domain.ActionDeleteMute}})
+		return out.Sanctioned, out.Deleted, out.Err
+	})
+	cb := Callback{ID: "timeout", Data: encode(ActEnforce, strconv.FormatInt(id, 10)), PresserID: 7}
+	if err := h.Handle(context.Background(), cb); err == nil {
+		t.Fatal("expected the enforcement error")
+	}
+	row, err := db.GetIncident(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.State != domain.StateSanctionUnknown {
+		t.Fatalf("state=%s, want sanction_unknown", row.State)
+	}
+	protected, err := db.SanctionSince(row.ChatID, row.UserID, 0)
+	if err != nil || !protected {
+		t.Fatalf("possibly-applied mute not protected: %v %v", protected, err)
+	}
+	if claimed, _, _, err := db.ClaimManualOverride(id); err != nil || !claimed {
+		t.Fatalf("moderator cannot re-apply: %v %v", claimed, err)
+	}
+}
