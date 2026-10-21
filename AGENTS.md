@@ -132,7 +132,10 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   False positive before the sanction lands and leave a mute with no undo.
 - `evidence_failed` and `not_acted` are terminal no-sanction outcomes. Allowed
   enforcement without evidence stays pending until its action finishes; failed
-  pre-sanction attempts become `not_acted` and remain manually retryable. Captcha
+  pre-sanction attempts become `not_acted` and remain manually retryable. A
+  sanction call is `not_acted` only when Telegram itself refused it
+  (`telegram.ErrRefused`): a timeout or cancelled context may have been
+  applied, so that attempt keeps its in-flight state. Captcha
   ignores those terminal failures but protects pending/evidenced attempts and
   active override claims. Never infer sanction success from the audit alone.
 - An incident accepts exactly ONE decision (`store.RecordDecision`, a conditional

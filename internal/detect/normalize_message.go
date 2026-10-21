@@ -105,28 +105,29 @@ func Normalize(m domain.Message) NormalizedMessage {
 func countLinkOccurrences(text string, entities []domain.Entity) int {
 	spans := urlRe.FindAllStringIndex(text, -1)
 	spans = append(spans, tMeRe.FindAllStringIndex(text, -1)...)
-	if len(entities) > 0 {
-		boundaries := make(map[int]int)
-		units := 0
+	if hasLinkEntity(entities) {
+		// boundaries[u] is the byte offset of UTF-16 unit u, or -1 inside a
+		// surrogate pair. Built only when a link entity needs it: most
+		// messages carry entities (bold, mentions) but no link.
+		boundaries := make([]int, 0, len(text)+1)
 		for i, r := range text {
-			boundaries[units] = i
-			units++
+			boundaries = append(boundaries, i)
 			if r > 0xFFFF {
-				units++
+				boundaries = append(boundaries, -1)
 			}
 		}
-		boundaries[units] = len(text)
+		boundaries = append(boundaries, len(text))
+		units := len(boundaries) - 1
 		for _, e := range entities {
-			if e.Type != "url" && (e.Type != "text_link" || e.URL == "") {
+			if !isLinkEntity(e) {
 				continue
 			}
 			// Check before adding to avoid overflow as well as out-of-range spans.
 			if e.Offset < 0 || e.Length <= 0 || e.Offset > units || e.Length > units-e.Offset {
 				continue
 			}
-			start, startOK := boundaries[e.Offset]
-			end, endOK := boundaries[e.Offset+e.Length]
-			if startOK && endOK {
+			start, end := boundaries[e.Offset], boundaries[e.Offset+e.Length]
+			if start >= 0 && end >= 0 {
 				spans = append(spans, []int{start, end})
 			}
 		}
@@ -142,6 +143,19 @@ func countLinkOccurrences(text string, entities []domain.Entity) int {
 		}
 	}
 	return count
+}
+
+func isLinkEntity(e domain.Entity) bool {
+	return e.Type == "url" || (e.Type == "text_link" && e.URL != "")
+}
+
+func hasLinkEntity(entities []domain.Entity) bool {
+	for _, e := range entities {
+		if isLinkEntity(e) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizedMetadata(values []string) []string {

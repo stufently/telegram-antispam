@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -58,7 +59,7 @@ func TestAdminCallbackWaitsForInitialSanctionAndCommandTraining(t *testing.T) {
 	handler.SetTrainer(feedbackTrainer(db, func(int64) string { return "global" }, "user"))
 	ctx := context.Background()
 	callbackDone := make(chan error, 1)
-	router := newAdminCallbackRouter(db, seq, func(cb admin.Callback) { callbackDone <- handler.Handle(ctx, cb) })
+	router := newAdminCallbackRouter(db, seq, func(cb admin.Callback) { callbackDone <- handler.Handle(ctx, cb) }, func(cb admin.Callback, text string) { t.Errorf("router answered %q itself", text) })
 	defer router.Wait()
 	tokens := []string{"offer", "work"}
 	seq.Submit(-100, func() {
@@ -167,7 +168,7 @@ func TestAdminRouterDoesNotSerializeDifferentSourceChats(t *testing.T) {
 	seq.Submit(-100, func() { close(blocked); <-release })
 	<-blocked
 	results := make(chan string, 2)
-	router := newAdminCallbackRouter(db, seq, func(cb admin.Callback) { results <- cb.ID })
+	router := newAdminCallbackRouter(db, seq, func(cb admin.Callback) { results <- cb.ID }, func(cb admin.Callback, text string) { t.Errorf("%s answered %q", cb.ID, text) })
 	router.Submit(admin.Callback{ID: "one", Data: fmt.Sprintf("fp:%d", one)})
 	router.Submit(admin.Callback{ID: "two", Data: fmt.Sprintf("fp:%d", two)})
 	router.Wait()
@@ -201,12 +202,66 @@ func TestAdminRouterLookupFailureNeverDispatchesWithoutSourceOrdering(t *testing
 	seq := telegram.NewSequencer()
 	defer seq.Wait()
 	called := make(chan struct{}, 1)
-	router := newAdminCallbackRouter(db, seq, func(admin.Callback) { called <- struct{}{} })
+	answers := make(chan string, 1)
+	router := newAdminCallbackRouter(db, seq, func(admin.Callback) { called <- struct{}{} }, func(_ admin.Callback, text string) { answers <- text })
 	router.Submit(admin.Callback{Data: "fp:1"})
 	router.Wait()
 	select {
 	case <-called:
 		t.Fatal("lookup failure dispatched without source scope")
 	default:
+	}
+	select {
+	case got := <-answers:
+		if !strings.Contains(got, "again") {
+			t.Errorf("answer %q does not invite a retry", got)
+		}
+	default:
+		t.Error("lookup failure left the callback unanswered")
+	}
+}
+
+func TestAdminRouterAnswersUnknownIncident(t *testing.T) {
+	db := routingDB(t)
+	seq := telegram.NewSequencer()
+	defer seq.Wait()
+	answers := make(chan string, 1)
+	router := newAdminCallbackRouter(db, seq, func(admin.Callback) { t.Error("dispatched an unknown incident") }, func(_ admin.Callback, text string) { answers <- text })
+	router.Submit(admin.Callback{Data: "fp:4242"})
+	router.Wait()
+	select {
+	case got := <-answers:
+		if got != "incident not found" {
+			t.Errorf("answer %q", got)
+		}
+	default:
+		t.Error("unknown incident left the callback unanswered")
+	}
+}
+
+// A raid fills the source chat's queue exactly when moderators press buttons.
+// The press is dropped then, but it must be answered rather than lost.
+func TestAdminRouterAnswersWhenSourceQueueIsFull(t *testing.T) {
+	db := routingDB(t)
+	id, _, _ := db.InsertPending(-100, 1, 7, 0, true, domain.Verdict{Action: domain.ActionQuarantine})
+	seq := telegram.NewSequencer()
+	blocked, release := make(chan struct{}), make(chan struct{})
+	seq.Submit(-100, func() { close(blocked); <-release })
+	<-blocked
+	for seq.TrySubmit(-100, func() {}) {
+	}
+	answers := make(chan string, 1)
+	router := newAdminCallbackRouter(db, seq, func(admin.Callback) { t.Error("dropped callback ran") }, func(_ admin.Callback, text string) { answers <- text })
+	router.Submit(admin.Callback{ID: "raid", Data: fmt.Sprintf("fp:%d", id)})
+	router.Wait()
+	close(release)
+	seq.Wait()
+	select {
+	case got := <-answers:
+		if got != busyText {
+			t.Errorf("answer %q", got)
+		}
+	default:
+		t.Error("dropped callback left unanswered")
 	}
 }

@@ -384,6 +384,10 @@ func main() {
 		if err := adminHandler.Handle(workCtx, cb); err != nil {
 			log.Printf("admin callback: %v", err)
 		}
+	}, func(cb admin.Callback, text string) {
+		if err := adminHandler.Answer(workCtx, cb, text); err != nil {
+			log.Printf("admin callback answer: %v", err)
+		}
 	})
 
 	opts := []tgbot.Option{

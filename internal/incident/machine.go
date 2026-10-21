@@ -133,14 +133,10 @@ func (m *Machine) handle(ctx context.Context, inc domain.Incident, freshOut *boo
 // review being promoted after an edit. Its result records whether enforcement
 // landed even when deletion or the final state write failed.
 func (m *Machine) process(ctx context.Context, id int64, inc domain.Incident) (sanctioned bool, err error) {
-	// Keep pending/evidenced reserved for work that may still sanction. A
-	// finished failed attempt must not strand a concurrent captcha mute.
-	stoppedForEvidence := false
-	defer func() {
-		if err != nil && !sanctioned && !stoppedForEvidence {
-			m.setState(id, domain.StateNotActed)
-		}
-	}()
+	// pending/evidenced are reserved for work that may still sanction, or may
+	// have: a finished attempt that provably applied nothing is recorded as
+	// not_acted at the point it stops, so it cannot strand a captcha mute.
+	// Later failures (the dry-run state write, the final one) do not touch it.
 	// An album's remaining ids, for a sanction applied later from the admin
 	// chat: the row itself is keyed on one of them. Best-effort — failing to
 	// record them must not stop the moderation that is about to happen; the
@@ -190,7 +186,6 @@ func (m *Machine) process(ctx context.Context, id int64, inc domain.Incident) (s
 	if copyErr != nil {
 		acting := actsWithoutEvidence(inc.Verdict)
 		if !acting {
-			stoppedForEvidence = true
 			m.setState(id, domain.StateEvidenceFailed)
 		}
 		// A manual/blocklist verdict can still sanction with no copy. Leave
@@ -239,6 +234,7 @@ func (m *Machine) process(ctx context.Context, id int64, inc domain.Incident) (s
 			return sanctioned, err
 		}
 		if sendErr != nil {
+			m.setState(id, domain.StateNotActed)
 			err := fmt.Errorf("send admin: %w", sendErr)
 			m.logOutcome(id, inc, "not enforced", "stage=admin_notify", err)
 			return sanctioned, err
@@ -279,11 +275,13 @@ func (m *Machine) process(ctx context.Context, id int64, inc domain.Incident) (s
 					log.Printf("incident %d: rolling back untracked evidence failed: %v", id, delErr)
 				}
 			}
+			m.setState(id, domain.StateNotActed)
 			err = fmt.Errorf("send admin: %w", err)
 			m.logOutcome(id, inc, "not enforced", "stage=admin_notify", err)
 			return sanctioned, err
 		}
 		if err := m.repo.AddEvidence(id, m.adminChatID, adminIDs); err != nil {
+			m.setState(id, domain.StateNotActed)
 			err = fmt.Errorf("save evidence: %w", err)
 			m.logOutcome(id, inc, "not enforced", "stage=evidence_store", err)
 			return sanctioned, err
@@ -515,7 +513,13 @@ type Outcome struct {
 func (m *Machine) Enforce(ctx context.Context, id int64, inc domain.Incident) Outcome {
 	var out Outcome
 	actErr := m.applyAction(ctx, inc)
-	if actErr != nil {
+	// Only Telegram's own refusal proves the sanction did not land. A
+	// timeout or a cancelled context may have lost the answer to a call that
+	// was applied, so such an attempt keeps its in-flight state: captcha
+	// still leaves the user muted, and a moderator can re-apply it (a second
+	// mute or ban is idempotent). Recording not_acted there would let the
+	// captcha sweep lift a real sanction.
+	if actErr != nil && errors.Is(actErr, telegram.ErrRefused) {
 		m.setState(id, domain.StateNotActed)
 	}
 	if actErr == nil {

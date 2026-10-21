@@ -368,7 +368,9 @@ func TestDecidedCardLookupErrorIsReported(t *testing.T) {
 	}
 	p.reply = ""
 	err := h.Handle(context.Background(), admin.Callback{Data: fmt.Sprintf("fp:%d", id), PresserID: 7, AdminChatID: 999, MessageID: 0})
-	if err == nil || p.reply != "" {
+	// The press is answered (an unanswered one spins forever), but as a
+	// failure, never as the stale or decided reply.
+	if err == nil || p.reply != "failed, press again" {
 		t.Fatalf("card lookup failure must surface: err=%v reply=%q", err, p.reply)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -325,6 +326,31 @@ func TestIgnoreAlreadyGone(t *testing.T) {
 	} {
 		if err := ignoreAlreadyGone(errors.New(msg)); err == nil {
 			t.Fatalf("%q must stay an error: it means the bot lost a right", msg)
+		}
+	}
+}
+
+func TestMapRetryMarksOnlyAPIRefusals(t *testing.T) {
+	refused := []error{
+		fmt.Errorf("%w, %s", tgbot.ErrorBadRequest, "not enough rights to restrict/unrestrict chat member"),
+		fmt.Errorf("%w, %s", tgbot.ErrorForbidden, "bot was kicked from the supergroup chat"),
+		&tgbot.MigrateError{Message: "bad request: group upgraded", MigrateToChatID: 1},
+		errors.New("error response from telegram for method restrictChatMember, 500 Internal Server Error"),
+	}
+	for _, err := range refused {
+		got := mapRetry(err)
+		if !errors.Is(got, ErrRefused) || got.Error() != err.Error() {
+			t.Errorf("mapRetry(%v) = %v, want a refusal with the same message", err, got)
+		}
+	}
+	uncertain := []error{
+		fmt.Errorf("error do request for method banChatMember, %w", &url.Error{Op: "Post", URL: "x", Err: context.DeadlineExceeded}),
+		context.Canceled,
+		errors.New("error decode response body for method banChatMember, <html>, invalid character"),
+	}
+	for _, err := range uncertain {
+		if errors.Is(mapRetry(err), ErrRefused) {
+			t.Errorf("mapRetry(%v) marked an error that may have been applied as refused", err)
 		}
 	}
 }

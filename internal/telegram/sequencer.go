@@ -45,10 +45,17 @@ func NewSequencer() *Sequencer {
 // rather than blocking the caller. The ordering guarantee above is
 // unaffected — jobs that ARE accepted still run in submission order.
 func (s *Sequencer) Submit(chatID int64, job func()) {
+	s.TrySubmit(chatID, job)
+}
+
+// TrySubmit is Submit for callers that owe someone an answer when the job
+// does not run: it reports whether the job was accepted. A full queue and a
+// closed sequencer both report false.
+func (s *Sequencer) TrySubmit(chatID int64, job func()) bool {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return
+		return false
 	}
 	q, ok := s.queues[chatID]
 	if !ok {
@@ -66,12 +73,15 @@ func (s *Sequencer) Submit(chatID int64, job func()) {
 	// shutdown hasn't begun), drop the job instead of stalling the caller.
 	select {
 	case q <- job:
+		return true
 	case <-s.quit:
+		return false
 	default:
 		atomic.AddInt64(&s.dropped, 1)
 		s.dropOnce.Do(func() {
 			log.Printf("sequencer: dropping job for chat %d, queue full (further drops logged only in Dropped() count)", chatID)
 		})
+		return false
 	}
 }
 

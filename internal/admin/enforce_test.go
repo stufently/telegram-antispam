@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/stufently/telegram-antispam/internal/domain"
 	"github.com/stufently/telegram-antispam/internal/incident"
 	"github.com/stufently/telegram-antispam/internal/store"
+	"github.com/stufently/telegram-antispam/internal/telegram"
 	"github.com/stufently/telegram-antispam/internal/telegram/fake"
 )
 
@@ -280,11 +282,16 @@ func TestEnforceRereadsTheIncidentAfterClaiming(t *testing.T) {
 func TestEnforceDeletionWithoutSanctionReleasesClaim(t *testing.T) {
 	db := newMigrated(t)
 	defer db.Close()
-	id := reportedIncident(t, db, nil)
+	id := reportedIncident(t, db, []string{"offer", "dm"})
 	f := fake.New()
-	f.RestrictErr = context.DeadlineExceeded
+	f.RestrictErr = telegram.Refused(errors.New("not enough rights"))
 	m := incident.New(f, db, 999)
 	h := NewHandler(f, db, map[int64]bool{7: true})
+	var trained []string
+	h.SetTrainer(func(_ int64, label string, _ []string) error {
+		trained = append(trained, label)
+		return nil
+	})
 	attempts := 0
 	h.SetEnforcer(func(ctx context.Context, row store.IncidentRow) (bool, bool, error) {
 		attempts++
@@ -311,11 +318,44 @@ func TestEnforceDeletionWithoutSanctionReleasesClaim(t *testing.T) {
 	if err != nil || protected {
 		t.Fatalf("failed sanction still protects captcha: %v %v", protected, err)
 	}
+	// The released claim is a decision that did not take effect.
+	var samples int
+	if err := db.Read().QueryRow("SELECT COUNT(*) FROM samples WHERE normalized_hash=?", strconv.FormatInt(id, 10)).Scan(&samples); err != nil {
+		t.Fatal(err)
+	}
+	if samples != 0 || len(trained) != 0 {
+		t.Fatalf("released claim left samples=%d trained=%v", samples, trained)
+	}
 	f.RestrictErr = nil
 	if err := h.Handle(context.Background(), cb); err != nil {
 		t.Fatal(err)
 	}
 	if attempts != 2 {
 		t.Fatalf("attempts=%d, want retry", attempts)
+	}
+	if len(trained) != 1 || trained[0] != "spam" {
+		t.Fatalf("landed retry trained %v, want [spam]", trained)
+	}
+}
+
+// A press whose handling fails must still be answered, or Telegram keeps the
+// button spinning and the moderator cannot tell a failure from a slow success.
+func TestHandleAnswersWhenLookupFails(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+	f := fake.New()
+	h := NewHandler(f, db, map[int64]bool{7: true})
+	err := h.Handle(context.Background(), Callback{ID: "gone", Data: encode(ActFalsePositive, "4242"), PresserID: 7})
+	if err == nil {
+		t.Fatal("expected the lookup error")
+	}
+	answered := false
+	for _, c := range f.Calls() {
+		if c == "AnswerCallback" {
+			answered = true
+		}
+	}
+	if !answered {
+		t.Fatal("failed press left unanswered")
 	}
 }

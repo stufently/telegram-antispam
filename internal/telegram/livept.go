@@ -232,6 +232,21 @@ func mapRetry(err error) error {
 	if strings.Contains(msg, "too many requests") || strings.Contains(msg, "retry_after") || strings.Contains(msg, "retry after") {
 		return queue.RetryAfter{Seconds: 1}
 	}
+	return markRefused(err)
+}
+
+// markRefused tags the errors the library builds from an ok=false API
+// response. Transport, context and decode errors stay untagged: the request
+// may have been applied.
+func markRefused(err error) error {
+	var migrate *bot.MigrateError
+	switch {
+	case errors.Is(err, bot.ErrorBadRequest), errors.Is(err, bot.ErrorForbidden),
+		errors.Is(err, bot.ErrorUnauthorized), errors.Is(err, bot.ErrorNotFound),
+		errors.Is(err, bot.ErrorConflict), errors.As(err, &migrate),
+		strings.HasPrefix(err.Error(), "error response from telegram"):
+		return Refused(err)
+	}
 	return err
 }
 

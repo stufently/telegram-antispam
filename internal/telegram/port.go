@@ -104,3 +104,25 @@ type Port interface {
 // ephemeral_message_id absent). The port deletes that message first. A
 // delete failure is wrapped in this error.
 var ErrEphemeralNotHonored = errors.New("telegram: ephemeral send was published to the chat")
+
+// ErrRefused marks an error that is Telegram's own answer to the call: the
+// API responded and declined it (no rights, user not found, bad request).
+// Only such an error proves the call took no effect. Anything else — a
+// timeout, a cancelled context, a dropped connection, an unreadable reply —
+// may have reached Telegram and been applied before the answer was lost, so
+// a caller must not record "nothing happened" from it.
+var ErrRefused = errors.New("telegram: request refused")
+
+type refusedError struct{ err error }
+
+func (e refusedError) Error() string   { return e.err.Error() }
+func (e refusedError) Unwrap() []error { return []error{e.err, ErrRefused} }
+
+// Refused marks err as Telegram's refusal, keeping its message and chain.
+// LivePort applies it to API error responses; fakes use it to stand in for one.
+func Refused(err error) error {
+	if err == nil || errors.Is(err, ErrRefused) {
+		return err
+	}
+	return refusedError{err}
+}

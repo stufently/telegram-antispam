@@ -41,7 +41,9 @@ incident's source chat off the polling goroutine. Decisions then join that
 source chat's sequencer, behind the original sanction and the entire moderator
 command (including its training). A False-positive press during RestrictMember
 therefore waits and sees the completed state before undoing it. A failed scope
-lookup never falls back to execution on the routing queue. On shutdown the
+lookup never falls back to execution on the routing queue; it answers the
+press instead ("incident not found" or a retry hint), as does a press dropped by
+a full source queue, so a button never spins unanswered. On shutdown the
 routing queue drains before the source queues close; its drop/panic counts are
 included in the existing job metrics. Captcha callbacks retain their separate
 path.
@@ -137,8 +139,10 @@ missing parts is not.
 `evidence_failed` now means a definitive stop with no sanction: a manual or
 blocklist verdict that can act without evidence stays `pending` until its action
 finishes. Other completed failures before a sanction lands (including notification
-or restriction failures) become `not_acted`; a later moderator command may retry
-them. An applied sanction remains `acted` even if deleting originals fails.
+or restriction failures that Telegram itself refused) become `not_acted`; a later
+moderator command may retry them. A sanction call that failed without a refusal
+(timeout, cancelled context) may have been applied, so it keeps its in-flight
+state rather than releasing the captcha's hold on the user. An applied sanction remains `acted` even if deleting originals fails.
 These states are ordinary values in the existing TEXT column; no schema migration
 is needed. Rows left `pending`/`evidenced` by a process crash remain conservatively
 ambiguous, rather than assuming that Telegram applied nothing.

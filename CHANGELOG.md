@@ -8,6 +8,24 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+### Fixed
+
+- A sanction call that failed without Telegram refusing it (timeout, cancelled
+  context, lost connection) is no longer recorded as `not_acted`: it may have
+  been applied, so the incident keeps its in-flight state, captcha leaves the
+  mute alone and a moderator can re-apply it. Only Telegram's own error
+  response marks the attempt `not_acted`.
+- A late failure (such as the final state write of a dry-run incident) no
+  longer rewrites an observed incident as `not_acted`.
+- Enforce that deleted the message but failed the sanction no longer records
+  the decision or trains Bayes; the claim is released and the retry does both.
+- Admin-card presses are always answered: a press dropped by a full source-chat
+  queue answers "busy", an unknown incident "incident not found", and lookup,
+  authorization or action errors answer with a retry hint instead of leaving
+  the button spinning.
+- Link counting no longer builds a per-character offset table for messages
+  whose entities include no link.
+
 ## [0.21.1] - 2026-10-20
 
 ### Fixed

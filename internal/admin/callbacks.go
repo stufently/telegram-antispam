@@ -6,6 +6,7 @@ package admin
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -182,12 +183,16 @@ func (h *Handler) Handle(ctx context.Context, cb Callback) error {
 
 	inc, err := h.db.GetIncident(incidentID)
 	if err != nil {
-		return fmt.Errorf("lookup incident %d: %w", incidentID, err)
+		text := "store unavailable, press again later"
+		if errors.Is(err, sql.ErrNoRows) {
+			text = "incident not found"
+		}
+		return h.failed(ctx, cb, text, fmt.Errorf("lookup incident %d: %w", incidentID, err))
 	}
 
 	authorized, err := h.Authorized(ctx, inc.ChatID, cb.PresserID)
 	if err != nil {
-		return fmt.Errorf("authorize presser %d: %w", cb.PresserID, err)
+		return h.failed(ctx, cb, "could not check your rights, press again later", fmt.Errorf("authorize presser %d: %w", cb.PresserID, err))
 	}
 	if !authorized {
 		// Reject: no action branch below this point runs for an
@@ -197,9 +202,25 @@ func (h *Handler) Handle(ctx context.Context, cb Callback) error {
 
 	text, err := h.dispatch(ctx, act, inc, cb)
 	if err != nil {
-		return fmt.Errorf("dispatch %s: %w", act, err)
+		return h.failed(ctx, cb, "failed, press again", fmt.Errorf("dispatch %s: %w", act, err))
 	}
 	return h.port.AnswerCallback(ctx, cb.ID, text)
+}
+
+// Answer replies to a callback the handler never got to process — dropped
+// by a full queue or unroutable — so the button does not spin forever.
+func (h *Handler) Answer(ctx context.Context, cb Callback, text string) error {
+	return h.port.AnswerCallback(ctx, cb.ID, text)
+}
+
+// failed answers a press whose handling errored, then returns that error.
+// Without the answer Telegram keeps the button spinning and the moderator
+// cannot tell a failure from a slow success.
+func (h *Handler) failed(ctx context.Context, cb Callback, text string, err error) error {
+	if aerr := h.port.AnswerCallback(ctx, cb.ID, text); aerr != nil {
+		log.Printf("answer failed callback: %v", aerr)
+	}
+	return err
 }
 
 // dispatch applies the per-action effect. Every call here is only reached
@@ -356,8 +377,13 @@ func (h *Handler) dispatch(ctx context.Context, act Action, inc store.IncidentRo
 		if !sanctioned {
 			// Deletion alone cannot leave an in-flight sanction claim behind.
 			// Release it so captcha can finish and the moderator can retry.
+			// A released claim is a decision that did not take effect, so it
+			// leaves no sample and trains nothing: the retry that lands
+			// records it, and the stored tokens stay for that retry.
 			h.releaseClaim(inc.ID, act)
-		} else if row, rerr := h.db.GetIncident(inc.ID); rerr == nil && !row.DryRun {
+			return enforceReply(sanctioned, deleted), nil
+		}
+		if row, rerr := h.db.GetIncident(inc.ID); rerr == nil && !row.DryRun {
 			h.releaseClaim(inc.ID, act)
 		} else if rerr != nil {
 			log.Printf("incident %d: re-reading after enforcement failed, undo stays claimed: %v", inc.ID, rerr)
@@ -402,7 +428,7 @@ func enforceReply(sanctioned, deleted bool) string {
 	case sanctioned:
 		return "sanction applied, but the message is STILL THERE — remove it by hand"
 	default:
-		return "message removed, but the sanction FAILED — apply it by hand"
+		return "message removed, but the sanction FAILED — press Enforce again or apply it by hand"
 	}
 }
 

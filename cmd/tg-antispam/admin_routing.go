@@ -1,6 +1,8 @@
 package main
 
 import (
+	"database/sql"
+	"errors"
 	"log"
 	"strconv"
 
@@ -14,19 +16,26 @@ import (
 // queues the decision with the source chat's moderation and command training.
 // Its routing queue MUST drain before the source sequencer closes: accepted
 // callbacks would otherwise be lost as late submissions during shutdown.
+//
+// A callback that is not handed to handle is answered through answer: an
+// unanswered query keeps the moderator's button spinning, and the press is
+// lost without a word exactly when it matters (a raid filling the queue).
 type adminCallbackRouter struct {
 	routing *telegram.Sequencer
 	source  *telegram.Sequencer
 	db      *store.DB
 	handle  func(admin.Callback)
+	answer  func(cb admin.Callback, text string)
 }
 
-func newAdminCallbackRouter(db *store.DB, source *telegram.Sequencer, handle func(admin.Callback)) *adminCallbackRouter {
-	return &adminCallbackRouter{routing: telegram.NewSequencer(), source: source, db: db, handle: handle}
+func newAdminCallbackRouter(db *store.DB, source *telegram.Sequencer, handle func(admin.Callback), answer func(admin.Callback, string)) *adminCallbackRouter {
+	return &adminCallbackRouter{routing: telegram.NewSequencer(), source: source, db: db, handle: handle, answer: answer}
 }
+
+const busyText = "busy, press again in a moment"
 
 func (r *adminCallbackRouter) Submit(cb admin.Callback) {
-	r.routing.Submit(0, func() {
+	accepted := r.routing.TrySubmit(0, func() {
 		_, key, ok := admin.ParseCallback(cb.Data)
 		id, err := strconv.ParseInt(key, 10, 64)
 		if !ok || err != nil {
@@ -36,10 +45,23 @@ func (r *adminCallbackRouter) Submit(cb admin.Callback) {
 		chatID, err := r.db.GetIncidentChat(id)
 		if err != nil {
 			log.Printf("admin callback scope lookup: %v", err)
+			if errors.Is(err, sql.ErrNoRows) {
+				r.answer(cb, "incident not found")
+			} else {
+				r.answer(cb, "store unavailable, press again later")
+			}
 			return
 		}
-		r.source.Submit(chatID, func() { r.handle(cb) })
+		if !r.source.TrySubmit(chatID, func() { r.handle(cb) }) {
+			log.Printf("admin callback for chat %d dropped: source queue full or closed", chatID)
+			r.answer(cb, busyText)
+		}
 	})
+	if !accepted {
+		// Called on the polling goroutine; answering here would block it
+		// behind the dispatcher.
+		go r.answer(cb, busyText)
+	}
 }
 
 func (r *adminCallbackRouter) Wait() { r.routing.Wait() }
