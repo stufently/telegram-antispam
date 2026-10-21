@@ -17,7 +17,8 @@ Entries start life under **Unreleased** and are moved under a version heading wh
   can re-apply it. Only Telegram's own error response marks it `not_acted`,
   and a refused retry does not overwrite an earlier unknown outcome. False
   positive and Lift lift a `sanction_unknown` sanction instead of settling the
-  incident without a Telegram call.
+  incident without a Telegram call; since only the last attempted action is
+  recorded, they lift both a possible ban and a possible mute.
 - A late failure (such as the final state write of a dry-run incident) no
   longer rewrites an observed incident as `not_acted`.
 - Enforce that deleted the message but failed the sanction no longer records

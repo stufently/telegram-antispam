@@ -494,6 +494,9 @@ func (h *Handler) undo(ctx context.Context, inc store.IncidentRow) (string, erro
 	if inc.UserID == 0 {
 		return "", nil
 	}
+	if inc.State == domain.StateSanctionUnknown {
+		return h.undoUnknown(ctx, inc)
+	}
 	switch inc.Action {
 	case domain.ActionBan:
 		if err := h.port.UnbanMember(ctx, inc.ChatID, inc.UserID); err != nil {
@@ -512,6 +515,28 @@ func (h *Handler) undo(ctx context.Context, inc store.IncidentRow) (string, erro
 	default:
 		return "", nil
 	}
+}
+
+// undoUnknown lifts a sanction whose outcome is unknown. The row records only
+// the LAST attempted action, and a mute whose answer was lost followed by a
+// /ban whose answer was lost too may have left either or both in place, so
+// both are lifted. The recorded action's call must succeed, as in undo; the
+// other is best-effort, and harmless when nothing is there to lift
+// (unbanChatMember is OnlyIfBanned).
+func (h *Handler) undoUnknown(ctx context.Context, inc store.IncidentRow) (string, error) {
+	unban := func() error { return h.port.UnbanMember(ctx, inc.ChatID, inc.UserID) }
+	unmute := func() error { return h.port.UnrestrictMember(ctx, inc.ChatID, inc.UserID) }
+	primary, other, done := unmute, unban, "unmuted"
+	if inc.Action == domain.ActionBan {
+		primary, other, done = unban, unmute, "unbanned"
+	}
+	if err := primary(); err != nil {
+		return "", fmt.Errorf("lift %s of user %d in chat %d: %w", inc.Action, inc.UserID, inc.ChatID, err)
+	}
+	if err := other(); err != nil {
+		log.Printf("incident %d: best-effort lift of the other possible sanction failed: %v", inc.ID, err)
+	}
+	return done, nil
 }
 
 // train feeds the incident's captured tokens to the Bayes trainer under the

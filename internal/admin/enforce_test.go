@@ -413,3 +413,26 @@ func TestEnforceUncertainSanctionKeepsCaptchaProtection(t *testing.T) {
 		t.Fatalf("false positive did not lift the possibly-applied mute: %v", f.Calls())
 	}
 }
+
+// Two lost answers — a mute, then a /ban — may leave either sanction in place;
+// the row records only the ban. Undo must lift both.
+func TestUndoUnknownLiftsBothSanctions(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+	id := reportedIncident(t, db, nil)
+	if err := db.MarkSanctionUnknown(id, domain.ActionBan); err != nil {
+		t.Fatal(err)
+	}
+	f := fake.New()
+	h := NewHandler(f, db, map[int64]bool{7: true})
+	if err := h.Handle(context.Background(), Callback{ID: "lift", Data: encode(ActLiftNoLearn, strconv.FormatInt(id, 10)), PresserID: 7}); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, c := range f.Calls() {
+		got[c] = true
+	}
+	if !got["UnbanMember"] || !got["UnrestrictMember"] {
+		t.Fatalf("calls %v, want both UnbanMember and UnrestrictMember", f.Calls())
+	}
+}
