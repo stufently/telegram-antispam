@@ -58,6 +58,31 @@ func (db *DB) SetIncidentState(id int64, state domain.IncidentState) error {
 	})
 }
 
+// MarkSanctionUnknown records a sanction call that failed without Telegram
+// refusing it, so it may have been applied. The audit action becomes the
+// action that was attempted: a dry-run incident carries a placeholder there
+// (quarantine), and the undo buttons need the real one to lift it.
+func (db *DB) MarkSanctionUnknown(id int64, attempted domain.Action) error {
+	return db.Write(func(tx *sql.Tx) error {
+		if _, err := tx.Exec("UPDATE incidents SET state=? WHERE id=?", string(domain.StateSanctionUnknown), id); err != nil {
+			return err
+		}
+		_, err := tx.Exec("UPDATE audit SET action=? WHERE incident_id=?", string(attempted), id)
+		return err
+	})
+}
+
+// MarkSanctionRefused records a sanction call Telegram refused, as not_acted
+// — unless an earlier attempt's outcome is unknown: that one may have landed,
+// and a later refusal does not undo it.
+func (db *DB) MarkSanctionRefused(id int64) error {
+	return db.Write(func(tx *sql.Tx) error {
+		_, err := tx.Exec("UPDATE incidents SET state=? WHERE id=? AND state<>?",
+			string(domain.StateNotActed), id, string(domain.StateSanctionUnknown))
+		return err
+	})
+}
+
 func (db *DB) GetIncidentState(id int64) (domain.IncidentState, error) {
 	var s string
 	err := db.Read().QueryRow("SELECT state FROM incidents WHERE id=?", id).Scan(&s)

@@ -32,6 +32,8 @@ type Repo interface {
 	GetIncident(id int64) (store.IncidentRow, error)
 	InsertPending(chatID int64, messageID int, userID, senderChatID int64, dryRun bool, verdict domain.Verdict) (int64, bool, error)
 	SetIncidentState(id int64, s domain.IncidentState) error
+	MarkSanctionUnknown(id int64, attempted domain.Action) error
+	MarkSanctionRefused(id int64) error
 	AddEvidence(id int64, adminChatID int64, adminMessageIDs []int) error
 	SaveIncidentTokens(id int64, tokens []string) error
 	// SaveIncidentMessageIDs records every source message of the incident,
@@ -521,10 +523,14 @@ func (m *Machine) Enforce(ctx context.Context, id int64, inc domain.Incident) Ou
 	// second mute or ban is idempotent). Recording not_acted there would let
 	// the captcha sweep lift a real sanction.
 	if actErr != nil {
+		var markErr error
 		if errors.Is(actErr, telegram.ErrRefused) {
-			m.setState(id, domain.StateNotActed)
+			markErr = m.repo.MarkSanctionRefused(id)
 		} else {
-			m.setState(id, domain.StateSanctionUnknown)
+			markErr = m.repo.MarkSanctionUnknown(id, inc.Verdict.Action)
+		}
+		if markErr != nil {
+			log.Printf("incident %d: recording failed sanction: %v", id, markErr)
 		}
 	}
 	if actErr == nil {

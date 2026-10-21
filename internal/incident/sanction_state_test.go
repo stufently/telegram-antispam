@@ -153,3 +153,21 @@ func TestDryRunLateFailureKeepsState(t *testing.T) {
 		t.Errorf("state=%s, want evidenced", state)
 	}
 }
+
+// A refused retry does not undo an earlier attempt that may have landed.
+func TestRefusedRetryKeepsUnknownOutcome(t *testing.T) {
+	db, f, m := newOverrideRig(t)
+	f.RestrictErr = context.DeadlineExceeded
+	if err := m.Handle(context.Background(), autoIncident(false)); err == nil {
+		t.Fatal("expected failure")
+	}
+	id := onlyIncidentID(t, db)
+	f.RestrictErr = telegram.Refused(errors.New("not enough rights"))
+	m.Enforce(context.Background(), id, autoIncident(false))
+	if st, err := db.GetIncidentState(id); err != nil || st != domain.StateSanctionUnknown {
+		t.Fatalf("state=%s err=%v, want sanction_unknown kept", st, err)
+	}
+	if protected, err := db.SanctionSince(ovChat, ovUser, 0); err != nil || !protected {
+		t.Fatalf("captcha protection lost: %v %v", protected, err)
+	}
+}

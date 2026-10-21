@@ -31,6 +31,16 @@ func (r *stubRepo) InsertPending(_ int64, _ int, _, _ int64, _ bool, verdict dom
 	return 1, r.fresh, nil
 }
 func (r *stubRepo) SetIncidentState(_ int64, s domain.IncidentState) error { r.state = s; return nil }
+func (r *stubRepo) MarkSanctionUnknown(int64, domain.Action) error {
+	r.state = domain.StateSanctionUnknown
+	return nil
+}
+func (r *stubRepo) MarkSanctionRefused(int64) error {
+	if r.state != domain.StateSanctionUnknown {
+		r.state = domain.StateNotActed
+	}
+	return nil
+}
 func (r *stubRepo) AddEvidence(_ int64, _ int64, ids []int) error {
 	r.evidenceCalls++
 	r.evidenceIDs = ids

@@ -14,7 +14,10 @@ Entries start life under **Unreleased** and are moved under a version heading wh
   context, lost connection) is no longer recorded as `not_acted`: it may have
   been applied, so the incident becomes `sanction_unknown` — captcha leaves the
   mute alone (also for a manual enforce of a dry-run incident) and a moderator
-  can re-apply it. Only Telegram's own error response marks it `not_acted`.
+  can re-apply it. Only Telegram's own error response marks it `not_acted`,
+  and a refused retry does not overwrite an earlier unknown outcome. False
+  positive and Lift lift a `sanction_unknown` sanction instead of settling the
+  incident without a Telegram call.
 - A late failure (such as the final state write of a dry-run incident) no
   longer rewrites an observed incident as `not_acted`.
 - Enforce that deleted the message but failed the sanction no longer records

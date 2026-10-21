@@ -394,4 +394,22 @@ func TestEnforceUncertainSanctionKeepsCaptchaProtection(t *testing.T) {
 	if claimed, _, _, err := db.ClaimManualOverride(id); err != nil || !claimed {
 		t.Fatalf("moderator cannot re-apply: %v %v", claimed, err)
 	}
+	if err := db.FinishManualOverride(id, domain.Verdict{Action: domain.ActionDeleteMute}, false); err != nil {
+		t.Fatal(err)
+	}
+	// False positive must lift the possibly-applied mute, not settle the
+	// incident without a Telegram call.
+	fp := Callback{ID: "fp", Data: encode(ActFalsePositive, strconv.FormatInt(id, 10)), PresserID: 7}
+	if err := h.Handle(context.Background(), fp); err != nil {
+		t.Fatal(err)
+	}
+	lifted := false
+	for _, c := range f.Calls() {
+		if c == "UnrestrictMember" {
+			lifted = true
+		}
+	}
+	if !lifted {
+		t.Fatalf("false positive did not lift the possibly-applied mute: %v", f.Calls())
+	}
 }

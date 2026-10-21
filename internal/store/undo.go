@@ -36,7 +36,19 @@ type IncidentRow struct {
 // can be undone. It is deliberately strict: a dry-run incident changed
 // nothing, and a state before StateActed means applyAction never ran (or
 // failed), so pressing undo must not issue a pointless Telegram call.
+//
+// sanction_unknown is the exception to that strictness: the sanction may
+// have landed (even on a dry-run incident a moderator enforced), and lifting
+// one that did not is harmless — unban is OnlyIfBanned — while refusing would
+// record the decision and leave a possibly-applied sanction with no way back.
 func (r IncidentRow) Sanctioned() bool {
+	if r.State == domain.StateSanctionUnknown {
+		switch r.Action {
+		case domain.ActionBan, domain.ActionMute, domain.ActionDeleteMute:
+			return true
+		}
+		return false
+	}
 	if r.DryRun {
 		return false
 	}
