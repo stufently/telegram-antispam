@@ -383,9 +383,14 @@ type Ops struct {
 // Kind selects the API ("openai", "anthropic" or "jev"); APIKey and Model are the
 // credentials and model name for that API.
 type LLMProvider struct {
-	Kind   string `yaml:"kind"`
-	APIKey string `yaml:"api_key"`
-	Model  string `yaml:"model"`
+	// Shadow observes messages without contributing to the moderation verdict.
+	Shadow bool `yaml:"shadow"`
+	// Provider prompts replace shared prompts; chat exceptions must be covered.
+	Prompt          string           `yaml:"prompt"`
+	PromptOverrides map[int64]string `yaml:"prompt_overrides"`
+	Kind            string           `yaml:"kind"`
+	APIKey          string           `yaml:"api_key"`
+	Model           string           `yaml:"model"`
 	// APIBase overrides the provider's endpoint. Empty means the official
 	// one. It exists so a deployment can point the same provider at a
 	// compatible gateway (a proxy, a self-hosted or third-party
@@ -405,6 +410,18 @@ func (l LLM) PromptFor(chatID int64) string {
 		return p
 	}
 	return l.Prompt
+}
+
+// ProviderPromptFor selects the first non-blank provider chat override,
+// provider prompt, or shared chat/global prompt. Blank means built-in defaults.
+func (l LLM) ProviderPromptFor(i int, chatID int64) string {
+	p := l.Providers[i]
+	for _, prompt := range []string{p.PromptOverrides[chatID], p.Prompt, l.PromptFor(chatID)} {
+		if strings.TrimSpace(prompt) != "" {
+			return prompt
+		}
+	}
+	return ""
 }
 
 // LLM configures the optional, opt-in borderline LLM adjudication stage
@@ -970,7 +987,16 @@ func (c *Config) Validate() error {
 		if len(c.LLM.Providers) == 0 {
 			return fmt.Errorf("llm.enabled is true but no llm.providers are configured")
 		}
+		voting := false
 		for i, p := range c.LLM.Providers {
+			voting = voting || !p.Shadow
+			if strings.TrimSpace(p.Prompt) != "" {
+				for chatID := range c.LLM.PromptOverrides {
+					if strings.TrimSpace(p.PromptOverrides[chatID]) == "" {
+						return fmt.Errorf("llm.providers[%d].prompt_overrides must cover chat %d", i, chatID)
+					}
+				}
+			}
 			switch p.Kind {
 			case "openai", "anthropic", "jev":
 			default:
@@ -992,6 +1018,9 @@ func (c *Config) Validate() error {
 			if p.Model == "" {
 				return fmt.Errorf("llm.providers[%d] (%s) missing model", i, p.Kind)
 			}
+		}
+		if !voting {
+			return fmt.Errorf("llm requires at least one voting provider")
 		}
 	}
 	if err := c.validateWelcome(); err != nil {

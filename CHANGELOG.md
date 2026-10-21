@@ -8,6 +8,17 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+### Added
+
+- Asynchronous shadow LLM providers (`shadow: true`) observe the same messages
+  without affecting moderation, incidents, training or existing LLM counters.
+  Observations have a separate timeout and a bounded pool; excess work is dropped.
+- Per-provider `prompt` and `prompt_overrides`, with validation that a provider's
+  own prompt preserves every shared chat exception through an explicit override.
+- Provider results in `tg_antispam_llm_provider_checks_total{provider,role,result}`
+  and shadow comparison in `tg_antispam_llm_shadow_agreement_total{provider,voter,shadow}`;
+  shadow logs include the JEV score without message text or provider errors.
+
 ### Fixed
 
 - A sanction call that failed without Telegram refusing it (timeout, cancelled

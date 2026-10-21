@@ -290,7 +290,7 @@ llm:
       model: claude-3-5-haiku-latest
 ```
 
-JEV can be the only provider; it needs no OpenAI or Anthropic key. Supply its
+JEV can be the only voting provider; it needs no OpenAI or Anthropic key. Supply its
 credential through `JEV_TOKEN` (overrides `api_key`), then configure:
 
 ```yaml
@@ -309,8 +309,8 @@ and compares the typed spam probability with `threshold` (inclusive, valid range
 `(0, 1]`). The defaults shown above follow the model and threshold used by
 [Umputun's integration](https://github.com/umputun/tg-spam/blob/master/lib/tgspam/jev.go);
 our question is tailored to this bot, so this is a starting threshold, not an
-accuracy guarantee. Evaluate your chats in dry-run before enforcement, and again
-when changing the model or instructions.
+accuracy guarantee. Evaluate JEV in shadow mode alongside a voting provider
+before enforcement, and again when changing the model or instructions.
 
 `max_symbols` limits the complete outgoing message, including structural metadata,
 to Unicode characters; zero is rejected. `api_base`, if supplied for JEV, is the
@@ -318,9 +318,48 @@ to Unicode characters; zero is rejected. `api_base`, if supplied for JEV, is the
 and per-chat `prompt_overrides` replace JEV's spam-question instructions; use a
 spam classification policy, not a request to generate prose. JEV ignores
 `temperature` and `max_tokens`. Malformed answers, HTTP errors and timeouts count
-as provider failures in the existing LLM metrics and cannot supply a spam vote.
-With `any`, another successful provider can still vote spam; `all` requires every
-provider to succeed and agree.
+as provider failures and cannot supply a spam vote. Existing LLM metrics count
+only voting providers. With `any`, another successful voter can still vote spam;
+`all` requires every voting provider to succeed and agree.
+
+To evaluate JEV without affecting moderation, keep OpenAI voting and add JEV
+with `shadow: true` and its own question:
+
+```yaml
+llm:
+  enabled: true
+  policy: any
+  providers:
+    - kind: openai
+      model: gpt-4o-mini          # credential from OPENAI_API_KEY
+    - kind: jev
+      shadow: true               # credential from JEV_TOKEN
+      prompt: "Is this unsolicited advertising, a scam, phishing or a vague job offer?"
+      prompt_overrides: {}
+```
+
+A shadow receives the same message after voting finishes, asynchronously with
+its own `http_timeout` budget. Its answer never changes the decision, incident,
+training or existing LLM counters, and moderation does not wait for it. At most
+8 observations run concurrently; excess observations are dropped without API
+calls. An enabled stage requires at least one voting (`shadow: false`, default)
+provider.
+
+Each provider can set `prompt` and `prompt_overrides`. The first nonblank value
+wins: provider chat override, provider prompt, shared chat override, shared
+prompt, then the provider's built-in prompt. These replace the full prompt.
+If a provider has its own nonblank `prompt`, it must also supply a nonblank
+provider override for **every** chat key in `llm.prompt_overrides`; startup
+rejects missing coverage so chat exceptions cannot silently disappear.
+
+`tg_antispam_llm_provider_checks_total{provider,role,result}` counts each
+provider's `spam`, `ham` or `error`, with `role=vote|shadow`; `dropped` is exclusive
+to shadows. `tg_antispam_llm_shadow_agreement_total{provider,voter,shadow}`
+compares each completed shadow observation with the voting result
+(`spam|ham|error` on either side). Dropped observations have no agreement sample.
+Shadow logs contain chat/message IDs, provider, both results and a numeric score
+for JEV, but no message text or provider error. The existing check/failure
+counters remain voting-only.
 
 Add JEV to the same provider list to combine it with other providers. The existing
 `always_for_untrusted: true` option expands checks beyond the borderline band;

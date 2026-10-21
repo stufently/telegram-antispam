@@ -28,6 +28,22 @@ type Provider interface {
 	Classify(ctx context.Context, text, prompt string) (bool, error)
 }
 
+// Scorer exposes a provider's numeric score and inclusive classification cutoff.
+type Scorer interface {
+	Provider
+	Score(ctx context.Context, text, prompt string) (float64, error)
+	Cutoff() float64
+}
+
+// Vote records one provider response, in configured provider order.
+type Vote struct {
+	Provider string
+	Spam     bool
+	OK       bool
+	Err      error
+	Score    *float64
+}
+
 // Policy is how the Judge combines multiple providers' verdicts.
 type Policy string
 
@@ -63,10 +79,11 @@ type result struct {
 // Bayes corpus has never seen. The caller is expected to surface Failed so
 // a dead paid stage is visible instead of silently degrading detection.
 type Outcome struct {
-	Spam   bool  // the consensus verdict (false when the policy is unmet)
-	Failed int   // providers that errored, or never answered before ctx died
-	Total  int   // providers asked
-	Err    error // one representative failure, for logging
+	Votes  []Vote // one per provider, in Providers order
+	Spam   bool   // the consensus verdict (false when the policy is unmet)
+	Failed int    // providers that errored, or never answered before ctx died
+	Total  int    // providers asked
+	Err    error  // one representative failure, for logging
 }
 
 // Adjudicate returns the consensus verdict together with how many providers
@@ -74,27 +91,57 @@ type Outcome struct {
 // prevent the policy from being met, Spam is false. Providers run
 // concurrently; Adjudicate returns once all have answered or ctx is done.
 func (j Judge) Adjudicate(ctx context.Context, text, prompt string) Outcome {
-	out := Outcome{Total: len(j.Providers)}
+	prompts := make([]string, len(j.Providers))
+	for i := range prompts {
+		prompts[i] = prompt
+	}
+	return j.AdjudicateEach(ctx, text, prompts)
+}
+
+// AdjudicateEach uses a per-provider prompt. A mismatched slice means all empty.
+func (j Judge) AdjudicateEach(ctx context.Context, text string, prompts []string) Outcome {
+	out := Outcome{Total: len(j.Providers), Votes: make([]Vote, len(j.Providers))}
 	if len(j.Providers) == 0 {
 		return out
 	}
 	type answer struct {
-		i   int
-		res result
-		err error
+		i     int
+		res   result
+		err   error
+		score *float64
 	}
 	results := make([]result, len(j.Providers))
 	done := make(chan answer, len(j.Providers))
 	for i, p := range j.Providers {
-		go func(i int, p Provider) {
-			spam, err := p.Classify(ctx, text, prompt)
-			done <- answer{i: i, res: result{spam: spam, ok: err == nil}, err: err}
-		}(i, p)
+		out.Votes[i].Provider = p.Name()
+		prompt := ""
+		if len(prompts) == len(j.Providers) {
+			prompt = prompts[i]
+		}
+		go func(i int, p Provider, prompt string) {
+			var spam bool
+			var err error
+			var score *float64
+			if scorer, ok := p.(Scorer); ok {
+				value, scoreErr := scorer.Score(ctx, text, prompt)
+				err = scoreErr
+				if err == nil {
+					score = &value
+					spam = value >= scorer.Cutoff()
+				}
+			} else {
+				spam, err = p.Classify(ctx, text, prompt)
+			}
+			done <- answer{i: i, res: result{spam: spam, ok: err == nil}, err: err, score: score}
+		}(i, p, prompt)
 	}
+	received := make([]bool, len(j.Providers))
 	answered := 0
 	record := func(a answer) {
 		answered++
 		results[a.i] = a.res
+		received[a.i] = true
+		out.Votes[a.i] = Vote{Provider: out.Votes[a.i].Provider, Spam: a.res.spam, OK: a.res.ok, Err: a.err, Score: a.score}
 		if a.err != nil {
 			out.Failed++
 			out.Err = a.err
@@ -119,6 +166,11 @@ func (j Judge) Adjudicate(ctx context.Context, text, prompt string) Outcome {
 			// Deadline reached with nothing further pending. Providers
 			// still outstanding count as failures — on top of, not
 			// instead of, the ones that already errored.
+			for i := range out.Votes {
+				if !received[i] {
+					out.Votes[i].Err = ctx.Err()
+				}
+			}
 			out.Failed += len(j.Providers) - answered
 			if out.Err == nil {
 				out.Err = ctx.Err()

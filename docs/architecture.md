@@ -317,9 +317,35 @@ Missing, null, malformed or out-of-range answers count as failures. Response
 bodies and transport URLs never enter JEV error logs. Per-chat prompts replace
 the question instructions on each call; generative tuning parameters do not
 apply. `JEV_TOKEN` overrides the configured credential; Helm can inject it from
-`llmSecret.jevKey`. JEV uses the existing `any`/`all` consensus, failure counters,
+`llmSecret.jevKey`. Voting JEV uses the existing `any`/`all` consensus, failure counters,
 borderline/always-for-untrusted selection and evidence-first incident path.
 It introduces neither a veto nor a new immunity bypass.
+
+`cmd/tg-antispam/llm_stage.go` partitions providers into voters and shadows,
+preserving their configuration indices for per-call prompt resolution.
+`Judge.AdjudicateEach` returns ordered `Vote` records and the voting verdict;
+`Adjudicate` remains the shared-prompt wrapper. `JEV.Score` exposes the validated
+probability; its inclusive `Cutoff` is the same threshold used by `Classify`.
+After voting completes, `llm.Shadow.Observe` starts a separate timed observation
+under the work context. Only voters delay moderation or influence incidents,
+training and the existing adjudication/failure counters. The shadow pool holds
+up to 8 observations (including report callbacks); a full pool drops a new
+observation without calling providers. Provider calls within each observation
+run concurrently; reports contain ordered votes, including timeout failures.
+
+Per-call prompt selection is provider chat override, provider prompt, shared
+chat override, shared prompt, then built-in defaults, skipping blank values.
+An enabled stage requires a voter. A provider with its own prompt must cover
+every shared chat override key with a nonblank provider override; validation
+rejects missing coverage instead of silently replacing chat exceptions.
+
+`tg_antispam_llm_provider_checks_total{provider,role,result}` records vote/shadow
+results (`spam|ham|error`, plus `dropped` for shadows).
+`tg_antispam_llm_shadow_agreement_total{provider,voter,shadow}` compares the
+voting adjudication with each reported shadow result; all-voter failure is
+`voter=error`. Drops have no agreement sample. Shadow logs include chat/message
+IDs, provider, both results and the score when available, never message text
+or provider errors. Shadows have no path back into the moderation verdict.
 
 The LLM stage is disabled by default, bounded by a timeout, and errors toward
 not-spam. No message text is sent to an LLM unless the stage is explicitly enabled.

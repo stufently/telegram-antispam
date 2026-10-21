@@ -22,7 +22,6 @@ import (
 	"github.com/stufently/telegram-antispam/internal/detect"
 	"github.com/stufently/telegram-antispam/internal/domain"
 	"github.com/stufently/telegram-antispam/internal/incident"
-	"github.com/stufently/telegram-antispam/internal/llm"
 	"github.com/stufently/telegram-antispam/internal/ops"
 	"github.com/stufently/telegram-antispam/internal/queue"
 	"github.com/stufently/telegram-antispam/internal/selfcheck"
@@ -801,17 +800,17 @@ func main() {
 	})
 
 	// Optional borderline LLM stage (§5.4): built only when explicitly enabled
-	// in config (privacy: external calls are opt-in). When off, the judge is
+	// in config (privacy: external calls are opt-in). When off, the stage is
 	// nil and the cascade's borderline band stays 0, so no message text ever
 	// leaves the process.
-	var llmJudge *llm.Judge
+	var stage *llmStage
 	var bayesBorderlineBand float64
 	if *cfg.LLM.Enabled && len(cfg.LLM.Providers) > 0 {
 		provs := llmProviders(cfg.LLM)
-		llmJudge = &llm.Judge{Providers: provs, Policy: llm.Policy(cfg.LLM.Policy)}
+		stage = newLLMStage(cfg.LLM, provs, reg, cfg.LLM.HTTPTimeout.Duration())
 		bayesBorderlineBand = cfg.LLM.BorderlineBand
-		log.Printf("LLM borderline stage enabled: %d provider(s), policy=%s, band=%.3g",
-			len(provs), cfg.LLM.Policy, bayesBorderlineBand)
+		log.Printf("LLM borderline stage enabled: %d provider(s), %d shadow, policy=%s, band=%.3g",
+			len(provs), len(stage.shadowIndices), cfg.LLM.Policy, bayesBorderlineBand)
 	}
 
 	cascade := detect.Cascade{
@@ -831,7 +830,7 @@ func main() {
 		// The band and the flag are wired independently on purpose: the flag
 		// widens WHAT reaches the LLM, it does not change what the band means,
 		// so turning it off restores the previous behavior exactly.
-		BayesAlwaysBorderline: cfg.LLM.AlwaysForUntrusted && llmJudge != nil,
+		BayesAlwaysBorderline: cfg.LLM.AlwaysForUntrusted && stage != nil,
 		Admins:                adminCache,
 		FakeAdmin: detect.FakeAdminCfg{
 			NameMatchSanction: cfg.Detection.FakeAdminNameMatch == config.FakeAdminNameMatchSanction,
@@ -845,7 +844,6 @@ func main() {
 		CaptionMinLen:    cfg.Detection.MediaCaptionMinLen,
 		ReviewKeyboard:   cfg.Detection.ReviewKeyboard,
 	}
-	llmTimeout := cfg.LLM.HTTPTimeout.Duration()
 	// decideWith runs the pure cascade, then — for a non-actionable
 	// "bayes_borderline" result and only when the LLM stage is enabled —
 	// consults the LLM judge. A spam consensus upgrades the verdict to an
@@ -853,34 +851,8 @@ func main() {
 	// blocking LLM call delays only that chat's queue, never all updates.
 	decideWith := func(m domain.Message, edited bool) (domain.Verdict, bool) {
 		v, ok := cascade.Decide(m, edited)
-		if !ok && llmJudge != nil && hasBorderline(v) {
-			cctx, cancel := context.WithTimeout(workCtx, llmTimeout)
-			out := llmJudge.Adjudicate(cctx, llmMessageText(m), cfg.LLM.PromptFor(m.ChatID))
-			cancel()
-			// A failed call is counted as "error", never as "ham". The stage
-			// is fail-open, so an expired key, an exhausted quota or a
-			// timing-out endpoint yields exactly the same verdict as a model
-			// answering HAM — and this is the only stage that catches spam
-			// the Bayes corpus has never seen (the crypto euphemisms tg-spam
-			// needed a custom prompt for). Without a distinct label, the paid
-			// detector could die and every dashboard would keep showing
-			// healthy "ham" checks.
-			// ONE sample per adjudication, never one per provider: with
-			// policy "any" and answers [spam, ham] a per-provider count
-			// recorded two spam checks for a single message, and the
-			// metric stopped meaning "messages the LLM judged".
-			// "error" is reserved for an adjudication that got no answer
-			// at all — that is the one with no verdict behind it.
-			if out.Failed > 0 {
-				log.Printf("llm: %d/%d provider(s) failed: %v", out.Failed, out.Total, out.Err)
-				reg.IncCounter("tg_antispam_llm_provider_failures_total", float64(out.Failed))
-			}
-			if out.Failed >= out.Total {
-				reg.IncCounter("tg_antispam_llm_checks_total", 1, "result", "error")
-			} else {
-				reg.IncCounter("tg_antispam_llm_checks_total", 1, "result", boolLabel(out.Spam))
-			}
-			if out.Spam {
+		if !ok && stage != nil && hasBorderline(v) {
+			if stage.adjudicate(workCtx, m) {
 				v = domain.Verdict{
 					Action:     cfg.Action,
 					Scope:      domain.ScopeGlobal,

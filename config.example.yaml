@@ -356,8 +356,8 @@ llm:
   # empty answer, which this stage reads as "not spam" — a silently
   # disabled check rather than a visible error.
   # max_tokens: 8
-  # Combine multiple providers: "any" (spam if any provider says spam) or
-  # "all" (spam only if all agree). Ignored with a single provider.
+  # Combine voting providers: "any" (spam if any voter says spam) or
+  # "all" (spam only if all voters agree). Shadow providers never vote.
   # Default: "any".
   policy: any
   # Width below bayes_threshold within which a message is sent to the LLM.
@@ -377,7 +377,7 @@ llm:
   # silently. The trust gate still bounds the bill: only a newcomer's first
   # trust_threshold messages can reach the paid stage. Default: false.
   always_for_untrusted: false
-  # Per-provider call timeout. Default: 10s.
+  # Voting timeout and separate budget for each shadow observation. Default: 10s.
   http_timeout: 10s
   # Backends: kind is "openai", "anthropic" or "jev"; api_key and model are
   # that API's credentials and model name. Fail-open: any provider error errs
@@ -386,10 +386,21 @@ llm:
   # api_key can also come from the OPENAI_API_KEY / ANTHROPIC_API_KEY / JEV_TOKEN env
   # vars (env wins), exactly like BOT_TOKEN — necessary wherever this file is
   # not a secret, e.g. a Kubernetes ConfigMap kept in version control.
+  # Each provider supports shadow (default false), prompt and prompt_overrides.
+  # Prompt precedence, skipping blank/whitespace-only values:
+  # provider.prompt_overrides[chat] > provider.prompt > llm.prompt_overrides[chat]
+  # > llm.prompt > built-in provider prompt. Overrides replace the whole prompt.
+  # With provider.prompt set, provider.prompt_overrides MUST cover EVERY chat
+  # key in llm.prompt_overrides with a nonblank value, or startup is rejected.
+  # shadow: true sends the same messages asynchronously, but cannot change
+  # moderation, incidents, training or existing LLM counters. At least one
+  # voting provider is required when enabled. Up to 8 shadow observations run
+  # at once; excess observations are counted as dropped without API calls.
   providers: []
   #  - kind: openai
   #    api_key: "sk-..."
   #    model: gpt-4o-mini
+  #    shadow: false         # voting OpenAI alongside shadow JEV below
   #    # Optional: point the same provider at a compatible gateway (a proxy,
   #    # a self-hosted or third-party OpenAI-compatible server). Empty means
   #    # the official endpoint.
@@ -402,11 +413,18 @@ llm:
   #    # JEV_TOKEN overrides api_key; keep credentials in a Secret.
   #    api_key: ""
   #    model: jev-1.13.0       # default; pinned for repeatable decisions
+  #    shadow: true           # observe without sanctions or moderation delay
+  #    prompt: "Is this unsolicited advertising, a scam, phishing or a vague job offer?"
+  #    prompt_overrides: {}   # cover all shared chat overrides if configured
+  #      -1001234567890: "Trading discussion is legitimate; scams and unrelated ads are spam."
   #    threshold: 0.30        # spam when probability >= threshold; (0, 1]
   #    max_symbols: 6000      # positive Unicode character limit, includes metadata
   #    # Unlike OpenAI/Anthropic, api_base is the COMPLETE endpoint.
   #    api_base: "https://api.typesafe.ai/v1/systemone"
-  # JEV uses a typed spam question; llm.prompt and prompt_overrides replace
-  # its instructions. temperature/max_tokens do not apply. The default
+  # JEV uses a typed spam question; the selected prompt replaces its instructions. temperature/max_tokens do not apply. The default
   # threshold is a starting point, not a measured accuracy guarantee for
-  # your chat: evaluate in dry-run, especially after changing model/prompt.
+  # your chat: evaluate in shadow mode, especially after changing model/prompt.
+  # Per-provider results: tg_antispam_llm_provider_checks_total{provider,role,result}
+  # with role=vote|shadow, result=spam|ham|error (also dropped for shadow).
+  # Agreement: tg_antispam_llm_shadow_agreement_total{provider,voter,shadow}.
+  # voter and shadow are spam|ham|error; dropped observations have no agreement.
