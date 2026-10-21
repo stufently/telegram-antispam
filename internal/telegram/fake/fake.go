@@ -59,6 +59,8 @@ type Fake struct {
 	// and the caller's next move differs for each.
 	DeleteErr   error
 	RestrictErr error
+	// UnrestrictErr fails lifting a mute, for the undo paths.
+	UnrestrictErr error
 
 	// LastAdmin captures the most recent AdminMessage passed to SendAdmin, so
 	// tests can assert on fields SendAdmin doesn't otherwise record.
@@ -186,7 +188,7 @@ func (f *Fake) UnrestrictMember(_ context.Context, chat, user int64) error {
 	f.LastUnrestrict.Chat, f.LastUnrestrict.UserID = chat, user
 	f.mu.Unlock()
 	f.log("UnrestrictMember")
-	return nil
+	return f.UnrestrictErr
 }
 
 func (f *Fake) RestrictMember(_ context.Context, chat, user int64, perms telegram.Perms, until int64) error {

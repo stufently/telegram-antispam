@@ -436,3 +436,27 @@ func TestUndoUnknownLiftsBothSanctions(t *testing.T) {
 		t.Fatalf("calls %v, want both UnbanMember and UnrestrictMember", f.Calls())
 	}
 }
+
+// A failed lift of either possible sanction must leave the press retryable.
+func TestUndoUnknownFailureReleasesClaim(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+	id := reportedIncident(t, db, nil)
+	if err := db.MarkSanctionUnknown(id, domain.ActionBan); err != nil {
+		t.Fatal(err)
+	}
+	f := fake.New()
+	f.UnrestrictErr = context.DeadlineExceeded
+	h := NewHandler(f, db, map[int64]bool{7: true})
+	cb := Callback{ID: "lift", Data: encode(ActLiftNoLearn, strconv.FormatInt(id, 10)), PresserID: 7}
+	if err := h.Handle(context.Background(), cb); err == nil {
+		t.Fatal("expected the unmute failure")
+	}
+	f.UnrestrictErr = nil
+	if err := h.Handle(context.Background(), cb); err != nil {
+		t.Fatalf("retry after a failed lift: %v", err)
+	}
+	if n := strings.Count(strings.Join(f.Calls(), " "), "UnrestrictMember"); n != 2 {
+		t.Fatalf("UnrestrictMember called %d times, want a retry", n)
+	}
+}

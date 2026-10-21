@@ -520,23 +520,20 @@ func (h *Handler) undo(ctx context.Context, inc store.IncidentRow) (string, erro
 // undoUnknown lifts a sanction whose outcome is unknown. The row records only
 // the LAST attempted action, and a mute whose answer was lost followed by a
 // /ban whose answer was lost too may have left either or both in place, so
-// both are lifted. The recorded action's call must succeed, as in undo; the
-// other is best-effort, and harmless when nothing is there to lift
+// both are lifted, and both must succeed: a failure releases the claim and
+// the retry repeats both, which is safe because each is idempotent
 // (unbanChatMember is OnlyIfBanned).
 func (h *Handler) undoUnknown(ctx context.Context, inc store.IncidentRow) (string, error) {
-	unban := func() error { return h.port.UnbanMember(ctx, inc.ChatID, inc.UserID) }
-	unmute := func() error { return h.port.UnrestrictMember(ctx, inc.ChatID, inc.UserID) }
-	primary, other, done := unmute, unban, "unmuted"
+	if err := h.port.UnbanMember(ctx, inc.ChatID, inc.UserID); err != nil {
+		return "", fmt.Errorf("unban user %d in chat %d: %w", inc.UserID, inc.ChatID, err)
+	}
+	if err := h.port.UnrestrictMember(ctx, inc.ChatID, inc.UserID); err != nil {
+		return "", fmt.Errorf("unmute user %d in chat %d: %w", inc.UserID, inc.ChatID, err)
+	}
 	if inc.Action == domain.ActionBan {
-		primary, other, done = unban, unmute, "unbanned"
+		return "unbanned", nil
 	}
-	if err := primary(); err != nil {
-		return "", fmt.Errorf("lift %s of user %d in chat %d: %w", inc.Action, inc.UserID, inc.ChatID, err)
-	}
-	if err := other(); err != nil {
-		log.Printf("incident %d: best-effort lift of the other possible sanction failed: %v", inc.ID, err)
-	}
-	return done, nil
+	return "unmuted", nil
 }
 
 // train feeds the incident's captured tokens to the Bayes trainer under the
