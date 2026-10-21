@@ -11,6 +11,7 @@ package llm
 import (
 	"context"
 	"strings"
+	"sync"
 )
 
 // Provider is one LLM backend that classifies a single message as spam or not.
@@ -100,6 +101,12 @@ func (j Judge) Adjudicate(ctx context.Context, text, prompt string) Outcome {
 
 // AdjudicateEach uses a per-provider prompt. A mismatched slice means all empty.
 func (j Judge) AdjudicateEach(ctx context.Context, text string, prompts []string) Outcome {
+	return j.adjudicateEach(ctx, text, prompts, nil)
+}
+
+// adjudicateEach optionally tracks calls that outlive the result deadline.
+// Shadow uses this to hold capacity without delaying the timeout report.
+func (j Judge) adjudicateEach(ctx context.Context, text string, prompts []string, calls *sync.WaitGroup) Outcome {
 	out := Outcome{Total: len(j.Providers), Votes: make([]Vote, len(j.Providers))}
 	if len(j.Providers) == 0 {
 		return out
@@ -118,7 +125,13 @@ func (j Judge) AdjudicateEach(ctx context.Context, text string, prompts []string
 		if len(prompts) == len(j.Providers) {
 			prompt = prompts[i]
 		}
+		if calls != nil {
+			calls.Add(1)
+		}
 		go func(i int, p Provider, prompt string) {
+			if calls != nil {
+				defer calls.Done()
+			}
 			var spam bool
 			var err error
 			var score *float64

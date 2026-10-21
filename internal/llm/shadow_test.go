@@ -227,3 +227,65 @@ func TestShadowConcurrentAdmission(t *testing.T) {
 		})
 	}
 }
+
+func TestShadowSlotHeldUntilProvidersReturn(t *testing.T) {
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	p := shadowFake{name: "ignores cancellation", call: func(context.Context, string, string) (bool, error) {
+		<-release
+		return true, nil
+	}}
+	s := Shadow{Providers: []Provider{p}, Max: 1, Timeout: 50 * time.Millisecond}
+	reports := make(chan []Vote, 4)
+	var count atomic.Int32
+	report := func(v []Vote) { count.Add(1); reports <- v }
+	start := time.Now()
+	if !s.Observe(context.Background(), "x", nil, report) {
+		t.Fatal("first observation dropped")
+	}
+	votes := shadowWait(t, reports)
+	if time.Since(start) > 1050*time.Millisecond || len(votes) != 1 || votes[0].OK || !errors.Is(votes[0].Err, context.DeadlineExceeded) {
+		t.Fatalf("late or invalid timeout report: %+v", votes)
+	}
+	// Allow the reporting goroutine to return; the provider must still hold its slot.
+	until := time.Now().Add(30 * time.Millisecond)
+	for time.Now().Before(until) {
+		if s.Observe(context.Background(), "x", nil, report) {
+			t.Fatal("slot released while provider still running")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	unblock()
+	deadline := time.Now().Add(time.Second)
+	for !s.Observe(context.Background(), "x", nil, report) {
+		if time.Now().After(deadline) {
+			t.Fatal("slot not released after provider returned")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	votes = shadowWait(t, reports)
+	if !votes[0].OK || !votes[0].Spam || count.Load() != 2 {
+		t.Fatalf("votes=%+v reports=%d", votes, count.Load())
+	}
+}
+
+func TestShadowZeroTimeoutUsesDefault(t *testing.T) {
+	for _, timeout := range []time.Duration{0, -time.Second} {
+		t.Run(timeout.String(), func(t *testing.T) {
+			p := shadowFake{name: "fast", call: func(ctx context.Context, _, _ string) (bool, error) {
+				return false, ctx.Err()
+			}}
+			s := Shadow{Providers: []Provider{p}, Timeout: timeout}
+			reports := make(chan []Vote, 1)
+			if !s.Observe(context.Background(), "x", nil, func(v []Vote) { reports <- v }) {
+				t.Fatal("dropped")
+			}
+			votes := shadowWait(t, reports)
+			if len(votes) != 1 || !votes[0].OK || votes[0].Err != nil {
+				t.Fatalf("votes=%+v", votes)
+			}
+		})
+	}
+}

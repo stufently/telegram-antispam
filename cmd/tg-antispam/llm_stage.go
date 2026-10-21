@@ -69,7 +69,11 @@ func (s *llmStage) adjudicate(ctx context.Context, m domain.Message) bool {
 	cctx, cancel := context.WithTimeout(ctx, s.timeout)
 	out := s.judge.AdjudicateEach(cctx, text, s.prompts(s.voteIndices, m.ChatID))
 	cancel()
-	// Existing counters measure voting adjudications and voting failures only.
+	// Fail-open makes an expired key, exhausted quota or timeout look like a
+	// clean HAM answer. Count failures separately, and label an adjudication
+	// with no successful answers as "error", never "ham", so a dead paid
+	// detector cannot hide behind healthy-looking HAM checks.
+	// Shadow observations are intentionally excluded from these metrics.
 	if out.Failed > 0 {
 		logf("llm: %d/%d provider(s) failed: %v", out.Failed, out.Total, out.Err)
 		s.reg.IncCounter("tg_antispam_llm_provider_failures_total", float64(out.Failed))
@@ -78,6 +82,9 @@ func (s *llmStage) adjudicate(ctx context.Context, m domain.Message) bool {
 	if out.Failed >= out.Total {
 		voter = "error"
 	}
+	// ONE sample per adjudication, not per provider: under "any", [spam, ham]
+	// is one spam verdict for one message. Counting each provider here would
+	// stop this metric from meaning "messages the LLM judged".
 	s.reg.IncCounter("tg_antispam_llm_checks_total", 1, "result", voter)
 	for _, v := range out.Votes {
 		s.providerCheck(v.Provider, "vote", voteLabel(v))
