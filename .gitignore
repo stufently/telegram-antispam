@@ -6,3 +6,4 @@ probe.env
 
 /.gopath/
 /tg-antispam
+_site/

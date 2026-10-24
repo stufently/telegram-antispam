@@ -1,0 +1,52 @@
+# Site config for .github/site/build.py. Everything else comes from README.md.
+name = "telegram-antispam"
+title = "telegram-antispam — self-hosted Telegram anti-spam bot"
+headline = "Self-hosted Telegram anti-spam and moderation bot in Go"
+description = "Keeps spam, scam links and impersonators out of Telegram groups: detection cascade, CAS/LOLS, Bayes, optional LLM. One Docker container, MIT."
+lang = "en"
+keywords = ["telegram anti-spam bot", "telegram spam filter", "telegram moderation bot", "self-hosted", "golang", "cas", "lols", "bayesian spam filter", "tg-spam alternative", "helm"]
+license = "MIT"
+license_url = "https://opensource.org/license/mit"
+category = "UtilitiesApplication"
+os = "Linux"
+programming_language = "Go"
+eyebrow = "Open source · MIT · Go 1.25+"
+same_as = ["https://github.com/stufently/telegram-antispam/pkgs/container/telegram-antispam"]
+
+landing_sections = ["Quick start (Docker Compose)", "Deploy to Kubernetes (Helm)", "Why another Telegram anti-spam bot?"]
+
+pages = ["docs/architecture.md"]
+docs_dir = ""
+
+features = [
+  "Multi-stage detection cascade: normalizer, admin immunity, global blocklist, hard rules, fake-admin, behavioral checks, naive Bayes and an optional LLM; first hit wins.",
+  "Shared blocklists: a lols.bot snapshot plus cached Combot Anti-Spam (CAS) checks that fail open.",
+  "Bayesian spam filter with idempotent import of labeled samples and offline precision/recall calibration.",
+  "Evidence-backed moderation: evidence is copied to a private admin chat with a card and Confirm spam / False positive / Lift / Delete evidence buttons.",
+  "Dry-run mode per chat: new chats start observing, and enforce or force_dry_run move them in and out of enforcement.",
+  "Single static binary: pure Go, pure-Go SQLite, distroless image, Prometheus /metrics and /healthz.",
+]
+
+[[faq]]
+q = "Does telegram-antispam need a database server?"
+a = "No. It uses embedded SQLite (pure Go, no CGO) on a writable volume."
+
+[[faq]]
+q = "Will it ban people by accident?"
+a = "Every action is evidence-backed, administrator lookups fail safely, and you can run any chat in dry-run first. False positive and Lift unban or fully unmute the user from the admin chat, though deleted messages cannot be brought back."
+
+[[faq]]
+q = "Does it send my users' messages to a third party?"
+a = "Only if you explicitly enable the LLM stage (OpenAI, Anthropic and/or JEV). It is disabled by default, and no message text leaves the process unless you opt in."
+
+[[faq]]
+q = "Which Telegram API does it use?"
+a = "The Bot API via go-telegram/bot with long polling. No MTProto or user account is required."
+
+[[faq]]
+q = "How is it different from tg-spam?"
+a = "It is a simpler self-hosted alternative: message identity is (chat_id, message_id) rather than a text hash, every actionable incident keeps a full audit row, presets are never re-imported over learned data, and it ships as one container with no external database."
+
+[[faq]]
+q = "How do I run it?"
+a = "Copy config.example.yaml to config.yaml, set bot_token and admin_chat_id, and start it with docker compose up -d, docker run with the ghcr.io/stufently/telegram-antispam image, or the Helm chart in deploy/helm/tg-antispam. Add the bot to the group as an administrator with delete messages and ban users rights."
