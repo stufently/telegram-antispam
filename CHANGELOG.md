@@ -8,6 +8,8 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-11-02
+
 ### Added
 
 - JEV provider settings `criteria_spam`, `criteria_ham` and per-chat
