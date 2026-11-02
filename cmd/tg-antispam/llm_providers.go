@@ -32,8 +32,21 @@ func llmProviders(cfg config.LLM) []llm.Provider {
 			provs = append(provs, llm.JEV{
 				APIKey: pc.APIKey, Model: pc.Model, BaseURL: pc.APIBase,
 				Prompt: cfg.Prompt, Threshold: *pc.Threshold, MaxSymbols: *pc.MaxSymbols,
+				Criteria:          llm.JEVCriteria{Spam: pc.CriteriaSpam, Ham: pc.CriteriaHam},
+				CriteriaOverrides: jevCriteriaOverrides(pc.CriteriaOverrides),
 			})
 		}
 	}
 	return provs
+}
+
+func jevCriteriaOverrides(in map[int64]config.JEVCriteria) map[int64]llm.JEVCriteria {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[int64]llm.JEVCriteria, len(in))
+	for chatID, c := range in {
+		out[chatID] = llm.JEVCriteria{Spam: c.Spam, Ham: c.Ham}
+	}
+	return out
 }

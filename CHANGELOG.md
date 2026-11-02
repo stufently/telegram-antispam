@@ -8,6 +8,15 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+### Added
+
+- JEV provider settings `criteria_spam`, `criteria_ham` and per-chat
+  `criteria_overrides`: they fill the typed question's criteria (what counts as
+  spam / legitimate), so `prompt` can be a short question as in umputun/tg-spam.
+  Both or neither; with criteria set, every chat with a prompt override must
+  have a criteria override. Omitted keeps the previous criteria that defer to
+  the prompt.
+
 ## [0.22.0] - 2026-10-21
 
 ### Added

@@ -65,3 +65,51 @@ func TestJEVOptionsRejectedForOtherProviders(t *testing.T) {
 		}
 	}
 }
+
+const jevCriteriaConfig = jevConfig + `      criteria_spam: base spam
+      criteria_ham: base ham
+`
+
+func TestJEVCriteriaParsedAndKnown(t *testing.T) {
+	input := strings.Replace(jevCriteriaConfig, "llm:\n", "llm:\n  prompt_overrides:\n    -5: shared chat\n", 1) +
+		"      prompt_overrides:\n        -7: provider chat\n        -5: provider shared chat\n      prompt: question\n" +
+		"      criteria_overrides:\n        -7: {spam: s7, ham: h7}\n        -5: {spam: s5, ham: h5}\n"
+	if err := UnknownKeys([]byte(input)); err != nil {
+		t.Fatalf("criteria keys reported unknown: %v", err)
+	}
+	c, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := c.LLM.Providers[0]
+	if p.CriteriaSpam != "base spam" || p.CriteriaHam != "base ham" || p.CriteriaOverrides[-7] != (JEVCriteria{Spam: "s7", Ham: "h7"}) || p.CriteriaOverrides[-5] != (JEVCriteria{Spam: "s5", Ham: "h5"}) {
+		t.Fatalf("criteria not parsed: %+v", p)
+	}
+	// Omitted criteria stay valid: the legacy behaviour.
+	if _, err := Parse([]byte(jevConfig + "      prompt_overrides:\n        -7: provider chat\n")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestJEVCriteriaValidation(t *testing.T) {
+	for _, tc := range []struct{ name, input, want string }{
+		{"spam only", jevConfig + "      criteria_spam: s\n", "set together"},
+		{"ham only", jevConfig + "      criteria_ham: h\n", "set together"},
+		{"blank ham", jevConfig + "      criteria_spam: s\n      criteria_ham: \"  \"\n", "set together"},
+		{"overrides without pair", jevConfig + "      criteria_overrides:\n        -7: {spam: s, ham: h}\n", "requires criteria_spam"},
+		{"override missing ham", jevCriteriaConfig + "      criteria_overrides:\n        -7: {spam: s}\n", "needs both"},
+		{"override missing spam", jevCriteriaConfig + "      criteria_overrides:\n        -7: {spam: \" \", ham: h}\n", "needs both"},
+		{"provider prompt override uncovered", jevCriteriaConfig + "      prompt_overrides:\n        -7: chat\n", "must cover chat -7"},
+		{"shared prompt override uncovered", strings.Replace(jevCriteriaConfig, "llm:\n", "llm:\n  prompt_overrides:\n    -5: shared\n", 1), "must cover chat -5"},
+		{"other kind", strings.ReplaceAll(jevConfig, "kind: jev", "kind: openai") + "      model: m\n      criteria_spam: s\n      criteria_ham: h\n", "require kind jev"},
+		{"other kind ham only", strings.ReplaceAll(jevConfig, "kind: jev", "kind: openai") + "      model: m\n      criteria_ham: h\n", "require kind jev"},
+		{"other kind overrides", strings.ReplaceAll(jevConfig, "kind: jev", "kind: anthropic") + "      model: m\n      criteria_overrides:\n        -7: {spam: s, ham: h}\n", "require kind jev"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.input))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want %q, got %v", tc.want, err)
+			}
+		})
+	}
+}

@@ -417,11 +417,21 @@ llm:
   #    prompt: "Is this unsolicited advertising, a scam, phishing or a vague job offer?"
   #    prompt_overrides: {}   # cover all shared chat overrides if configured
   #      -1001234567890: "Trading discussion is legitimate; scams and unrelated ads are spam."
+  #    # Optional typed criteria, as in umputun/tg-spam: prompt becomes a short
+  #    # question, these say what counts as spam / legitimate. Both or neither;
+  #    # omitted keeps legacy criteria that defer to the prompt. With criteria set,
+  #    # criteria_overrides MUST cover every chat with a prompt override (provider
+  #    # or shared), or startup is rejected. Changing them invalidates the threshold.
+  #    criteria_spam: "Offers jobs with no named employer, easy money, drugs, crypto exchange; any VPN mention."
+  #    criteria_ham: "Ordinary conversation; a private person's one-off ad for their own item, even asking for DMs."
+  #    criteria_overrides: {}
+  #      -1001234567890: {spam: "Scams and unrelated ads.", ham: "Trading discussion is the topic."}
   #    threshold: 0.30        # spam when probability >= threshold; (0, 1]
   #    max_symbols: 6000      # positive Unicode character limit, includes metadata
   #    # Unlike OpenAI/Anthropic, api_base is the COMPLETE endpoint.
   #    api_base: "https://api.typesafe.ai/v1/systemone"
-  # JEV uses a typed spam question; the selected prompt replaces its instructions. temperature/max_tokens do not apply. The default
+  # JEV uses a typed spam question; the selected prompt replaces its instructions.
+  # criteria_* fill the question's criteria (per chat via criteria_overrides). temperature/max_tokens do not apply. The default
   # threshold is a starting point, not a measured accuracy guarantee for
   # your chat: evaluate in shadow mode, especially after changing model/prompt.
   # Per-provider results: tg_antispam_llm_provider_checks_total{provider,role,result}

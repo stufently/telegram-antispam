@@ -66,6 +66,9 @@ func (s *llmStage) adjudicate(ctx context.Context, m domain.Message) bool {
 		logf = log.Printf
 	}
 	text := llmMessageText(m)
+	// Per-chat provider settings beyond the prompt (JEV criteria) read the
+	// chat from the call context; shadow observations derive from ctx too.
+	ctx = llm.WithChatID(ctx, m.ChatID)
 	cctx, cancel := context.WithTimeout(ctx, s.timeout)
 	out := s.judge.AdjudicateEach(cctx, text, s.prompts(s.voteIndices, m.ChatID))
 	cancel()

@@ -209,3 +209,27 @@ func TestLLMStagePerProviderPrompt(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+type stageChat struct {
+	stageFake
+	chats chan int64
+}
+
+func (p stageChat) Classify(ctx context.Context, text, prompt string) (bool, error) {
+	id, _ := llm.ChatIDFrom(ctx)
+	p.chats <- id
+	return false, nil
+}
+
+func TestLLMStagePassesChatToProviders(t *testing.T) {
+	vote, shadow := make(chan int64, 1), make(chan int64, 1)
+	s, _, done, _ := stageSetup(stageChat{stageFake{name: "v"}, vote}, stageChat{stageFake{name: "s"}, shadow})
+	s.adjudicate(context.Background(), domain.Message{ChatID: -42})
+	stageWait(t, done)
+	if got := <-vote; got != -42 {
+		t.Fatalf("vote chat=%d", got)
+	}
+	if got := <-shadow; got != -42 {
+		t.Fatalf("shadow chat=%d", got)
+	}
+}

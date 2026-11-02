@@ -16,13 +16,46 @@ import (
 // must be supplied by the caller (configuration provides defaults). BaseURL is
 // the complete endpoint, unlike the generative providers' base URLs.
 type JEV struct {
-	APIKey     string
-	Model      string
-	BaseURL    string
-	Client     *http.Client
-	Prompt     string
-	Threshold  float64
-	MaxSymbols int
+	APIKey  string
+	Model   string
+	BaseURL string
+	Client  *http.Client
+	Prompt  string
+	// Criteria fills the question's criteria.true/false. A pair with a blank
+	// side keeps the legacy wording, which defers to the instructions; the
+	// configuration validates that both sides are set together.
+	Criteria JEVCriteria
+	// CriteriaOverrides replaces Criteria for the chat carried by the call's
+	// context (WithChatID), mirroring prompt_overrides.
+	CriteriaOverrides map[int64]JEVCriteria
+	Threshold         float64
+	MaxSymbols        int
+}
+
+// JEVCriteria describes what counts as spam (Spam) and as legitimate (Ham).
+type JEVCriteria struct{ Spam, Ham string }
+
+const (
+	jevLegacySpam = "The message is spam according to the instructions."
+	jevLegacyHam  = "The message is legitimate according to the instructions."
+)
+
+func (c JEVCriteria) complete() bool {
+	return strings.TrimSpace(c.Spam) != "" && strings.TrimSpace(c.Ham) != ""
+}
+
+// criteria selects the chat override, then the provider pair, then the legacy
+// wording. Static configuration only: nothing here is mutated per call.
+func (j JEV) criteria(ctx context.Context) JEVCriteria {
+	if chatID, ok := ChatIDFrom(ctx); ok {
+		if c, ok := j.CriteriaOverrides[chatID]; ok && c.complete() {
+			return c
+		}
+	}
+	if j.Criteria.complete() {
+		return j.Criteria
+	}
+	return JEVCriteria{Spam: jevLegacySpam, Ham: jevLegacyHam}
 }
 
 var _ Scorer = JEV{}
@@ -69,14 +102,15 @@ func (j JEV) Score(ctx context.Context, text, prompt string) (float64, error) {
 	if len(runes) > j.MaxSymbols {
 		text = string(runes[:j.MaxSymbols])
 	}
+	criteria := j.criteria(ctx)
 	payload := map[string]any{
 		"model": model,
 		"state": map[string]string{"message": text},
 		"questions": map[string]any{"spam": map[string]any{
 			"type": "noul", "instructions": prompt,
 			"criteria": map[string]string{
-				"true":  "The message is spam according to the instructions.",
-				"false": "The message is legitimate according to the instructions.",
+				"true":  criteria.Spam,
+				"false": criteria.Ham,
 			},
 		}},
 	}

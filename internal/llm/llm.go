@@ -249,3 +249,18 @@ const classifyPrompt = "You are a spam classifier for a Telegram group chat. " +
 	"Decide whether the following message is spam (scam, ad, flood, phishing, unsolicited loans or credit, " +
 	"or vague job and earning offers even when phrased euphemistically). " +
 	"Reply with exactly one word: SPAM or HAM."
+
+type chatIDKey struct{}
+
+// WithChatID records the chat a classification call is for. Providers with
+// per-chat settings beyond the prompt (JEV criteria) read it per call, so
+// concurrent calls for different chats never share mutable state.
+func WithChatID(ctx context.Context, chatID int64) context.Context {
+	return context.WithValue(ctx, chatIDKey{}, chatID)
+}
+
+// ChatIDFrom returns the chat recorded by WithChatID.
+func ChatIDFrom(ctx context.Context) (int64, bool) {
+	chatID, ok := ctx.Value(chatIDKey{}).(int64)
+	return chatID, ok
+}

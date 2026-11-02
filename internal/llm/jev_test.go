@@ -193,3 +193,68 @@ func TestJEVConsensusWithAnotherProvider(t *testing.T) {
 		})
 	}
 }
+
+func TestJEVCriteriaSelection(t *testing.T) {
+	base := JEVCriteria{Spam: "base spam", Ham: "base ham"}
+	chat := JEVCriteria{Spam: "chat spam", Ham: "chat ham"}
+	legacy := JEVCriteria{Spam: jevLegacySpam, Ham: jevLegacyHam}
+	withChat := func(id int64) context.Context { return WithChatID(context.Background(), id) }
+	for _, tc := range []struct {
+		name      string
+		criteria  JEVCriteria
+		overrides map[int64]JEVCriteria
+		ctx       context.Context
+		want      JEVCriteria
+	}{
+		{"unset keeps legacy", JEVCriteria{}, nil, withChat(-1), legacy},
+		{"provider pair", base, nil, context.Background(), base},
+		{"chat override", base, map[int64]JEVCriteria{-1: chat}, withChat(-1), chat},
+		{"other chat uses provider pair", base, map[int64]JEVCriteria{-1: chat}, withChat(-2), base},
+		{"no chat in context uses provider pair", base, map[int64]JEVCriteria{-1: chat}, context.Background(), base},
+		{"half provider pair keeps legacy", JEVCriteria{Spam: "only spam", Ham: " "}, nil, context.Background(), legacy},
+		{"half provider pair keeps legacy (ham)", JEVCriteria{Spam: "\t", Ham: "only ham"}, nil, context.Background(), legacy},
+		{"half chat override falls back", base, map[int64]JEVCriteria{-1: {Spam: "chat spam"}}, withChat(-1), base},
+		{"half chat override falls back (ham)", base, map[int64]JEVCriteria{-1: {Ham: "chat ham"}}, withChat(-1), base},
+		{"override without provider pair", JEVCriteria{}, map[int64]JEVCriteria{-1: chat}, withChat(-1), chat},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got JEVCriteria
+			var instructions string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body struct {
+					Questions map[string]struct {
+						Instructions string            `json:"instructions"`
+						Criteria     map[string]string `json:"criteria"`
+					} `json:"questions"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				q := body.Questions["spam"]
+				got = JEVCriteria{Spam: q.Criteria["true"], Ham: q.Criteria["false"]}
+				instructions = q.Instructions
+				if len(q.Criteria) != 2 {
+					t.Errorf("criteria keys: %v", q.Criteria)
+				}
+				fmt.Fprint(w, `{"answers":{"spam":{"type":"noul","noul":0.1}}}`)
+			}))
+			defer srv.Close()
+			p := JEV{BaseURL: srv.URL, Client: srv.Client(), Threshold: .5, MaxSymbols: 100, Criteria: tc.criteria, CriteriaOverrides: tc.overrides}
+			if _, err := p.Score(tc.ctx, "text", "short question"); err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want || instructions != "short question" {
+				t.Fatalf("criteria=%+v instructions=%q, want %+v", got, instructions, tc.want)
+			}
+		})
+	}
+}
+
+func TestChatIDContext(t *testing.T) {
+	if _, ok := ChatIDFrom(context.Background()); ok {
+		t.Fatal("chat id reported without WithChatID")
+	}
+	if id, ok := ChatIDFrom(WithChatID(context.Background(), -100)); !ok || id != -100 {
+		t.Fatalf("id=%d ok=%v", id, ok)
+	}
+}

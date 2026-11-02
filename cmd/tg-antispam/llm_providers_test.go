@@ -76,3 +76,54 @@ func TestConfiguredProviderKinds(t *testing.T) {
 		}
 	}
 }
+
+func TestConfiguredJEVCriteria(t *testing.T) {
+	got := make(chan [2]string, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Questions map[string]struct{ Criteria map[string]string }
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		c := body.Questions["spam"].Criteria
+		got <- [2]string{c["true"], c["false"]}
+		fmt.Fprint(w, `{"answers":{"spam":{"type":"noul","noul":0.1}}}`)
+	}))
+	defer srv.Close()
+	c, err := config.Parse([]byte(fmt.Sprintf(`bot_token: test
+admin_chat_id: -1
+action: mute
+chats:
+  mode: auto
+llm:
+  enabled: true
+  providers:
+    - kind: jev
+      api_key: k
+      api_base: %s
+      prompt: question
+      prompt_overrides:
+        -7: chat question
+      criteria_spam: base spam
+      criteria_ham: base ham
+      criteria_overrides:
+        -7: {spam: chat spam, ham: chat ham}
+`, srv.URL)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := llmProviders(c.LLM)[0].(llm.Scorer)
+	if _, err := p.Score(context.Background(), "x", "question"); err != nil {
+		t.Fatal(err)
+	}
+	if v := <-got; v != [2]string{"base spam", "base ham"} {
+		t.Fatalf("provider criteria not wired: %v", v)
+	}
+	if _, err := p.Score(llm.WithChatID(context.Background(), -7), "x", "chat question"); err != nil {
+		t.Fatal(err)
+	}
+	if v := <-got; v != [2]string{"chat spam", "chat ham"} {
+		t.Fatalf("chat criteria not wired: %v", v)
+	}
+}

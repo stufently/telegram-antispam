@@ -401,6 +401,21 @@ type LLMProvider struct {
 	// defaults (0.30 and 6000) from explicitly invalid zero values.
 	Threshold  *float64 `yaml:"threshold"`
 	MaxSymbols *int     `yaml:"max_symbols"`
+	// CriteriaSpam and CriteriaHam apply only to JEV: they become the typed
+	// question's criteria (what counts as spam / as legitimate), while the
+	// selected prompt stays the question itself. Both or neither; omitted
+	// keeps the legacy criteria that defer to the prompt. CriteriaOverrides
+	// replaces the pair per chat and, with criteria set, must cover every chat
+	// that has a prompt override — a chat whose norms differ needs both.
+	CriteriaSpam      string                `yaml:"criteria_spam"`
+	CriteriaHam       string                `yaml:"criteria_ham"`
+	CriteriaOverrides map[int64]JEVCriteria `yaml:"criteria_overrides"`
+}
+
+// JEVCriteria is one chat's replacement for criteria_spam/criteria_ham.
+type JEVCriteria struct {
+	Spam string `yaml:"spam"`
+	Ham  string `yaml:"ham"`
 }
 
 // PromptFor returns the system prompt to use for chatID: its override when one
@@ -938,6 +953,37 @@ func (c *Config) applyLLMDefaults() {
 	}
 }
 
+func blank(s string) bool { return strings.TrimSpace(s) == "" }
+
+// validateJEVCriteria rejects half-set criteria pairs and prompt-overridden
+// chats left on the provider-wide criteria, which would silently apply the
+// wrong chat's norms.
+func (l LLM) validateJEVCriteria(i int) error {
+	p := l.Providers[i]
+	if blank(p.CriteriaSpam) != blank(p.CriteriaHam) {
+		return fmt.Errorf("llm.providers[%d]: criteria_spam and criteria_ham must be set together", i)
+	}
+	if blank(p.CriteriaSpam) {
+		if len(p.CriteriaOverrides) > 0 {
+			return fmt.Errorf("llm.providers[%d].criteria_overrides requires criteria_spam and criteria_ham", i)
+		}
+		return nil
+	}
+	for chatID, c := range p.CriteriaOverrides {
+		if blank(c.Spam) || blank(c.Ham) {
+			return fmt.Errorf("llm.providers[%d].criteria_overrides[%d] needs both spam and ham", i, chatID)
+		}
+	}
+	for _, overrides := range []map[int64]string{p.PromptOverrides, l.PromptOverrides} {
+		for chatID := range overrides {
+			if _, ok := p.CriteriaOverrides[chatID]; !ok {
+				return fmt.Errorf("llm.providers[%d].criteria_overrides must cover chat %d", i, chatID)
+			}
+		}
+	}
+	return nil
+}
+
 func (c *Config) Validate() error {
 	if c.BotToken == "" {
 		return fmt.Errorf("bot_token is required")
@@ -1009,8 +1055,13 @@ func (c *Config) Validate() error {
 				if p.MaxSymbols == nil || *p.MaxSymbols <= 0 {
 					return fmt.Errorf("llm.providers[%d].max_symbols must be positive", i)
 				}
+				if err := c.LLM.validateJEVCriteria(i); err != nil {
+					return err
+				}
 			} else if p.Threshold != nil || p.MaxSymbols != nil {
 				return fmt.Errorf("llm.providers[%d]: threshold and max_symbols require kind jev", i)
+			} else if p.CriteriaSpam != "" || p.CriteriaHam != "" || len(p.CriteriaOverrides) > 0 {
+				return fmt.Errorf("llm.providers[%d]: criteria_spam, criteria_ham and criteria_overrides require kind jev", i)
 			}
 			if p.APIKey == "" {
 				return fmt.Errorf("llm.providers[%d] (%s) missing api_key", i, p.Kind)
