@@ -583,6 +583,7 @@ func main() {
 	machine.EphemeralText = cfg.Detection.EphemeralNoticeText
 	handler = telegram.NewHandler(db, seq, cfgStore, machine)
 	handler.SetContext(workCtx)
+	handler.SetLinkedChat(livePort.LinkedChatID)
 	handler.SetSweeper(func(chatID int64, ids []int) error {
 		return livePort.DeleteMessages(workCtx, chatID, ids)
 	})

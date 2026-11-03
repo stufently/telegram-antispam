@@ -53,6 +53,9 @@ type Fake struct {
 	// the admin card must survive by falling back to the bare id.
 	Titles   map[int64]string
 	TitleErr error
+	// Linked answers LinkedChatID per chat id; LinkedErr fails the lookup.
+	Linked    map[int64]int64
+	LinkedErr error
 	// DeleteErr and RestrictErr let a test drive the two halves of
 	// enforcement independently: they fail separately in production (a
 	// message older than 48h cannot be deleted even when the mute lands),
@@ -241,6 +244,15 @@ func (f *Fake) ChatTitle(_ context.Context, chat int64) (string, error) {
 		return "", f.TitleErr
 	}
 	return f.Titles[chat], nil
+}
+
+// LinkedChatID returns Linked[chat], or LinkedErr when set.
+func (f *Fake) LinkedChatID(_ context.Context, chat int64) (int64, error) {
+	f.log("LinkedChatID")
+	if f.LinkedErr != nil {
+		return 0, f.LinkedErr
+	}
+	return f.Linked[chat], nil
 }
 
 func (f *Fake) AnswerCallback(_ context.Context, _, _ string) error {

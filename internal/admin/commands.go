@@ -211,6 +211,19 @@ func (c *Commands) targetRefusal(ctx context.Context, chatID int64, target *doma
 	if telegram.ImmuneSender(target.Sender) || (target.Sender.SenderChatID != 0 && target.Sender.SenderChatID == chatID) {
 		return "Сообщение от защищённого отправителя (администратор или связанный канал) — команда неприменима.", false
 	}
+	// The chat's own channel commenting in its discussion group (not an
+	// automatic forward) is classified as an outside channel, because the
+	// message does not say which channel is linked. Banning it would bar the
+	// channel from its own discussion group (umputun/tg-spam #457).
+	if target.Sender.Kind == domain.SenderExternalChannel && target.Sender.SenderChatID != 0 {
+		linked, err := c.h.port.LinkedChatID(ctx, chatID)
+		if err != nil {
+			return "Не удалось проверить связанный канал чата, команда отменена.", false
+		}
+		if linked != 0 && linked == target.Sender.SenderChatID {
+			return "Сообщение от связанного канала этого чата — команда неприменима.", false
+		}
+	}
 	if target.Sender.UserID == c.botID && c.botID != 0 {
 		return "Это сообщение бота — обрабатывать его нечего.", false
 	}

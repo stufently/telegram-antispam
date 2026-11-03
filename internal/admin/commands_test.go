@@ -363,3 +363,40 @@ func TestCommandsRefuseLinkedChannelTargets(t *testing.T) {
 		})
 	}
 }
+
+// The chat's own channel commenting as itself is classified as an outside
+// channel; the command must still refuse it once the lookup names it as the
+// chat's linked channel, and refuse rather than guess when the lookup fails.
+func TestCommandsRefuseOwnChannelClassifiedExternal(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		prep func(*cmdFixture)
+	}{
+		{"linked", func(fx *cmdFixture) { fx.f.Linked = map[int64]int64{testChat: -100888} }},
+		{"lookup failed", func(fx *cmdFixture) { fx.f.LinkedErr = errors.New("getChat failed") }},
+	} {
+		for _, command := range []string{"/spam", "/ban"} {
+			t.Run(tc.name+command, func(t *testing.T) {
+				fx := newCmdFixture(t)
+				tc.prep(fx)
+				reply := target(0)
+				reply.Sender = domain.Sender{Kind: domain.SenderExternalChannel, SenderChatID: -100888}
+				cmd := spamCmd(testAdmin, reply)
+				cmd.Text = command
+				fx.c.Handle(context.Background(), cmd)
+				if len(fx.reported) != 0 || len(fx.trained) != 0 {
+					t.Errorf("own channel target produced incidents=%d training=%v", len(fx.reported), fx.trained)
+				}
+				for _, call := range fx.f.Calls() {
+					switch call {
+					case "DeleteMessages", "BanSenderChat", "BanMember", "RestrictMember":
+						t.Errorf("own channel triggered %s", call)
+					}
+				}
+				if fx.f.LastEphemeral.Text == "" {
+					t.Error("expected refusal explanation")
+				}
+			})
+		}
+	}
+}

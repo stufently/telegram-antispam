@@ -92,6 +92,10 @@ type Handler struct {
 	// the sweep instead of panicking.
 	sweeper func(chatID int64, messageIDs []int) error
 
+	// linkedChat resolves a chat's linked channel (see SetLinkedChat); nil
+	// disables the check.
+	linkedChat func(ctx context.Context, chat int64) (int64, error)
+
 	// rootCtx is the lifecycle context for every job accepted by the per-chat
 	// sequencer, including work flushed by AlbumBuffer. It is deliberately
 	// independent from the short-lived update callback context, so accepted
@@ -206,6 +210,37 @@ func (h *Handler) onUpdate(_ context.Context, updateID int64, m domain.Message, 
 			h.process(h.rootCtx, []domain.Message{m}, edited)
 		})
 	}
+}
+
+// SetLinkedChat installs the lookup of a chat's linked channel. Without it a
+// channel post that is not an automatic forward is always an outside
+// channel's, which is how the chat's own channel commenting in its
+// discussion group could be banned from it.
+func (h *Handler) SetLinkedChat(fn func(ctx context.Context, chat int64) (int64, error)) {
+	h.linkedChat = fn
+}
+
+// linkedChatTimeout bounds the getChat behind fromLinkedChannel: the lookup
+// runs inside the chat's sequencer job, and a stuck call would hold every
+// later message of that chat behind it.
+const linkedChatTimeout = 5 * time.Second
+
+// fromLinkedChannel reports whether m was posted by the channel linked to its
+// chat. It is asked only about an actionable verdict on an outside-channel
+// sender, so ordinary traffic costs no extra call. A failed lookup answers
+// false, which keeps the previous behaviour rather than inventing immunity.
+func (h *Handler) fromLinkedChannel(ctx context.Context, m domain.Message) bool {
+	if h.linkedChat == nil || m.Sender.Kind != domain.SenderExternalChannel || m.Sender.SenderChatID == 0 {
+		return false
+	}
+	lctx, cancel := context.WithTimeout(ctx, linkedChatTimeout)
+	defer cancel()
+	linked, err := h.linkedChat(lctx, m.ChatID)
+	if err != nil {
+		log.Printf("chat=%d msg=%d: linked channel lookup: %v", m.ChatID, m.MessageID, err)
+		return false
+	}
+	return linked != 0 && linked == m.Sender.SenderChatID
 }
 
 // SetSweeper installs the deleter used to remove service messages. Without
@@ -332,6 +367,10 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 		decide = h.editedDecide
 	}
 	verdict, ok := decide(judged)
+	if ok && verdict.IsActionable() && h.fromLinkedChannel(ctx, judged) {
+		log.Printf("chat=%d msg=%d: sender is the chat's linked channel, not moderated", first.ChatID, first.MessageID)
+		return
+	}
 	if !ok || !verdict.IsActionable() {
 		// A non-actionable, meaningful message from a real user counts
 		// toward that user's trust score (the M3 cascade's trust gate

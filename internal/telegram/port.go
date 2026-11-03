@@ -84,6 +84,9 @@ type Port interface {
 	// so without this a moderator sees spam and cannot tell WHERE it was
 	// posted. Best-effort by contract: an error means "show the id".
 	ChatTitle(ctx context.Context, chat int64) (string, error)
+	// LinkedChatID returns the channel linked to a discussion group, 0 when
+	// the chat has none.
+	LinkedChatID(ctx context.Context, chat int64) (int64, error)
 	AnswerCallback(ctx context.Context, callbackID, text string) error
 	EditAdminMarkup(ctx context.Context, adminChat int64, messageID int, buttons [][]Button) error
 	DeleteMessageReaction(ctx context.Context, chat int64, messageID int, userID int64) error

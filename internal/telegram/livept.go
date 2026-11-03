@@ -36,7 +36,10 @@ type LivePort struct {
 // is moderated; the TTL bounds how long a rename stays invisible.
 type titleEntry struct {
 	title string
-	at    time.Time
+	// linked is the chat's linked channel (or, for a channel, its discussion
+	// group), 0 when there is none. It comes from the same getChat answer.
+	linked int64
+	at     time.Time
 }
 
 // chatTitleTTL is how long a fetched chat title is reused, and maxTitleCache
@@ -508,27 +511,43 @@ func replyTargetGone(err error) bool {
 // The title is what makes an admin card readable: the evidence copy carries no
 // origin, so the id alone leaves the moderator matching numbers by hand.
 func (p *LivePort) ChatTitle(ctx context.Context, chat int64) (string, error) {
+	e, err := p.chatInfo(ctx, chat, "ChatTitle")
+	return e.title, err
+}
+
+// LinkedChatID returns the channel linked to a discussion group (0 when there
+// is none), from the same cached getChat answer as ChatTitle. Telegram does
+// not put it on messages, and without it the chat's own channel commenting
+// in its discussion group looks like any outside channel.
+func (p *LivePort) LinkedChatID(ctx context.Context, chat int64) (int64, error) {
+	e, err := p.chatInfo(ctx, chat, "LinkedChatID")
+	return e.linked, err
+}
+
+func (p *LivePort) chatInfo(ctx context.Context, chat int64, method string) (titleEntry, error) {
 	p.mu.Lock()
 	if e, ok := p.titles[chat]; ok && time.Since(e.at) < chatTitleTTL {
 		p.mu.Unlock()
-		return e.title, nil
+		return e, nil
 	}
 	p.mu.Unlock()
 
-	title, err := submitSync(ctx, p.disp, chat, p.prio("ChatTitle"), func(ctx context.Context) (string, error) {
+	e, err := submitSync(ctx, p.disp, chat, p.prio(method), func(ctx context.Context) (titleEntry, error) {
 		full, err := p.b.GetChat(ctx, &bot.GetChatParams{ChatID: chat})
 		if err != nil {
-			return "", mapRetry(err)
+			return titleEntry{}, mapRetry(err)
 		}
-		if full.Title != "" {
-			return full.Title, nil
+		e := titleEntry{title: full.Title, linked: full.LinkedChatID}
+		if e.title == "" {
+			// A private chat has no title; the name it does have is a person's.
+			e.title = full.Username
 		}
-		// A private chat has no title; the name it does have is a person's.
-		return full.Username, nil
+		return e, nil
 	})
 	if err != nil {
-		return "", err
+		return titleEntry{}, err
 	}
+	e.at = time.Now()
 
 	p.mu.Lock()
 	if p.titles == nil {
@@ -540,9 +559,9 @@ func (p *LivePort) ChatTitle(ctx context.Context, chat int64) (string, error) {
 		// needs no eviction bookkeeping for what is a convenience cache.
 		p.titles = map[int64]titleEntry{}
 	}
-	p.titles[chat] = titleEntry{title: title, at: time.Now()}
+	p.titles[chat] = e
 	p.mu.Unlock()
-	return title, nil
+	return e, nil
 }
 
 func (p *LivePort) BanSenderChat(ctx context.Context, chat, senderChat int64) error {

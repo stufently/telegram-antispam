@@ -354,3 +354,45 @@ func TestMapRetryMarksOnlyAPIRefusals(t *testing.T) {
 		}
 	}
 }
+
+// ChatTitle and LinkedChatID share one cached getChat answer.
+func TestLinkedChatIDSharesTitleCache(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/bot123:token/getChat" {
+			t.Errorf("unexpected Telegram method path %q", got)
+		}
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"ok":true,"result":{"id":-100,"type":"supergroup","title":"Group","linked_chat_id":-100777,"accent_color_id":0,"max_reaction_count":0,"accepted_gift_types":{}}}`)
+	}))
+	defer srv.Close()
+
+	b, err := tgbot.New("123:token", tgbot.WithSkipGetMe(), tgbot.WithServerURL(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	disp := queue.NewDispatcher(rate.NewLimiter(rate.Inf, 1), func(int64) *rate.Limiter {
+		return rate.NewLimiter(rate.Inf, 1)
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		disp.Run(ctx)
+		close(done)
+	}()
+	defer func() { cancel(); <-done }()
+
+	p := NewLivePort(b, disp, func(string) queue.Priority { return queue.PrioNormal })
+	linked, err := p.LinkedChatID(context.Background(), -100)
+	if err != nil || linked != -100777 {
+		t.Fatalf("LinkedChatID = %d, %v; want -100777", linked, err)
+	}
+	title, err := p.ChatTitle(context.Background(), -100)
+	if err != nil || title != "Group" {
+		t.Fatalf("ChatTitle = %q, %v; want Group", title, err)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("getChat calls = %d, want 1 (shared cache)", n)
+	}
+}
