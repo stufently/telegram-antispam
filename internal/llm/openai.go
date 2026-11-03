@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 // OpenAI classifies via the official OpenAI Chat Completions API.
@@ -46,7 +47,14 @@ func (o OpenAI) Classify(ctx context.Context, text, prompt string) (bool, error)
 		payload["temperature"] = *o.Temperature
 	}
 	if o.MaxTokens > 0 {
-		payload["max_tokens"] = o.MaxTokens
+		// Reasoning models (o-series, gpt-5, gpt-6) reject max_tokens with a
+		// 400, so a configured cap would fail every call, and fail-open turns
+		// that into a disabled check. They take max_completion_tokens.
+		if reasoningModel(o.Model) {
+			payload["max_completion_tokens"] = o.MaxTokens
+		} else {
+			payload["max_tokens"] = o.MaxTokens
+		}
 	}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/chat/completions", bytes.NewReader(body))
@@ -86,4 +94,13 @@ func (o OpenAI) httpClient() *http.Client {
 		return o.Client
 	}
 	return http.DefaultClient
+}
+
+// reasoningModel reports whether model is an OpenAI reasoning model, which
+// takes max_completion_tokens instead of max_tokens (the same test as
+// umputun/tg-spam #467).
+func reasoningModel(model string) bool {
+	m := strings.ToLower(model)
+	return strings.HasPrefix(m, "o1") || strings.HasPrefix(m, "o3") || strings.HasPrefix(m, "o4") ||
+		strings.Contains(m, "gpt-5") || strings.Contains(m, "gpt-6")
 }

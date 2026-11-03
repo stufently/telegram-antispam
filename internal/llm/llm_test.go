@@ -265,3 +265,36 @@ func TestAdjudicateCountsBothErroredAndTimedOutProviders(t *testing.T) {
 		t.Fatal("two failures must not produce a spam verdict")
 	}
 }
+
+// Reasoning models reject max_tokens; the configured cap goes out as
+// max_completion_tokens for them and stays max_tokens for the rest.
+func TestOpenAIMaxTokensFieldFollowsModel(t *testing.T) {
+	for model, want := range map[string]string{
+		"gpt-6-luna": "max_completion_tokens", "GPT-5.6": "max_completion_tokens", "o3-mini": "max_completion_tokens",
+		"o4-mini": "max_completion_tokens", "o1": "max_completion_tokens",
+		"gpt-4o-mini": "max_tokens", "llama-3": "max_tokens",
+	} {
+		t.Run(model, func(t *testing.T) {
+			var body map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"HAM"}}]}`))
+			}))
+			defer srv.Close()
+			p := OpenAI{APIKey: "sk-test", Model: model, BaseURL: srv.URL, Client: srv.Client(), MaxTokens: 16}
+			if _, err := p.Classify(context.Background(), "hi", ""); err != nil {
+				t.Fatal(err)
+			}
+			other := "max_tokens"
+			if want == "max_tokens" {
+				other = "max_completion_tokens"
+			}
+			if v, ok := body[want].(float64); !ok || v != 16 {
+				t.Errorf("%s = %v, want 16", want, body[want])
+			}
+			if _, ok := body[other]; ok {
+				t.Errorf("%s also sent: %v", other, body[other])
+			}
+		})
+	}
+}
