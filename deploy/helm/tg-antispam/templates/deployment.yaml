@@ -132,6 +132,13 @@ spec:
                   name: {{ .Values.llmSecret.name }}
                   key: {{ .Values.llmSecret.jevKey }}
             {{- end }}
+            {{- if and .Values.casSecret .Values.casSecret.name .Values.casSecret.key }}
+            - name: CAS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.casSecret.name }}
+                  key: {{ .Values.casSecret.key }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.metricsPort }}

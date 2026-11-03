@@ -429,3 +429,46 @@ func TestCASCheckContextCanceled(t *testing.T) {
 	}
 	p.assert(t, 2, map[string]int{"listed": 1, "error": 1})
 }
+
+func TestCASCheckSendsAPIKey(t *testing.T) {
+	var got []string
+	c, p := newCASTest(t, CASConfig{APIKey: "k-123"}, func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("Authorization"))
+		if r.URL.Query().Get("api_key") != "" {
+			t.Errorf("key leaked into the query: %s", r.URL)
+		}
+		_, _ = io.WriteString(w, `{"ok":false,"description":"Record not found."}`)
+	})
+	if c.Listed(42) {
+		t.Fatal("clean user returned true")
+	}
+	if len(got) != 1 || got[0] != "Bearer k-123" {
+		t.Fatalf("Authorization headers = %q, want [\"Bearer k-123\"]", got)
+	}
+	p.assert(t, 1, map[string]int{"clean": 1})
+}
+
+func TestCASCheckNoAPIKeyNoHeader(t *testing.T) {
+	c, _ := newCASTest(t, CASConfig{}, func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := r.Header["Authorization"]; ok {
+			t.Errorf("unexpected Authorization header %q", r.Header.Get("Authorization"))
+		}
+		_, _ = io.WriteString(w, `{"ok":false,"description":"Record not found."}`)
+	})
+	_ = c.Listed(42)
+}
+
+func TestCASCheck401IsAnAPIKeyError(t *testing.T) {
+	c, p := newCASTest(t, CASConfig{}, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"ok":false,"error_code":401,"description":"API key required"}`)
+	})
+	_, err := c.check(42)
+	if err == nil || !strings.Contains(err.Error(), "API key") {
+		t.Fatalf("check error = %v, want an API key error", err)
+	}
+	if c.Listed(43) {
+		t.Fatal("401 must fail open")
+	}
+	p.assert(t, 2, map[string]int{"error": 1})
+}

@@ -69,6 +69,13 @@ llmSecret:
   anthropicKey: "" # key within that Secret holding the Anthropic API key
   jevKey: "" # key within that Secret holding the JEV token
 
+# --- CAS API key (SECRET, optional) ------------------------------------------
+# CAS (cas.chat) requires a Combot API key; without it the CAS check is
+# skipped. The key reaches the pod as env CAS_API_KEY from a Secret.
+casSecret:
+  name: "" # name of a pre-existing Secret holding the Combot API key
+  key: "" # key within that Secret
+
 # --- Bayes corpus seeding (optional) ----------------------------------------
 # Point this at a ConfigMap holding labeled samples (one per line) and the
 # chart runs `tg-antispam import` as init containers before the bot starts.

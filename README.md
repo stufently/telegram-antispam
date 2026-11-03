@@ -32,7 +32,8 @@ detection · Kubernetes / Helm · Docker · Prometheus · tg-spam alternative ·
   look-alike Unicode so `Ｃ𝗮𝘀іno` reads as `casino`.
 - **Shared blocklists (CAS + LOLS)** — checks an atomically swapped `lols.bot` snapshot
   first, retaining its last-good full/delta data on refresh failure. Combot Anti-Spam
-  (`cas.chat`) is checked per user through `/check`, with a bounded cache (listed: 24h,
+  (`cas.chat`) is checked per user through `/check` (needs a Combot API key in
+  `CAS_API_KEY`; without it the check is skipped), with a bounded cache (listed: 24h,
   clean: 6h), a 2s timeout and a local 10 requests/s limit. CAS errors fail open;
   three consecutive errors pause requests for 60s while valid cached results remain usable.
 - **Bayesian spam filter** — log-space naive Bayes with Laplace smoothing, an idempotent

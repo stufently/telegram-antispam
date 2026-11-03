@@ -32,3 +32,21 @@ func TestBlocklistCASDefaults(t *testing.T) {
 		})
 	}
 }
+
+func TestBlocklistCASAPIKey(t *testing.T) {
+	c, err := Parse([]byte(baseValidYAML + "blocklist:\n  cas_api_key: file-key\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Blocklist.CasAPIKey != "file-key" {
+		t.Fatalf("cas_api_key from file: got %q", c.Blocklist.CasAPIKey)
+	}
+	t.Setenv("CAS_API_KEY", "env-key")
+	c, err = Parse([]byte(baseValidYAML + "blocklist:\n  cas_api_key: file-key\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Blocklist.CasAPIKey != "env-key" {
+		t.Fatalf("CAS_API_KEY env should win, got %q", c.Blocklist.CasAPIKey)
+	}
+}

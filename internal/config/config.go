@@ -336,6 +336,10 @@ type Blocklist struct {
 	CasCheckEnabled *bool `yaml:"cas_check_enabled"`
 	// CasCheckURL is the CAS endpoint. Default: "https://api.cas.chat/check".
 	CasCheckURL string `yaml:"cas_check_url"`
+	// CasAPIKey is the Combot API key CAS requires on every request (sent as
+	// "Authorization: Bearer"). The CAS_API_KEY env var overrides it. Without
+	// a key the CAS check is skipped: CAS answers 401 to keyless requests.
+	CasAPIKey string `yaml:"cas_api_key"`
 	// CasPositiveTTL caches listed users. Default: 24h.
 	CasPositiveTTL Duration `yaml:"cas_positive_ttl"`
 	// CasNegativeTTL caches clean users. Default: 6h.
@@ -687,6 +691,9 @@ func Parse(b []byte) (*Config, error) {
 		if v := os.Getenv(envKey); v != "" {
 			c.LLM.Providers[i].APIKey = v
 		}
+	}
+	if v := os.Getenv("CAS_API_KEY"); v != "" {
+		c.Blocklist.CasAPIKey = v
 	}
 	if err := c.Validate(); err != nil {
 		return nil, err

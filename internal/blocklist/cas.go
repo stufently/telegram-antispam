@@ -41,6 +41,7 @@ const (
 // CASConfig controls the per-user CAS check. Nonpositive values use defaults.
 type CASConfig struct {
 	URL         string        // Default: https://api.cas.chat/check.
+	APIKey      string        // Combot API key, sent as "Authorization: Bearer"; empty sends none.
 	PositiveTTL time.Duration // Default: 24h.
 	NegativeTTL time.Duration // Default: 6h.
 	Timeout     time.Duration // Default: 2s for the whole request, including its body.
@@ -202,11 +203,17 @@ func (c *CASChecker) check(userID int64) (bool, error) {
 		return false, err
 	}
 	req.Header.Set("User-Agent", "telegram-antispam-blocklist/1.0 (+https://github.com/stufently/telegram-antispam)")
+	if c.cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+	}
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return false, err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return false, fmt.Errorf("CAS check: status 401 (API key missing or rejected)")
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return false, fmt.Errorf("CAS check: status %d", resp.StatusCode)
 	}

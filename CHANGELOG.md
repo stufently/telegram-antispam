@@ -8,6 +8,16 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+### Fixed
+
+- CAS checks: CAS now rejects keyless `/check` requests with 401 ("API key
+  required"), so every check failed and tripped the breaker. New
+  `blocklist.cas_api_key` (env `CAS_API_KEY` overrides it) is sent as
+  `Authorization: Bearer`. Without a key the CAS check is skipped and logged
+  once at startup instead of failing on every user; a 401 is logged as an API
+  key problem. Helm: `casSecret.name`/`casSecret.key` map a Secret key to
+  `CAS_API_KEY`.
+
 ## [0.23.0] - 2026-11-02
 
 ### Added

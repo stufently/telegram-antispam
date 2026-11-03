@@ -687,9 +687,13 @@ func main() {
 		})
 		startBackground(func() { bl.Run(signalCtx) })
 		blocklistSource = bl
-		if *cfg.Blocklist.CasCheckEnabled {
+		if *cfg.Blocklist.CasCheckEnabled && !casCheckActive(cfg.Blocklist) {
+			log.Printf("CAS check disabled: CAS requires an API key (set CAS_API_KEY or blocklist.cas_api_key)")
+		}
+		if casCheckActive(cfg.Blocklist) {
 			cas := blocklist.NewCASChecker(blocklist.CASConfig{
 				URL:         cfg.Blocklist.CasCheckURL,
+				APIKey:      cfg.Blocklist.CasAPIKey,
 				PositiveTTL: cfg.Blocklist.CasPositiveTTL.Duration(),
 				NegativeTTL: cfg.Blocklist.CasNegativeTTL.Duration(),
 				Timeout:     cfg.Blocklist.CasTimeout.Duration(),
@@ -1235,4 +1239,10 @@ func boolLabel(spam bool) string {
 		return "spam"
 	}
 	return "ham"
+}
+
+// casCheckActive reports whether per-user CAS checks run. CAS answers 401 to
+// every keyless request, so without a key a check only trips the breaker.
+func casCheckActive(b config.Blocklist) bool {
+	return b.CasCheckEnabled != nil && *b.CasCheckEnabled && b.CasAPIKey != ""
 }

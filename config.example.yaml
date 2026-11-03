@@ -284,9 +284,13 @@ blocklist:
   lols_delta_url: "https://lols.bot/spam/banlist-1h.txt"
   # Enable cached per-user CAS checks after a LOLS miss. Default: true.
   cas_check_enabled: true
-  # CAS endpoint (only user_id is sent; no API key required).
+  # CAS endpoint (user_id is the only query parameter).
   # Default: "https://api.cas.chat/check".
   cas_check_url: "https://api.cas.chat/check"
+  # Combot API key (combot.org -> Settings -> API key); CAS answers 401
+  # without one. Sent as "Authorization: Bearer". Prefer the CAS_API_KEY env
+  # var, which overrides this. Empty: the CAS check is skipped and logged once.
+  cas_api_key: ""
   # How long a listed CAS result is cached. Default: 24h.
   cas_positive_ttl: 24h
   # How long a clean CAS result is cached. Default: 6h.

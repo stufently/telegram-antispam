@@ -299,7 +299,9 @@ The blocklist checks the atomic in-memory LOLS snapshot first, then a per-user
 CAS `/check` endpoint. LOLS full and accumulated delta data are retained
 separately: a failed or empty full refresh keeps the last-good snapshot, a
 successful full refresh supersedes the deltas, and delta failures leave it
-unchanged. CAS caches listed results for 24h and clean results for 6h, with
+unchanged. CAS requires a Combot API key (`blocklist.cas_api_key` or env
+`CAS_API_KEY`, sent as `Authorization: Bearer`); without one the CAS checker
+is not built and startup logs that once. CAS caches listed results for 24h and clean results for 6h, with
 at most 100000 entries. Each request has a 2s budget and a local 10 requests/s
 limit (burst 20); rate-limited checks fail open without waiting. Three
 consecutive errors open a breaker for 60s; errors are not cached and never
