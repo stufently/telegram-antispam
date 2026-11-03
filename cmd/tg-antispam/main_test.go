@@ -146,3 +146,12 @@ func TestLLMMessageTextIgnoresACrossChatReplyWithoutAttachment(t *testing.T) {
 		t.Fatalf("a quoted parent with no attachment must add no line at all, got %q", got)
 	}
 }
+
+func TestLLMMessageTextIncludesPollAndChecklistTexts(t *testing.T) {
+	if got := llmMessageText(domain.Message{StructuredTexts: []string{"earn fast?", "join t.me/x"}}); got != "earn fast?\njoin t.me/x" {
+		t.Fatalf("llmMessageText = %q", got)
+	}
+	if got := llmMessageText(domain.Message{Text: "vote", StructuredTexts: []string{"a"}}); got != "vote\na" {
+		t.Fatalf("llmMessageText = %q", got)
+	}
+}

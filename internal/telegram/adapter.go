@@ -56,12 +56,7 @@ func ToDomainMessage(m *models.Message) domain.Message {
 		externalReplyDocumentExtensions, externalReplyDocumentMIMETypes = collectExternalReplyFileMetadata(m.ExternalReply)
 	}
 
-	var pollOptionTexts []string
-	if m.Poll != nil {
-		for _, opt := range m.Poll.Options {
-			pollOptionTexts = append(pollOptionTexts, opt.Text)
-		}
-	}
+	structuredTexts := collectStructuredTexts(m)
 
 	mediaKinds := collectMediaKinds(m)
 	documentExtensions, documentMIMETypes := collectFileMetadata(m)
@@ -124,7 +119,7 @@ func ToDomainMessage(m *models.Message) domain.Message {
 		ExternalReplyDocumentExtensions: externalReplyDocumentExtensions,
 		ExternalReplyDocumentMIMETypes:  externalReplyDocumentMIMETypes,
 
-		PollOptionTexts:    pollOptionTexts,
+		StructuredTexts:    structuredTexts,
 		EditDate:           int64(m.EditDate),
 		MediaKinds:         mediaKinds,
 		DocumentExtensions: documentExtensions,
@@ -480,6 +475,47 @@ func toDomainEntities(src []models.MessageEntity) []domain.Entity {
 			Offset: e.Offset,
 			Length: e.Length,
 		})
+	}
+	return out
+}
+
+// collectStructuredTexts gathers the text a poll or a checklist carries
+// outside message text and caption. Without it a checklist whose title and
+// tasks advertise a t.me link reached the detectors as an empty message, and
+// a poll was judged by its options alone while its question went unread
+// (umputun/tg-spam #477 fixed the same gap). Empty pieces are skipped so a
+// message without either keeps a nil slice.
+func collectStructuredTexts(m *models.Message) []string {
+	var out []string
+	add := func(s string) {
+		if strings.TrimSpace(s) != "" {
+			out = append(out, s)
+		}
+	}
+	// A text_link hides its URL behind the visible words, and these entities'
+	// offsets point into their own field rather than into the message text the
+	// link detectors index, so the URL is carried as one more piece of text.
+	addText := func(s string, entities []models.MessageEntity) {
+		add(s)
+		for _, e := range entities {
+			if e.Type == models.MessageEntityTypeTextLink {
+				add(e.URL)
+			}
+		}
+	}
+	if p := m.Poll; p != nil {
+		addText(p.Question, p.QuestionEntities)
+		addText(p.Description, p.DescriptionEntities)
+		for _, opt := range p.Options {
+			addText(opt.Text, opt.TextEntities)
+		}
+		addText(p.Explanation, p.ExplanationEntities)
+	}
+	if c := m.Checklist; c != nil {
+		addText(c.Title, c.TitleEntities)
+		for _, task := range c.Tasks {
+			addText(task.Text, task.TextEntities)
+		}
 	}
 	return out
 }

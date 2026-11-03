@@ -82,8 +82,8 @@ func TestToDomainMessageExtractsDetectionSurfaces(t *testing.T) {
 	if got.ExternalReplyText != "quoted text" {
 		t.Fatalf("bad external reply text: %+v", got.ExternalReplyText)
 	}
-	if len(got.PollOptionTexts) != 2 || got.PollOptionTexts[0] != "opt A" || got.PollOptionTexts[1] != "opt B" {
-		t.Fatalf("bad poll option texts: %+v", got.PollOptionTexts)
+	if len(got.StructuredTexts) != 2 || got.StructuredTexts[0] != "opt A" || got.StructuredTexts[1] != "opt B" {
+		t.Fatalf("bad poll option texts: %+v", got.StructuredTexts)
 	}
 }
 
@@ -598,4 +598,50 @@ func assertStrings(t *testing.T, what string, got, want []string) {
 			t.Fatalf("%s = %v, want %v", what, got, want)
 		}
 	}
+}
+
+func TestToDomainMessageStructuredTexts(t *testing.T) {
+	link := []models.MessageEntity{{Type: models.MessageEntityTypeTextLink, URL: "https://hidden.example/x", Offset: 0, Length: 4}}
+	poll := ToDomainMessage(&models.Message{
+		Chat: models.Chat{ID: -100},
+		Poll: &models.Poll{
+			Question:            "earn fast?",
+			Description:         "details",
+			DescriptionEntities: link,
+			Options:             []models.PollOption{{Text: "yes"}, {Text: " "}, {Text: "no"}},
+			Explanation:         "dm @promo",
+		},
+	})
+	want := []string{"earn fast?", "details", "https://hidden.example/x", "yes", "no", "dm @promo"}
+	if !equalStrings(poll.StructuredTexts, want) {
+		t.Fatalf("poll texts = %q, want %q", poll.StructuredTexts, want)
+	}
+
+	checklist := ToDomainMessage(&models.Message{
+		Chat: models.Chat{ID: -100},
+		Checklist: &models.Checklist{
+			Title: "todo",
+			Tasks: []models.ChecklistTask{{Text: "join t.me/scam"}, {Text: "here", TextEntities: link}},
+		},
+	})
+	want = []string{"todo", "join t.me/scam", "here", "https://hidden.example/x"}
+	if !equalStrings(checklist.StructuredTexts, want) {
+		t.Fatalf("checklist texts = %q, want %q", checklist.StructuredTexts, want)
+	}
+
+	if plain := ToDomainMessage(&models.Message{Chat: models.Chat{ID: -100}, Text: "hi"}); plain.StructuredTexts != nil {
+		t.Fatalf("plain message got structured texts %q", plain.StructuredTexts)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

@@ -21,6 +21,12 @@ type NormalizedMessage struct {
 	HasCustomEmoji bool
 	SenderTagNorm  string
 	RawLen         int
+	// HasOwnText reports whether the sender wrote any text in this message:
+	// its text or caption, or a poll's or checklist's text. Text also carries
+	// the quoted external reply and the sender tag, which are not authored per
+	// message — a captionless photo from a member with a tag, or a sticker
+	// quoting a post, would otherwise look like a repeat of the same "text".
+	HasOwnText bool
 	// MediaKinds, document type metadata, Forwarded, ForwardedFromChat and
 	// HasKeyboard carry the message's non-text shape through to the detectors. They are copied
 	// verbatim from domain.Message rather than derived here: normalization
@@ -56,14 +62,14 @@ var (
 )
 
 // Normalize flattens m into a NormalizedMessage: it concatenates every
-// visible text source (message text, external-reply preview, poll option
-// texts, sender tag) into one blob, deobfuscates it, and pre-extracts
+// visible text source (message text, external-reply preview, poll and
+// checklist texts, sender tag) into one blob, deobfuscates it, and pre-extracts
 // links, mentions, and the custom-emoji flag so detectors can work off one
 // consistent shape.
 func Normalize(m domain.Message) NormalizedMessage {
-	parts := make([]string, 0, 3+len(m.PollOptionTexts))
+	parts := make([]string, 0, 3+len(m.StructuredTexts))
 	parts = append(parts, m.Text, m.ExternalReplyText)
-	parts = append(parts, m.PollOptionTexts...)
+	parts = append(parts, m.StructuredTexts...)
 	parts = append(parts, m.SenderTag)
 	raw := strings.Join(parts, " ")
 	linkCount := countLinkOccurrences(m.Text, m.Entities)
@@ -86,6 +92,7 @@ func Normalize(m domain.Message) NormalizedMessage {
 		HasCustomEmoji:     hasCustomEmoji,
 		SenderTagNorm:      Deobfuscate(m.SenderTag),
 		RawLen:             utf8.RuneCountInString(m.Text),
+		HasOwnText:         hasOwnText(m),
 		LinkCount:          linkCount,
 		MentionCount:       len(mentionRe.FindAllString(raw, -1)),
 		EmojiCount:         countEmoji(raw) + countCustomEmoji(m.Entities),
@@ -330,4 +337,18 @@ func entitySpan(s string, offset, length int) string {
 		end = len(s)
 	}
 	return s[start:end]
+}
+
+// hasOwnText reports whether m carries text its sender authored; see
+// NormalizedMessage.HasOwnText.
+func hasOwnText(m domain.Message) bool {
+	if strings.TrimSpace(m.Text) != "" {
+		return true
+	}
+	for _, t := range m.StructuredTexts {
+		if strings.TrimSpace(t) != "" {
+			return true
+		}
+	}
+	return false
 }

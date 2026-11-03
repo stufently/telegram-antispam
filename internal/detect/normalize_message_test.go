@@ -32,7 +32,7 @@ func TestNormalizeCollectsLinksAndText(t *testing.T) {
 	m := domain.Message{
 		Text:            "join now",
 		Entities:        []domain.Entity{{Type: "text_link", URL: "http://spam.test", Offset: 0, Length: 4}},
-		PollOptionTexts: []string{"vote t.me/scam"},
+		StructuredTexts: []string{"vote t.me/scam"},
 	}
 	n := Normalize(m)
 	if !contains(n.Links, "http://spam.test") {

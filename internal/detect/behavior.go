@@ -56,7 +56,7 @@ func ObserveBehavior(h History, chatID, userID int64, n NormalizedMessage, cfg B
 	if h == nil {
 		return
 	}
-	if cfg.DupThreshold > 0 && strings.TrimSpace(n.Text) != "" {
+	if dupEligible(n, cfg) {
 		h.RecordAndCountDup(chatID, userID, DupHash(n), cfg.DupWindow)
 	}
 	if shortFloodEligible(n, cfg) {
@@ -74,8 +74,21 @@ func ObserveBehavior(h History, chatID, userID int64, n NormalizedMessage, cfg B
 // wrong is a mute or ban of a real participant. This is the identical trap
 // that "image without text" checks in other bots are known for; a length
 // heuristic cannot see the picture, so it must not judge it.
+//
+// Both windows also require text the sender wrote (HasOwnText), not merely a
+// non-empty normalized blob: that blob carries the quoted external reply and
+// the sender tag, so a member with a tag posting photos one by one, or
+// sending stickers under the same quoted post, produced the same "text"
+// every time and reached duplicate_flood (umputun/tg-spam #472 fixed the
+// same trap for replies).
 func shortFloodEligible(n NormalizedMessage, cfg BehaviorCfg) bool {
-	return cfg.ShortFloodThreshold > 0 && n.RawLen <= cfg.ShortLen && strings.TrimSpace(n.Text) != ""
+	return cfg.ShortFloodThreshold > 0 && n.RawLen <= cfg.ShortLen && n.HasOwnText && strings.TrimSpace(n.Text) != ""
+}
+
+// dupEligible reports whether a message counts toward duplicate detection;
+// see shortFloodEligible for why it needs the sender's own text.
+func dupEligible(n NormalizedMessage, cfg BehaviorCfg) bool {
+	return cfg.DupThreshold > 0 && n.HasOwnText && strings.TrimSpace(n.Text) != ""
 }
 
 // CheckBehavior evaluates behavioral anomalies against the injected History and config.
@@ -110,7 +123,7 @@ func CheckBehavior(
 	// captionless message onto sha256(""), causing RecordAndCountDup to count
 	// unrelated messages as duplicates and falsely trigger duplicate_flood.
 	// Media-duplicate detection is a future enhancement.
-	if cfg.DupThreshold > 0 && strings.TrimSpace(n.Text) != "" {
+	if dupEligible(n, cfg) {
 		dupHash := DupHash(n)
 		count := h.RecordAndCountDup(chatID, userID, dupHash, cfg.DupWindow)
 		if count >= cfg.DupThreshold {

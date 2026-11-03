@@ -51,8 +51,11 @@ type Message struct {
 	ExternalReplyMediaKinds         []string
 	ExternalReplyDocumentExtensions []string
 	ExternalReplyDocumentMIMETypes  []string
-	PollOptionTexts                 []string
-	EditDate                        int64
+	// StructuredTexts is the text a poll (question, description, options,
+	// explanation) or a checklist (title, tasks) carries outside Text, plus
+	// the URLs of text_link entities inside those pieces.
+	StructuredTexts []string
+	EditDate        int64
 	// MediaKinds lists the attachment types this message carries, by their
 	// Bot API field names ("photo", "video", "voice", ...). It replaces the
 	// earlier single HasMedia flag, which told a detector that SOMETHING was

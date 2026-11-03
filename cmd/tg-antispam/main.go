@@ -1150,6 +1150,12 @@ func senderKindFor(inc store.IncidentRow) domain.SenderKind {
 // and would tag most replies in an active chat, while an attachment type is
 // rare and sharp.
 func llmMessageText(m domain.Message) string {
+	text := m.Text
+	// A poll's or checklist's text lives outside Text; without it the model
+	// judged such a message by its metadata alone.
+	if len(m.StructuredTexts) > 0 {
+		text = strings.TrimSpace(strings.Join(append([]string{text}, m.StructuredTexts...), "\n"))
+	}
 	var lines []string
 	if facts := structuralFacts(m); len(facts) > 0 {
 		lines = append(lines, "[метаданные сообщения: "+strings.Join(facts, "; ")+"]")
@@ -1158,9 +1164,9 @@ func llmMessageText(m domain.Message) string {
 		lines = append(lines, "[сообщение, на которое отвечают: "+strings.Join(facts, "; ")+"]")
 	}
 	if len(lines) == 0 {
-		return m.Text
+		return text
 	}
-	return strings.Join(lines, "\n") + "\n" + m.Text
+	return strings.Join(lines, "\n") + "\n" + text
 }
 
 // replyParentFacts describes the ONE message this one answers, whichever of
