@@ -8,6 +8,8 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.23.2] - 2026-11-03
+
 ### Fixed
 
 - Polls and checklists are checked by their whole text: a poll's question,
