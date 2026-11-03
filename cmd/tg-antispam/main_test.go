@@ -148,10 +148,10 @@ func TestLLMMessageTextIgnoresACrossChatReplyWithoutAttachment(t *testing.T) {
 }
 
 func TestLLMMessageTextIncludesPollAndChecklistTexts(t *testing.T) {
-	if got := llmMessageText(domain.Message{StructuredTexts: []string{"earn fast?", "join t.me/x"}}); got != "earn fast?\njoin t.me/x" {
+	if got := llmMessageText(domain.Message{StructuredTexts: []domain.TextPart{{Text: "earn fast?"}, {Text: "join t.me/x"}}}); got != "earn fast?\njoin t.me/x" {
 		t.Fatalf("llmMessageText = %q", got)
 	}
-	if got := llmMessageText(domain.Message{Text: "vote", StructuredTexts: []string{"a"}}); got != "vote\na" {
+	if got := llmMessageText(domain.Message{Text: "vote", StructuredTexts: []domain.TextPart{{Text: "a"}}}); got != "vote\na" {
 		t.Fatalf("llmMessageText = %q", got)
 	}
 }

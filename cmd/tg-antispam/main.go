@@ -1155,7 +1155,11 @@ func llmMessageText(m domain.Message) string {
 	// A poll's or checklist's text lives outside Text; without it the model
 	// judged such a message by its metadata alone.
 	if len(m.StructuredTexts) > 0 {
-		text = strings.TrimSpace(strings.Join(append([]string{text}, m.StructuredTexts...), "\n"))
+		pieces := []string{text}
+		for _, p := range m.StructuredTexts {
+			pieces = append(pieces, p.Text)
+		}
+		text = strings.TrimSpace(strings.Join(pieces, "\n"))
 	}
 	var lines []string
 	if facts := structuralFacts(m); len(facts) > 0 {

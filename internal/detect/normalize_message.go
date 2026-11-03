@@ -27,6 +27,10 @@ type NormalizedMessage struct {
 	// message — a captionless photo from a member with a tag, or a sticker
 	// quoting a post, would otherwise look like a repeat of the same "text".
 	HasOwnText bool
+	// OwnLen is the rune length of that authored text (RawLen plus poll and
+	// checklist pieces). Short-message flood measures it: a long checklist
+	// has an empty Text, and judging it by RawLen made it "short".
+	OwnLen int
 	// MediaKinds, document type metadata, Forwarded, ForwardedFromChat and
 	// HasKeyboard carry the message's non-text shape through to the detectors. They are copied
 	// verbatim from domain.Message rather than derived here: normalization
@@ -67,14 +71,24 @@ var (
 // links, mentions, and the custom-emoji flag so detectors can work off one
 // consistent shape.
 func Normalize(m domain.Message) NormalizedMessage {
-	parts := make([]string, 0, 3+len(m.StructuredTexts))
+	// Surfaces whose entities are known: the message text and every poll or
+	// checklist piece. Each is counted with its own entities, so a visible
+	// URL and its url entity are one occurrence, not two.
+	surfaces := make([]domain.TextPart, 0, 1+len(m.StructuredTexts))
+	surfaces = append(surfaces, domain.TextPart{Text: m.Text, Entities: m.Entities})
+	surfaces = append(surfaces, m.StructuredTexts...)
+	parts := make([]string, 0, 2+len(surfaces))
 	parts = append(parts, m.Text, m.ExternalReplyText)
-	parts = append(parts, m.StructuredTexts...)
+	for _, sp := range m.StructuredTexts {
+		parts = append(parts, sp.Text)
+	}
 	parts = append(parts, m.SenderTag)
 	raw := strings.Join(parts, " ")
-	linkCount := countLinkOccurrences(m.Text, m.Entities)
-	for _, part := range parts[1:] {
-		linkCount += countLinkOccurrences(part, nil)
+	linkCount := countLinkOccurrences(m.ExternalReplyText, nil) + countLinkOccurrences(m.SenderTag, nil)
+	ownLen := 0
+	for _, sp := range surfaces {
+		linkCount += countLinkOccurrences(sp.Text, sp.Entities)
+		ownLen += utf8.RuneCountInString(sp.Text)
 	}
 
 	hasCustomEmoji := false
@@ -87,12 +101,13 @@ func Normalize(m domain.Message) NormalizedMessage {
 
 	return NormalizedMessage{
 		Text:               Deobfuscate(raw),
-		Links:              collectLinks(m.Entities, m.Text, raw),
+		Links:              collectLinks(surfaces, raw),
 		Mentions:           collectMentions(raw),
 		HasCustomEmoji:     hasCustomEmoji,
 		SenderTagNorm:      Deobfuscate(m.SenderTag),
 		RawLen:             utf8.RuneCountInString(m.Text),
 		HasOwnText:         hasOwnText(m),
+		OwnLen:             ownLen,
 		LinkCount:          linkCount,
 		MentionCount:       len(mentionRe.FindAllString(raw, -1)),
 		EmojiCount:         countEmoji(raw) + countCustomEmoji(m.Entities),
@@ -226,7 +241,7 @@ func countCustomEmoji(entities []domain.Entity) int {
 //
 // entityText is the string the entities index into (the message text or
 // caption), NOT the joined blob: offsets are relative to that one field.
-func collectLinks(entities []domain.Entity, entityText, raw string) []string {
+func collectLinks(surfaces []domain.TextPart, raw string) []string {
 	var out []string
 	seen := make(map[string]bool)
 	add := func(s string, trimPunct bool) {
@@ -239,14 +254,16 @@ func collectLinks(entities []domain.Entity, entityText, raw string) []string {
 		seen[s] = true
 		out = append(out, s)
 	}
-	for _, e := range entities {
-		switch {
-		case e.Type == "text_link" && e.URL != "":
-			// Bot API URL/span bytes are authoritative; do not strip
-			// punctuation that is part of the path (https://google.com/maps.).
-			add(e.URL, false)
-		case e.Type == "url":
-			add(entitySpan(entityText, e.Offset, e.Length), false)
+	for _, sp := range surfaces {
+		for _, e := range sp.Entities {
+			switch {
+			case e.Type == "text_link" && e.URL != "":
+				// Bot API URL/span bytes are authoritative; do not strip
+				// punctuation that is part of the path (https://google.com/maps.).
+				add(e.URL, false)
+			case e.Type == "url":
+				add(entitySpan(sp.Text, e.Offset, e.Length), false)
+			}
 		}
 	}
 	for _, s := range urlRe.FindAllString(raw, -1) {
@@ -346,7 +363,7 @@ func hasOwnText(m domain.Message) bool {
 		return true
 	}
 	for _, t := range m.StructuredTexts {
-		if strings.TrimSpace(t) != "" {
+		if strings.TrimSpace(t.Text) != "" {
 			return true
 		}
 	}

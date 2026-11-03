@@ -19,6 +19,13 @@ type Entity struct {
 	Length int
 }
 
+// TextPart is one piece of text with the entities whose offsets point into
+// it, such as a poll option or a checklist task.
+type TextPart struct {
+	Text     string
+	Entities []Entity
+}
+
 // Message is the normalized-envelope of an incoming Telegram message. Text
 // normalization for detection happens later; this is the delivery-layer view.
 type Message struct {
@@ -52,9 +59,9 @@ type Message struct {
 	ExternalReplyDocumentExtensions []string
 	ExternalReplyDocumentMIMETypes  []string
 	// StructuredTexts is the text a poll (question, description, options,
-	// explanation) or a checklist (title, tasks) carries outside Text, plus
-	// the URLs of text_link entities inside those pieces.
-	StructuredTexts []string
+	// explanation) or a checklist (title, tasks) carries outside Text, each
+	// piece with its own entities (offsets point into that piece).
+	StructuredTexts []TextPart
 	EditDate        int64
 	// MediaKinds lists the attachment types this message carries, by their
 	// Bot API field names ("photo", "video", "voice", ...). It replaces the

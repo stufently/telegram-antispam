@@ -28,7 +28,7 @@ func TestNormalizeLinkOccurrences(t *testing.T) {
 		{"UTF16 offsets after emoji", domain.Message{Text: "😀 example.org https://t.me/x", Entities: []domain.Entity{
 			{Type: "url", Offset: 3, Length: 11}, {Type: "url", Offset: 15, Length: 13},
 		}}, 2},
-		{"other surfaces count independently", domain.Message{Text: "https://t.me/x", ExternalReplyText: "https://t.me/x", StructuredTexts: []string{"https://t.me/x", "https://t.me/x"}, SenderTag: "https://t.me/x"}, 5},
+		{"other surfaces count independently", domain.Message{Text: "https://t.me/x", ExternalReplyText: "https://t.me/x", StructuredTexts: []domain.TextPart{{Text: "https://t.me/x"}, {Text: "https://t.me/x"}}, SenderTag: "https://t.me/x"}, 5},
 		{"invalid entities ignored", domain.Message{Text: "😀 abc", Entities: []domain.Entity{
 			{Type: "url", Offset: -1, Length: 3}, {Type: "url", Offset: 1, Length: 1},
 			{Type: "url", Offset: 3, Length: 100}, {Type: "text_link", Length: 0, URL: "https://example.org"},

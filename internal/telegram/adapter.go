@@ -480,41 +480,32 @@ func toDomainEntities(src []models.MessageEntity) []domain.Entity {
 }
 
 // collectStructuredTexts gathers the text a poll or a checklist carries
-// outside message text and caption. Without it a checklist whose title and
-// tasks advertise a t.me link reached the detectors as an empty message, and
-// a poll was judged by its options alone while its question went unread
-// (umputun/tg-spam #477 fixed the same gap). Empty pieces are skipped so a
+// outside message text and caption, each piece with its own entities so the
+// link detectors read hidden text_link URLs and scheme-less url spans there
+// exactly as in message text. Without it a checklist whose title and tasks
+// advertise a link reached the detectors as an empty message, and a poll was
+// judged by its options alone while its question went unread
+// (umputun/tg-spam #477 fixed the same gap). Blank pieces are skipped, so a
 // message without either keeps a nil slice.
-func collectStructuredTexts(m *models.Message) []string {
-	var out []string
-	add := func(s string) {
+func collectStructuredTexts(m *models.Message) []domain.TextPart {
+	var out []domain.TextPart
+	add := func(s string, entities []models.MessageEntity) {
 		if strings.TrimSpace(s) != "" {
-			out = append(out, s)
-		}
-	}
-	// A text_link hides its URL behind the visible words, and these entities'
-	// offsets point into their own field rather than into the message text the
-	// link detectors index, so the URL is carried as one more piece of text.
-	addText := func(s string, entities []models.MessageEntity) {
-		add(s)
-		for _, e := range entities {
-			if e.Type == models.MessageEntityTypeTextLink {
-				add(e.URL)
-			}
+			out = append(out, domain.TextPart{Text: s, Entities: toDomainEntities(entities)})
 		}
 	}
 	if p := m.Poll; p != nil {
-		addText(p.Question, p.QuestionEntities)
-		addText(p.Description, p.DescriptionEntities)
+		add(p.Question, p.QuestionEntities)
+		add(p.Description, p.DescriptionEntities)
 		for _, opt := range p.Options {
-			addText(opt.Text, opt.TextEntities)
+			add(opt.Text, opt.TextEntities)
 		}
-		addText(p.Explanation, p.ExplanationEntities)
+		add(p.Explanation, p.ExplanationEntities)
 	}
 	if c := m.Checklist; c != nil {
-		addText(c.Title, c.TitleEntities)
+		add(c.Title, c.TitleEntities)
 		for _, task := range c.Tasks {
-			addText(task.Text, task.TextEntities)
+			add(task.Text, task.TextEntities)
 		}
 	}
 	return out

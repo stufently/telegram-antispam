@@ -28,7 +28,7 @@ func (fh *fakeHistory) RecentShortCount(chatID, userID int64, window time.Durati
 
 func TestCheckBehavior_EditedMessage(t *testing.T) {
 	h := &fakeHistory{}
-	n := NormalizedMessage{Text: "hello", RawLen: 5, HasOwnText: true}
+	n := NormalizedMessage{Text: "hello", RawLen: 5, OwnLen: 5, HasOwnText: true}
 	cfg := BehaviorCfg{FlagEdits: true, DupThreshold: 0, ShortFloodThreshold: 0}
 
 	signal, hit := CheckBehavior(h, 123, 456, n, true, false, cfg)
@@ -43,7 +43,7 @@ func TestCheckBehavior_EditedMessage(t *testing.T) {
 
 func TestCheckBehavior_EditedMessageIgnoredWhenDisabled(t *testing.T) {
 	h := &fakeHistory{}
-	n := NormalizedMessage{Text: "hello", RawLen: 5, HasOwnText: true}
+	n := NormalizedMessage{Text: "hello", RawLen: 5, OwnLen: 5, HasOwnText: true}
 	cfg := BehaviorCfg{FlagEdits: false, DupThreshold: 0, ShortFloodThreshold: 0}
 
 	signal, hit := CheckBehavior(h, 123, 456, n, true, false, cfg)
@@ -58,7 +58,7 @@ func TestCheckBehavior_EditedMessageIgnoredWhenDisabled(t *testing.T) {
 
 func TestCheckBehavior_DuplicateFlood(t *testing.T) {
 	h := &fakeHistory{defaultDupCount: 5}
-	n := NormalizedMessage{Text: "duplicate text", RawLen: 14, HasOwnText: true}
+	n := NormalizedMessage{Text: "duplicate text", RawLen: 14, OwnLen: 14, HasOwnText: true}
 	cfg := BehaviorCfg{
 		FlagEdits:           false,
 		DupThreshold:        5,
@@ -82,7 +82,7 @@ func TestCheckBehavior_DuplicateFlood(t *testing.T) {
 
 func TestCheckBehavior_DuplicateFloodDisabled(t *testing.T) {
 	h := &fakeHistory{defaultDupCount: 5}
-	n := NormalizedMessage{Text: "duplicate text", RawLen: 14, HasOwnText: true}
+	n := NormalizedMessage{Text: "duplicate text", RawLen: 14, OwnLen: 14, HasOwnText: true}
 	cfg := BehaviorCfg{
 		FlagEdits:           false,
 		DupThreshold:        0, // disabled
@@ -103,7 +103,7 @@ func TestCheckBehavior_DuplicateFloodDisabled(t *testing.T) {
 
 func TestCheckBehavior_DuplicateBelowThreshold(t *testing.T) {
 	h := &fakeHistory{defaultDupCount: 3}
-	n := NormalizedMessage{Text: "duplicate text", RawLen: 14, HasOwnText: true}
+	n := NormalizedMessage{Text: "duplicate text", RawLen: 14, OwnLen: 14, HasOwnText: true}
 	cfg := BehaviorCfg{
 		FlagEdits:           false,
 		DupThreshold:        5, // require 5, but count is 3
@@ -124,7 +124,7 @@ func TestCheckBehavior_DuplicateBelowThreshold(t *testing.T) {
 
 func TestCheckBehavior_ShortFlood(t *testing.T) {
 	h := &fakeHistory{shortCounts: 10}
-	n := NormalizedMessage{Text: "hi", RawLen: 2, HasOwnText: true}
+	n := NormalizedMessage{Text: "hi", RawLen: 2, OwnLen: 2, HasOwnText: true}
 	cfg := BehaviorCfg{
 		FlagEdits:           false,
 		DupThreshold:        0,
@@ -145,7 +145,7 @@ func TestCheckBehavior_ShortFlood(t *testing.T) {
 
 func TestCheckBehavior_ShortFloodDisabled(t *testing.T) {
 	h := &fakeHistory{shortCounts: 10}
-	n := NormalizedMessage{Text: "hi", RawLen: 2, HasOwnText: true}
+	n := NormalizedMessage{Text: "hi", RawLen: 2, OwnLen: 2, HasOwnText: true}
 	cfg := BehaviorCfg{
 		FlagEdits:           false,
 		DupThreshold:        0,
@@ -166,7 +166,7 @@ func TestCheckBehavior_ShortFloodDisabled(t *testing.T) {
 
 func TestCheckBehavior_ShortFloodBelowThreshold(t *testing.T) {
 	h := &fakeHistory{shortCounts: 5}
-	n := NormalizedMessage{Text: "hi", RawLen: 2, HasOwnText: true}
+	n := NormalizedMessage{Text: "hi", RawLen: 2, OwnLen: 2, HasOwnText: true}
 	cfg := BehaviorCfg{
 		FlagEdits:           false,
 		DupThreshold:        0,
@@ -187,7 +187,7 @@ func TestCheckBehavior_ShortFloodBelowThreshold(t *testing.T) {
 
 func TestCheckBehavior_NotShort(t *testing.T) {
 	h := &fakeHistory{shortCounts: 100}
-	n := NormalizedMessage{Text: "this is a longer message", RawLen: 24, HasOwnText: true}
+	n := NormalizedMessage{Text: "this is a longer message", RawLen: 24, OwnLen: 24, HasOwnText: true}
 	cfg := BehaviorCfg{
 		FlagEdits:           false,
 		DupThreshold:        0,
@@ -208,7 +208,7 @@ func TestCheckBehavior_NotShort(t *testing.T) {
 
 func TestCheckBehavior_NoHit(t *testing.T) {
 	h := &fakeHistory{shortCounts: 0}
-	n := NormalizedMessage{Text: "normal message", RawLen: 14, HasOwnText: true}
+	n := NormalizedMessage{Text: "normal message", RawLen: 14, OwnLen: 14, HasOwnText: true}
 	cfg := BehaviorCfg{
 		FlagEdits:           false,
 		DupThreshold:        5,
@@ -260,7 +260,7 @@ func TestCheckBehavior_CaptionlessMediaNoDupFlood(t *testing.T) {
 // duplicate text (non-empty) must still trigger duplicate_flood.
 func TestCheckBehavior_RealDuplicateTextStillTriggers(t *testing.T) {
 	h := &fakeHistory{defaultDupCount: 3}
-	n := NormalizedMessage{Text: "buy now buy now", RawLen: 16, HasOwnText: true}
+	n := NormalizedMessage{Text: "buy now buy now", RawLen: 16, OwnLen: 16, HasOwnText: true}
 	cfg := BehaviorCfg{
 		FlagEdits:    false,
 		DupThreshold: 3,
@@ -340,7 +340,7 @@ func TestShortFloodIgnoresCaptionlessMedia(t *testing.T) {
 }
 
 func TestShortFloodOnlyJudgesUntrustedUsers(t *testing.T) {
-	n := NormalizedMessage{Text: "ok", RawLen: 2, HasOwnText: true}
+	n := NormalizedMessage{Text: "ok", RawLen: 2, OwnLen: 2, HasOwnText: true}
 	cfg := BehaviorCfg{ShortFloodThreshold: 5, ShortLen: 10, ShortWindow: 30 * time.Second}
 
 	untrusted := &shortCounter{fakeHistory: fakeHistory{shortCounts: 5}}
@@ -365,7 +365,7 @@ func TestDuplicateFloodStaysUngatedByTrust(t *testing.T) {
 	// Posting the same text over and over is spam-shaped regardless of
 	// tenure, so trust must not buy immunity from it.
 	h := &fakeHistory{defaultDupCount: 3}
-	n := NormalizedMessage{Text: "buy now", RawLen: 7, HasOwnText: true}
+	n := NormalizedMessage{Text: "buy now", RawLen: 7, OwnLen: 7, HasOwnText: true}
 	cfg := BehaviorCfg{DupThreshold: 3, DupWindow: time.Minute}
 
 	sig, hit := CheckBehavior(h, 1, 2, n, false, true, cfg)

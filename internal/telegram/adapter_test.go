@@ -82,7 +82,7 @@ func TestToDomainMessageExtractsDetectionSurfaces(t *testing.T) {
 	if got.ExternalReplyText != "quoted text" {
 		t.Fatalf("bad external reply text: %+v", got.ExternalReplyText)
 	}
-	if len(got.StructuredTexts) != 2 || got.StructuredTexts[0] != "opt A" || got.StructuredTexts[1] != "opt B" {
+	if len(got.StructuredTexts) != 2 || got.StructuredTexts[0].Text != "opt A" || got.StructuredTexts[1].Text != "opt B" {
 		t.Fatalf("bad poll option texts: %+v", got.StructuredTexts)
 	}
 }
@@ -612,9 +612,12 @@ func TestToDomainMessageStructuredTexts(t *testing.T) {
 			Explanation:         "dm @promo",
 		},
 	})
-	want := []string{"earn fast?", "details", "https://hidden.example/x", "yes", "no", "dm @promo"}
-	if !equalStrings(poll.StructuredTexts, want) {
-		t.Fatalf("poll texts = %q, want %q", poll.StructuredTexts, want)
+	want := []string{"earn fast?", "details", "yes", "no", "dm @promo"}
+	if got := partTexts(poll.StructuredTexts); !equalStrings(got, want) {
+		t.Fatalf("poll texts = %q, want %q", got, want)
+	}
+	if e := poll.StructuredTexts[1].Entities; len(e) != 1 || e[0].Type != "text_link" || e[0].URL != "https://hidden.example/x" {
+		t.Fatalf("description entities = %+v", e)
 	}
 
 	checklist := ToDomainMessage(&models.Message{
@@ -624,14 +627,25 @@ func TestToDomainMessageStructuredTexts(t *testing.T) {
 			Tasks: []models.ChecklistTask{{Text: "join t.me/scam"}, {Text: "here", TextEntities: link}},
 		},
 	})
-	want = []string{"todo", "join t.me/scam", "here", "https://hidden.example/x"}
-	if !equalStrings(checklist.StructuredTexts, want) {
-		t.Fatalf("checklist texts = %q, want %q", checklist.StructuredTexts, want)
+	want = []string{"todo", "join t.me/scam", "here"}
+	if got := partTexts(checklist.StructuredTexts); !equalStrings(got, want) {
+		t.Fatalf("checklist texts = %q, want %q", got, want)
+	}
+	if e := checklist.StructuredTexts[2].Entities; len(e) != 1 || e[0].URL != "https://hidden.example/x" {
+		t.Fatalf("task entities = %+v", e)
 	}
 
 	if plain := ToDomainMessage(&models.Message{Chat: models.Chat{ID: -100}, Text: "hi"}); plain.StructuredTexts != nil {
-		t.Fatalf("plain message got structured texts %q", plain.StructuredTexts)
+		t.Fatalf("plain message got structured texts %+v", plain.StructuredTexts)
 	}
+}
+
+func partTexts(parts []domain.TextPart) []string {
+	var out []string
+	for _, p := range parts {
+		out = append(out, p.Text)
+	}
+	return out
 }
 
 func equalStrings(a, b []string) bool {

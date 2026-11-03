@@ -82,7 +82,7 @@ func ObserveBehavior(h History, chatID, userID int64, n NormalizedMessage, cfg B
 // every time and reached duplicate_flood (umputun/tg-spam #472 fixed the
 // same trap for replies).
 func shortFloodEligible(n NormalizedMessage, cfg BehaviorCfg) bool {
-	return cfg.ShortFloodThreshold > 0 && n.RawLen <= cfg.ShortLen && n.HasOwnText && strings.TrimSpace(n.Text) != ""
+	return cfg.ShortFloodThreshold > 0 && n.OwnLen <= cfg.ShortLen && n.HasOwnText && strings.TrimSpace(n.Text) != ""
 }
 
 // dupEligible reports whether a message counts toward duplicate detection;
