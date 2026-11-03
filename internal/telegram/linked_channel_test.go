@@ -101,9 +101,18 @@ func TestLinkedChannelLookupOnlyForChannelSenders(t *testing.T) {
 	})
 	lookups := 0
 	h.SetLinkedChat(func(context.Context, int64) (int64, error) { lookups++; return 0, nil })
-	h.OnMessage(context.Background(), 1, domain.Message{ChatID: -100501, MessageID: 80, Sender: domain.Sender{UserID: 7, Kind: domain.SenderUser}})
+	// A user's message, even one carrying a sender chat id, is not a channel post.
+	h.OnMessage(context.Background(), 1, domain.Message{ChatID: -100501, MessageID: 80, Sender: domain.Sender{UserID: 7, SenderChatID: -100777, Kind: domain.SenderUser}})
 	seq.Wait()
 	if lookups != 0 {
 		t.Fatalf("lookup ran %d times for a user's message", lookups)
+	}
+
+	// A channel post the cascade does not act on needs no lookup either.
+	h.SetDecide(func(domain.Message) (domain.Verdict, bool) { return domain.Verdict{}, false })
+	h.OnMessage(context.Background(), 2, domain.Message{ChatID: -100501, MessageID: 81, Sender: domain.Sender{UserID: 136817688, SenderChatID: -100777, Kind: domain.SenderExternalChannel}})
+	seq.Wait()
+	if lookups != 0 {
+		t.Fatalf("lookup ran %d times for a clean channel post", lookups)
 	}
 }
