@@ -12,13 +12,14 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 - Polls and checklists are checked by their whole text: a poll's question,
   description and explanation (previously only its options) and a checklist's
-  title and tasks now reach the rules, Bayes and the LLM, including the URLs
-  of hidden `text_link` entities in them. A checklist used to arrive as an
+  title and tasks now reach the rules, Bayes and the LLM, each piece with
+  its own entities (hidden `text_link` URLs, scheme-less links). A checklist used to arrive as an
   empty message (umputun/tg-spam #477).
 - Duplicate and short-message flood count only messages with text the sender
   wrote. A captionless photo from a member with a sender tag, or a sticker
   under the same quoted post, used to normalize to the same text every time
-  and could reach `duplicate_flood` (umputun/tg-spam #472).
+  and could reach `duplicate_flood` (umputun/tg-spam #472). Short-message
+  flood measures that text's length, so a long checklist is not "short".
 - The chat's own linked channel commenting as itself (not an automatic
   forward) is no longer moderated as an outside channel: an actionable
   verdict on a channel sender checks the chat's `linked_chat_id` (cached
