@@ -79,40 +79,46 @@ func TestLinkedChannelCommentIsNotModerated(t *testing.T) {
 	}
 }
 
-// The lookup is spent only on actionable outside-channel verdicts; a user's
-// message never asks for it.
-func TestLinkedChannelLookupOnlyForChannelSenders(t *testing.T) {
-	db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatal(err)
+// The lookup is spent only on actionable outside-channel verdicts: neither a
+// user's message (even one carrying a sender chat id) nor a channel post the
+// cascade does not act on asks for it.
+func TestLinkedChannelLookupOnlyForActionableChannelPosts(t *testing.T) {
+	cases := []struct {
+		name    string
+		verdict domain.Verdict
+		sender  domain.Sender
+	}{
+		{"user message", domain.Verdict{Action: domain.ActionBan, Confidence: 0.99}, domain.Sender{UserID: 7, SenderChatID: -100777, Kind: domain.SenderUser}},
+		{"clean channel post", domain.Verdict{Action: domain.ActionNone}, domain.Sender{UserID: 136817688, SenderChatID: -100777, Kind: domain.SenderExternalChannel}},
 	}
-	defer db.Close()
-	if err := db.Migrate(); err != nil {
-		t.Fatal(err)
-	}
-	f := fake.New()
-	f.SendAdminID = 5
-	m := incident.New(f, db, 999)
-	cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto", StartInDryRun: boolPtr(false)}})
-	seq := telegram.NewSequencer()
-	h := telegram.NewHandler(db, seq, cfg, m)
-	h.SetDecide(func(domain.Message) (domain.Verdict, bool) {
-		return domain.Verdict{Action: domain.ActionBan, Confidence: 0.99}, true
-	})
-	lookups := 0
-	h.SetLinkedChat(func(context.Context, int64) (int64, error) { lookups++; return 0, nil })
-	// A user's message, even one carrying a sender chat id, is not a channel post.
-	h.OnMessage(context.Background(), 1, domain.Message{ChatID: -100501, MessageID: 80, Sender: domain.Sender{UserID: 7, SenderChatID: -100777, Kind: domain.SenderUser}})
-	seq.Wait()
-	if lookups != 0 {
-		t.Fatalf("lookup ran %d times for a user's message", lookups)
-	}
-
-	// A channel post the cascade does not act on needs no lookup either.
-	h.SetDecide(func(domain.Message) (domain.Verdict, bool) { return domain.Verdict{Action: domain.ActionNone}, true })
-	h.OnMessage(context.Background(), 2, domain.Message{ChatID: -100501, MessageID: 81, Sender: domain.Sender{UserID: 136817688, SenderChatID: -100777, Kind: domain.SenderExternalChannel}})
-	seq.Wait()
-	if lookups != 0 {
-		t.Fatalf("lookup ran %d times for a clean channel post", lookups)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if err := db.Migrate(); err != nil {
+				t.Fatal(err)
+			}
+			f := fake.New()
+			f.SendAdminID = 5
+			m := incident.New(f, db, 999)
+			cfg := config.NewStore(&config.Config{AdminChatID: 999, Action: domain.ActionBan, Chats: config.ChatsPolicy{Mode: "auto", StartInDryRun: boolPtr(false)}})
+			seq := telegram.NewSequencer()
+			h := telegram.NewHandler(db, seq, cfg, m)
+			decided := false
+			h.SetDecide(func(domain.Message) (domain.Verdict, bool) { decided = true; return tc.verdict, true })
+			lookups := 0
+			h.SetLinkedChat(func(context.Context, int64) (int64, error) { lookups++; return 0, nil })
+			h.OnMessage(context.Background(), 1, domain.Message{ChatID: -100501, MessageID: 80, Sender: tc.sender})
+			seq.Wait()
+			if !decided {
+				t.Fatal("precondition: message never reached decide")
+			}
+			if lookups != 0 {
+				t.Fatalf("lookup ran %d times", lookups)
+			}
+		})
 	}
 }
