@@ -109,7 +109,7 @@ func TestLinkedChannelLookupOnlyForChannelSenders(t *testing.T) {
 	}
 
 	// A channel post the cascade does not act on needs no lookup either.
-	h.SetDecide(func(domain.Message) (domain.Verdict, bool) { return domain.Verdict{}, true })
+	h.SetDecide(func(domain.Message) (domain.Verdict, bool) { return domain.Verdict{Action: domain.ActionNone}, true })
 	h.OnMessage(context.Background(), 2, domain.Message{ChatID: -100501, MessageID: 81, Sender: domain.Sender{UserID: 136817688, SenderChatID: -100777, Kind: domain.SenderExternalChannel}})
 	seq.Wait()
 	if lookups != 0 {
