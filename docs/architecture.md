@@ -76,7 +76,14 @@ For a new or edited message, `internal/telegram.Handler`:
 6. Bumps durable trust only for meaningful, non-actionable user messages, and
    never for an edit — otherwise re-editing one message earns trust.
 7. For an actionable verdict, resolves the stored enabled/dry-run state and
-   sends one incident with sorted message IDs to the state machine.
+   sends one incident with sorted message IDs to the state machine. Before
+   that, an actionable verdict on an outside-channel sender asks the cached
+   `getChat` (shared with the card's chat title) for the chat's
+   `linked_chat_id`: the chat's own channel commenting as itself is not an
+   automatic forward, so only this lookup tells it from a foreign channel, and
+   such a post is dropped instead of banned from its own discussion group. A
+   failed lookup keeps the outside-channel treatment. `/spam` and `/ban`
+   refuse the same target, and refuse when the lookup fails.
 
 Incident dedup is durable on `(chat_id, first_message_id)`. The state machine
 orders side effects as:
@@ -292,7 +299,11 @@ Link-count limits count occurrences, not unique destination strings. The
 normalizer merges overlapping regex and Telegram entity spans (UTF-16 offsets
 are converted to byte boundaries), counts hidden `text_link` and scheme-less
 `url` entities, and preserves repeated links in separate places. Other message
-text surfaces are counted independently. The deduplicated `Links` list used by
+text surfaces (external-reply quote, poll question/description/options/
+explanation, checklist title/tasks, sender tag) are counted independently.
+Duplicate and short-message windows count only messages with text the sender
+wrote (text, caption, poll or checklist text): the quote and the sender tag
+alone would make every captionless photo look like the same message. The deduplicated `Links` list used by
 domain rules remains unchanged.
 
 The blocklist checks the atomic in-memory LOLS snapshot first, then a per-user

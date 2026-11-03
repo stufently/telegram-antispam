@@ -8,6 +8,26 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+### Fixed
+
+- Polls and checklists are checked by their whole text: a poll's question,
+  description and explanation (previously only its options) and a checklist's
+  title and tasks now reach the rules, Bayes and the LLM, including the URLs
+  of hidden `text_link` entities in them. A checklist used to arrive as an
+  empty message (umputun/tg-spam #477).
+- Duplicate and short-message flood count only messages with text the sender
+  wrote. A captionless photo from a member with a sender tag, or a sticker
+  under the same quoted post, used to normalize to the same text every time
+  and could reach `duplicate_flood` (umputun/tg-spam #472).
+- The chat's own linked channel commenting as itself (not an automatic
+  forward) is no longer moderated as an outside channel: an actionable
+  verdict on a channel sender checks the chat's `linked_chat_id` (cached
+  `getChat`) and drops the message instead of banning the channel from its
+  own discussion group; `/spam` and `/ban` refuse it (umputun/tg-spam #457).
+- OpenAI reasoning models (o1/o3/o4, gpt-5, gpt-6) get a configured
+  `max_tokens` as `max_completion_tokens`; they reject `max_tokens`, so every
+  call failed open (umputun/tg-spam #467).
+
 ## [0.23.1] - 2026-11-03
 
 ### Fixed
