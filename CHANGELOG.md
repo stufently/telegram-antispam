@@ -8,6 +8,8 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-11-03
+
 ### Fixed
 
 - CAS checks: CAS now rejects keyless `/check` requests with 401 ("API key
