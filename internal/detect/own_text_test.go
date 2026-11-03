@@ -1,6 +1,7 @@
 package detect
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -132,5 +133,21 @@ func TestShortFloodMeasuresOwnLength(t *testing.T) {
 	}
 	if !hit {
 		t.Fatal("short poll burst did not trigger short_flood")
+	}
+}
+
+// Bayes length features and the emoji rule read poll and checklist pieces too.
+func TestStructuredTextLengthAndEmoji(t *testing.T) {
+	long := strings.Repeat("a", 210)
+	n := Normalize(domain.Message{StructuredTexts: []domain.TextPart{
+		{Text: long},
+		{Text: "x", Entities: []domain.Entity{{Type: "custom_emoji", Offset: 0, Length: 1}}},
+	}})
+	toks := Tokenize(n)
+	if !contains(toks, "len:long") || contains(toks, "len:short") {
+		t.Fatalf("length tokens wrong for a long poll: %v", toks)
+	}
+	if !n.HasCustomEmoji || n.EmojiCount != 1 {
+		t.Fatalf("custom emoji in a poll piece: has=%v count=%d", n.HasCustomEmoji, n.EmojiCount)
 	}
 }

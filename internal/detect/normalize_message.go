@@ -91,26 +91,23 @@ func Normalize(m domain.Message) NormalizedMessage {
 		ownLen += utf8.RuneCountInString(sp.Text)
 	}
 
-	hasCustomEmoji := false
-	for _, e := range m.Entities {
-		if e.Type == "custom_emoji" {
-			hasCustomEmoji = true
-			break
-		}
+	customEmoji := 0
+	for _, sp := range surfaces {
+		customEmoji += countCustomEmoji(sp.Entities)
 	}
 
 	return NormalizedMessage{
 		Text:               Deobfuscate(raw),
 		Links:              collectLinks(surfaces, raw),
 		Mentions:           collectMentions(raw),
-		HasCustomEmoji:     hasCustomEmoji,
+		HasCustomEmoji:     customEmoji > 0,
 		SenderTagNorm:      Deobfuscate(m.SenderTag),
 		RawLen:             utf8.RuneCountInString(m.Text),
 		HasOwnText:         hasOwnText(m),
 		OwnLen:             ownLen,
 		LinkCount:          linkCount,
 		MentionCount:       len(mentionRe.FindAllString(raw, -1)),
-		EmojiCount:         countEmoji(raw) + countCustomEmoji(m.Entities),
+		EmojiCount:         countEmoji(raw) + customEmoji,
 		MediaKinds:         m.MediaKinds,
 		DocumentExtensions: normalizedMetadata(m.DocumentExtensions),
 		DocumentMIMETypes:  normalizedMetadata(m.DocumentMIMETypes),

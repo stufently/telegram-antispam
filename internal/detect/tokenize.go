@@ -46,11 +46,14 @@ func Tokenize(n NormalizedMessage) []string {
 		tokens = append(tokens, "has:mention")
 	}
 
-	if n.RawLen <= 10 {
+	// OwnLen (Normalize sets it >= RawLen): a poll or checklist has an empty
+	// Text, and judged by RawLen every one of them, however long, looked short.
+	ownLen := max(n.RawLen, n.OwnLen)
+	if ownLen <= 10 {
 		tokens = append(tokens, "len:short")
 	}
 
-	if n.RawLen >= 200 {
+	if ownLen >= 200 {
 		tokens = append(tokens, "len:long")
 	}
 
