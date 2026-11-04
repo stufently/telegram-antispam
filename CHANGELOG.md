@@ -8,6 +8,8 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.23.3] - 2026-11-04
+
 ### Added
 
 - `llm.reasoning_effort` (opt-in, unset by default) is sent to OpenAI
