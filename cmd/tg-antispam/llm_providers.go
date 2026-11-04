@@ -12,12 +12,13 @@ func llmProviders(cfg config.LLM) []llm.Provider {
 		switch pc.Kind {
 		case "openai":
 			provs = append(provs, llm.OpenAI{
-				APIKey:      pc.APIKey,
-				Model:       pc.Model,
-				BaseURL:     pc.APIBase,
-				Prompt:      cfg.Prompt,
-				Temperature: cfg.Temperature,
-				MaxTokens:   cfg.MaxTokens,
+				APIKey:          pc.APIKey,
+				Model:           pc.Model,
+				BaseURL:         pc.APIBase,
+				Prompt:          cfg.Prompt,
+				Temperature:     cfg.Temperature,
+				MaxTokens:       cfg.MaxTokens,
+				ReasoningEffort: cfg.ReasoningEffort,
 			})
 		case "anthropic":
 			provs = append(provs, llm.Anthropic{

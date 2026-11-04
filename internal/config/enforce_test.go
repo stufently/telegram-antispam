@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -87,6 +88,9 @@ func TestLLMTuningParamsPreserveUnsetVersusZero(t *testing.T) {
 	if c.LLM.MaxTokens != 0 {
 		t.Errorf("max_tokens = %d, want 0 (unset ⇒ not sent)", c.LLM.MaxTokens)
 	}
+	if c.LLM.ReasoningEffort != "" {
+		t.Errorf("reasoning_effort = %q, want empty (unset ⇒ not sent)", c.LLM.ReasoningEffort)
+	}
 
 	c, err = Parse([]byte(base + "  temperature: 0\n  max_tokens: 8\n  prompt: ru\n"))
 	if err != nil {
@@ -159,5 +163,27 @@ func TestBayesScopeDefaultsAndValidates(t *testing.T) {
 	if _, err := Parse([]byte(base + "detection:\n  bayes_scope: per-chat\n")); err == nil ||
 		!strings.Contains(err.Error(), "bayes_scope") {
 		t.Fatalf("err = %v, want a bayes_scope validation error", err)
+	}
+}
+
+func TestLLMReasoningEffortValidated(t *testing.T) {
+	base := "bot_token: t\nadmin_chat_id: -1\naction: ban\nchats:\n  mode: auto\n" +
+		"llm:\n  enabled: %s\n  reasoning_effort: %s\n  providers:\n    - kind: openai\n      model: m\n      api_key: k\n"
+	for _, v := range []string{"low", "medium", "high", "off", "none"} {
+		c, err := Parse([]byte(fmt.Sprintf(base, "true", v)))
+		if err != nil {
+			t.Fatalf("reasoning_effort %q rejected: %v", v, err)
+		}
+		if c.LLM.ReasoningEffort != v {
+			t.Errorf("reasoning_effort = %q, want %q", c.LLM.ReasoningEffort, v)
+		}
+	}
+	// A typo is rejected even with the stage off, so it cannot wait for the
+	// day the stage is enabled and then fail every call open.
+	for _, enabled := range []string{"true", "false"} {
+		_, err := Parse([]byte(fmt.Sprintf(base, enabled, "Low")))
+		if err == nil || !strings.Contains(err.Error(), "llm.reasoning_effort") {
+			t.Errorf("enabled=%s: err = %v, want a reasoning_effort error", enabled, err)
+		}
 	}
 }

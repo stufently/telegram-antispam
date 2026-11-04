@@ -127,3 +127,18 @@ llm:
 		t.Fatalf("chat criteria not wired: %v", v)
 	}
 }
+
+// llm.reasoning_effort must reach the OpenAI provider; a dropped field
+// would leave the operator's setting silently unapplied.
+func TestOpenAIReasoningEffortWired(t *testing.T) {
+	providers := llmProviders(config.LLM{ReasoningEffort: "low", Providers: []config.LLMProvider{
+		{Kind: "openai", APIKey: "test", Model: "gpt-6-luna"},
+	}})
+	o, ok := providers[0].(llm.OpenAI)
+	if !ok {
+		t.Fatalf("provider 0 is %T, want llm.OpenAI", providers[0])
+	}
+	if o.ReasoningEffort != "low" {
+		t.Fatalf("ReasoningEffort = %q, want low", o.ReasoningEffort)
+	}
+}

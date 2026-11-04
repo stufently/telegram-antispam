@@ -115,6 +115,39 @@ func TestOpenAIClassifyOmitsTuningParamsByDefault(t *testing.T) {
 	if _, ok := body["max_tokens"]; ok {
 		t.Errorf("max_tokens sent by default: %v", body["max_tokens"])
 	}
+	if _, ok := body["reasoning_effort"]; ok {
+		t.Errorf("reasoning_effort sent by default: %v", body["reasoning_effort"])
+	}
+}
+
+// reasoning_effort is opt-in: "" and "none" omit the key (non-reasoning
+// models reject it), "off" sends the API's "none", the rest go out as is.
+func TestOpenAIReasoningEffort(t *testing.T) {
+	cases := map[string]string{"": "", "none": "", "off": "none", "low": "low", "medium": "medium", "high": "high"}
+	for effort, want := range cases {
+		t.Run("effort="+effort, func(t *testing.T) {
+			var body map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"HAM"}}]}`))
+			}))
+			defer srv.Close()
+			p := OpenAI{APIKey: "sk-test", Model: "gpt-6-luna", BaseURL: srv.URL, Client: srv.Client(), ReasoningEffort: effort}
+			if _, err := p.Classify(context.Background(), "hi", ""); err != nil {
+				t.Fatal(err)
+			}
+			got, ok := body["reasoning_effort"]
+			if want == "" {
+				if ok {
+					t.Errorf("reasoning_effort = %v, want the key omitted", got)
+				}
+				return
+			}
+			if got != want {
+				t.Errorf("reasoning_effort = %v (present=%v), want %q", got, ok, want)
+			}
+		})
+	}
 }
 
 func TestOpenAIClassifySendsConfiguredPromptAndParams(t *testing.T) {

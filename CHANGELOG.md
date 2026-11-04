@@ -8,6 +8,13 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+### Added
+
+- `llm.reasoning_effort` (opt-in, unset by default) is sent to OpenAI
+  providers as `reasoning_effort`: `low`/`medium`/`high` verbatim, `off` as
+  the API's `none` (no thinking on models that accept it); unset or `none`
+  omits the key. Unknown values are rejected at startup (umputun/tg-spam #467).
+
 ## [0.23.2] - 2026-11-03
 
 ### Fixed

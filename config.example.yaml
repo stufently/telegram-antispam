@@ -360,6 +360,12 @@ llm:
   # empty answer, which this stage reads as "not spam" — a silently
   # disabled check rather than a visible error.
   # max_tokens: 8
+  # OpenAI reasoning_effort, sent ONLY when set (other providers ignore it).
+  # low | medium | high go out as is; off sends the API's "none" (disables
+  # thinking on models that accept it, e.g. gpt-6-luna); none or unset omits
+  # the key — models without reasoning support (gpt-4o-mini) reject it, and
+  # a rejected call fails open as "not spam". Default: unset.
+  # reasoning_effort: low
   # Combine voting providers: "any" (spam if any voter says spam) or
   # "all" (spam only if all voters agree). Shadow providers never vote.
   # Default: "any".

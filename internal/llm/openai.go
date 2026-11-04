@@ -27,6 +27,11 @@ type OpenAI struct {
 	// which then return an empty answer that classifyReply reads as HAM —
 	// a silently disabled spam check rather than a visible error.
 	MaxTokens int
+	// ReasoningEffort is sent as reasoning_effort only when it is not empty
+	// and not "none": models without reasoning support reject the key, so
+	// sending it by default would fail every call (and fail-open would hide
+	// that). "off" sends the API's "none" to disable thinking.
+	ReasoningEffort string
 }
 
 func (o OpenAI) Name() string { return "openai" }
@@ -55,6 +60,13 @@ func (o OpenAI) Classify(ctx context.Context, text, prompt string) (bool, error)
 		} else {
 			payload["max_tokens"] = o.MaxTokens
 		}
+	}
+	switch o.ReasoningEffort {
+	case "", "none":
+	case "off":
+		payload["reasoning_effort"] = "none"
+	default:
+		payload["reasoning_effort"] = o.ReasoningEffort
 	}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/chat/completions", bytes.NewReader(body))

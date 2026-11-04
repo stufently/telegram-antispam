@@ -272,7 +272,8 @@ chat; a later press answers "already decided: confirmed spam".
 ## Enable the optional LLM stage
 
 Opt-in only — it sends borderline message text to a paid, official API. The system prompt is
-configurable (`llm.prompt`) and `temperature` / `max_tokens` are sent only when you set them,
+configurable (`llm.prompt`) and `temperature` / `max_tokens` / `reasoning_effort` (OpenAI only:
+`low`/`medium`/`high`, or `off` to disable thinking) are sent only when you set them,
 because reasoning models reject an explicit temperature and spend a small token budget on
 hidden reasoning — returning an empty answer this stage would read as "not spam". In
 `config.yaml`:

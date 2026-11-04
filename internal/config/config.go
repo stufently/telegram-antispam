@@ -503,7 +503,17 @@ type LLM struct {
 	// harmful with reasoning models, which spend the budget thinking and
 	// then return an empty answer — which the stage reads as "not spam".
 	MaxTokens int `yaml:"max_tokens"`
+	// ReasoningEffort is sent to OpenAI providers as reasoning_effort, and
+	// only when set (umputun/tg-spam #467). Empty or "none" ⇒ the key is
+	// omitted: models without reasoning support (gpt-4o-mini) reject it.
+	// "low" / "medium" / "high" go out verbatim; "off" sends the API's
+	// "none", which disables thinking on models that accept it. Other
+	// providers ignore it. Default: unset.
+	ReasoningEffort string `yaml:"reasoning_effort"`
 }
+
+// reasoningEfforts are the accepted llm.reasoning_effort values.
+var reasoningEfforts = map[string]bool{"": true, "none": true, "off": true, "low": true, "medium": true, "high": true}
 
 // Welcome is the optional ephemeral greeting for a person who joins.
 // Off unless enabled with non-empty text. Delivery is not guaranteed and
@@ -1030,6 +1040,12 @@ func (c *Config) Validate() error {
 	case domain.ActionDeleteMute, domain.ActionMute, domain.ActionBan, domain.ActionDeleteOnly:
 	default:
 		return fmt.Errorf("action must be delete_mute|mute|ban|delete_only, got %q", c.Action)
+	}
+	// Checked even with the stage off: a typo here would otherwise surface
+	// only on the day someone enables it, as a 400 on every call that the
+	// fail-open stage turns into a silently disabled check.
+	if !reasoningEfforts[c.LLM.ReasoningEffort] {
+		return fmt.Errorf("llm.reasoning_effort must be low|medium|high|off|none, got %q", c.LLM.ReasoningEffort)
 	}
 	if c.LLM.Enabled != nil && *c.LLM.Enabled {
 		switch c.LLM.Policy {
