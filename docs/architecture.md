@@ -82,7 +82,8 @@ For a new or edited message, `internal/telegram.Handler`:
    `linked_chat_id`: the chat's own channel commenting as itself is not an
    automatic forward, so only this lookup tells it from a foreign channel, and
    such a post is dropped instead of banned from its own discussion group. A
-   failed lookup keeps the outside-channel treatment. `/spam` and `/ban`
+   failed or timed-out lookup defers moderation, as an unresolved admin list
+   does: no sanction, a "moderation deferred" log line. `/spam` and `/ban`
    refuse the same target, and refuse when the lookup fails.
 
 Incident dedup is durable on `(chat_id, first_message_id)`. The state machine

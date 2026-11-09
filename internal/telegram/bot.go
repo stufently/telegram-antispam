@@ -227,20 +227,28 @@ const linkedChatTimeout = 5 * time.Second
 
 // fromLinkedChannel reports whether m was posted by the channel linked to its
 // chat. It is asked only about an actionable verdict on an outside-channel
-// sender, so ordinary traffic costs no extra call. A failed lookup answers
-// false, which keeps the previous behaviour rather than inventing immunity.
-func (h *Handler) fromLinkedChannel(ctx context.Context, m domain.Message) bool {
+// sender, so ordinary traffic costs no extra call. A failed lookup returns
+// the error: the sender may be the chat's own channel, and the caller defers
+// moderation exactly as it does for an unresolved admin list, rather than
+// banning that channel from its own discussion group on a guess.
+func (h *Handler) fromLinkedChannel(ctx context.Context, m domain.Message) (bool, error) {
 	if h.linkedChat == nil || m.Sender.Kind != domain.SenderExternalChannel || m.Sender.SenderChatID == 0 {
-		return false
+		return false, nil
 	}
 	lctx, cancel := context.WithTimeout(ctx, linkedChatTimeout)
 	defer cancel()
 	linked, err := h.linkedChat(lctx, m.ChatID)
 	if err != nil {
-		log.Printf("chat=%d msg=%d: linked channel lookup: %v", m.ChatID, m.MessageID, err)
-		return false
+		return false, err
 	}
-	return linked != 0 && linked == m.Sender.SenderChatID
+	return linked != 0 && linked == m.Sender.SenderChatID, nil
+}
+
+// deferModeration is the one place a message is left unjudged because the
+// facts needed to judge its sender could not be fetched (admin list, linked
+// channel). Nothing is sanctioned and nothing is recorded as observed.
+func deferModeration(m domain.Message, cause string) {
+	log.Printf("chat=%d msg=%d: moderation deferred: %s", m.ChatID, m.MessageID, cause)
 }
 
 // SetSweeper installs the deleter used to remove service messages. Without
@@ -367,9 +375,16 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 		decide = h.editedDecide
 	}
 	verdict, ok := decide(judged)
-	if ok && verdict.IsActionable() && h.fromLinkedChannel(ctx, judged) {
-		log.Printf("chat=%d msg=%d: sender is the chat's linked channel, not moderated", first.ChatID, first.MessageID)
-		return
+	if ok && verdict.IsActionable() {
+		linked, err := h.fromLinkedChannel(ctx, judged)
+		if err != nil {
+			deferModeration(first, "linked channel lookup unavailable: "+err.Error())
+			return
+		}
+		if linked {
+			log.Printf("chat=%d msg=%d: sender is the chat's linked channel, not moderated", first.ChatID, first.MessageID)
+			return
+		}
 	}
 	if !ok || !verdict.IsActionable() {
 		// A non-actionable, meaningful message from a real user counts
@@ -397,7 +412,7 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 			}
 		}
 		if verdict.Reason == detect.ReasonAdminLookupUnavailable {
-			log.Printf("chat=%d msg=%d: moderation deferred: admin lookup unavailable", first.ChatID, first.MessageID)
+			deferModeration(first, "admin lookup unavailable")
 			return
 		}
 		// The signals carry the cascade's numbers (Bayes ratio vs threshold),

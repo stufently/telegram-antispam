@@ -14,6 +14,12 @@ Entries start life under **Unreleased** and are moved under a version heading wh
   checklist's own text, as the text detectors already do since 0.23.2. Every
   poll and checklist used to count as captionless however long its question
   or tasks, and each one cost a review card in the admin chat.
+- An actionable verdict on a channel sender whose linked-channel lookup
+  (`getChat`) fails or times out is now deferred, as an unresolved admin list
+  already is: no ban, no deletion, a `moderation deferred: linked channel
+  lookup unavailable` log line. It used to be moderated as an outside
+  channel, which could ban the chat's own channel from its discussion group.
+  User senders are unaffected.
 
 ## [0.23.3] - 2026-11-04
 
