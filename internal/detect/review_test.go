@@ -118,3 +118,23 @@ func TestReviewCandidateFlagsABotKeyboard(t *testing.T) {
 		t.Fatal("via_bot is the innocent explanation and must not be flagged")
 	}
 }
+
+// A poll's or checklist's text lives outside Text but is read by every text
+// detector; judged by Text alone, every poll looked captionless however long
+// its question, and each one cost a review card.
+func TestReviewCandidateReadsStructuredText(t *testing.T) {
+	poll := mediaMsg("", "poll")
+	poll.StructuredTexts = []domain.TextPart{{Text: "Где в городе лучший кальян, подскажите?"}, {Text: "Центр"}, {Text: "Пляж"}}
+	if _, ok := reviewCascade(20, 0).ReviewCandidate(poll); ok {
+		t.Fatal("a poll with a full question is read by the text detectors, not review")
+	}
+	short := mediaMsg("", "poll")
+	short.StructuredTexts = []domain.TextPart{{Text: "?"}, {Text: "да"}}
+	v, ok := reviewCascade(20, 0).ReviewCandidate(short)
+	if !ok {
+		t.Fatal("a poll with almost no text is still surfaced for review")
+	}
+	if v.Signals[0].Detail != "kinds=poll len=3" {
+		t.Fatalf("detail = %q, want the poll's own text length", v.Signals[0].Detail)
+	}
+}

@@ -273,10 +273,13 @@ func (c Cascade) ReviewCandidate(m domain.Message) (domain.Verdict, bool) {
 
 // reviewSignal picks which review-worthy shape this message has, if any.
 func (c Cascade) reviewSignal(n NormalizedMessage) (domain.Signal, bool) {
-	if len(n.MediaKinds) > 0 && n.RawLen < c.CaptionMinLen {
+	// OwnLen, as in Tokenize: a poll's or checklist's text is outside Text
+	// but every text detector reads it, so it is not captionless.
+	ownLen := max(n.RawLen, n.OwnLen)
+	if len(n.MediaKinds) > 0 && ownLen < c.CaptionMinLen {
 		return domain.Signal{
 			Name:   "captionless_media",
-			Detail: fmt.Sprintf("kinds=%s len=%d", strings.Join(n.MediaKinds, ","), n.RawLen),
+			Detail: fmt.Sprintf("kinds=%s len=%d", strings.Join(n.MediaKinds, ","), ownLen),
 		}, true
 	}
 	if c.ReviewKeyboard && n.HasKeyboard && !n.ViaBot {
