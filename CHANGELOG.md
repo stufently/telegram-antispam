@@ -8,6 +8,13 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+### Fixed
+
+- The captionless-media review (`media_caption_min_len`) measures a poll's or
+  checklist's own text, as the text detectors already do since 0.23.2. Every
+  poll and checklist used to count as captionless however long its question
+  or tasks, and each one cost a review card in the admin chat.
+
 ## [0.23.3] - 2026-11-04
 
 ### Added
