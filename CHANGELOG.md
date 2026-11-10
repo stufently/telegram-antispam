@@ -8,6 +8,8 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.23.4] - 2026-11-10
+
 ### Fixed
 
 - The captionless-media review (`media_caption_min_len`) measures a poll's or
