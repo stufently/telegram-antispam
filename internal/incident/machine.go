@@ -683,12 +683,11 @@ func priorNote(n int, w time.Duration) string {
 // shortDuration prints 1h rather than Go's 1h0m0s.
 func shortDuration(d time.Duration) string {
 	s := d.String()
-	s = strings.TrimSuffix(s, "0s")
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
 	if strings.HasSuffix(s, "h0m") {
 		s = strings.TrimSuffix(s, "0m")
-	}
-	if s == "" {
-		return d.String()
 	}
 	return s
 }

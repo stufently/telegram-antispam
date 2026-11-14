@@ -236,3 +236,14 @@ func TestEnforceWithoutHistoryKeepsEarlierMessages(t *testing.T) {
 		t.Fatalf("deletes = %v, want only the incident's own message", p.deletes)
 	}
 }
+
+func TestShortDuration(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		time.Hour: "1h", 90 * time.Minute: "1h30m", 30 * time.Minute: "30m",
+		30 * time.Second: "30s", 90 * time.Second: "1m30s", 2*time.Hour + 5*time.Second: "2h0m5s",
+	} {
+		if got := shortDuration(d); got != want {
+			t.Errorf("shortDuration(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
