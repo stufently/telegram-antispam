@@ -96,6 +96,11 @@ type Handler struct {
 	// disables the check.
 	linkedChat func(ctx context.Context, chat int64) (int64, error)
 
+	// recordRecent remembers each new message id per (chat, user), so a
+	// later delete_mute can also remove the sender's earlier messages (see
+	// package recent). nil disables it.
+	recordRecent func(chat, user int64, messageID int, sent time.Time)
+
 	// rootCtx is the lifecycle context for every job accepted by the per-chat
 	// sequencer, including work flushed by AlbumBuffer. It is deliberately
 	// independent from the short-lived update callback context, so accepted
@@ -251,6 +256,11 @@ func deferModeration(m domain.Message, cause string) {
 	log.Printf("chat=%d msg=%d: moderation deferred: %s", m.ChatID, m.MessageID, cause)
 }
 
+// SetRecentRecorder installs the per-sender recent-message recorder.
+func (h *Handler) SetRecentRecorder(fn func(chat, user int64, messageID int, sent time.Time)) {
+	h.recordRecent = fn
+}
+
 // SetSweeper installs the deleter used to remove service messages. Without
 // it the join/leave hygiene settings are inert.
 func (h *Handler) SetSweeper(fn func(chatID int64, messageIDs []int) error) {
@@ -331,6 +341,22 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 		return
 	}
 	first := parts[0]
+	// Every new message, before it is judged: an incident on this one
+	// filters its own ids out, and an incident on a LATER message is what
+	// the record is for. Edits are not new messages.
+	if h.recordRecent != nil && !edited {
+		for _, m := range parts {
+			if m.Sender.Kind == domain.SenderUser && m.Sender.UserID != 0 {
+				// Telegram's send time, not ours: a backlog processed
+				// after a restart must not look fresh.
+				sent := time.Now()
+				if m.Date > 0 {
+					sent = time.Unix(m.Date, 0)
+				}
+				h.recordRecent(m.ChatID, m.Sender.UserID, m.MessageID, sent)
+			}
+		}
+	}
 	// The part that carries the album's text. An album's caption belongs to
 	// exactly ONE of its items and NOT necessarily the first — Telegram lets
 	// the sender attach it to any of them, and the parts arrive as separate

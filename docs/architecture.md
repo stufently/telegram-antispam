@@ -98,7 +98,11 @@ orders side effects as:
 5. in live mode, apply the configured sanction (a channel sender is banned
    with `banChatSenderChat`, which has no member to restrict);
 6. delete the original message or album — also when the sanction failed, so a
-   failed ban does not leave the spam standing;
+   failed ban does not leave the spam standing; with `delete_mute`, then the
+   sender's earlier messages in the chat from the last
+   `delete_mute_history_window`, while the sender is untrusted (ids come from
+   the in-memory `internal/recent` buffer the handler fills per new message;
+   the card announces the count, and a failure is only logged);
 7. optionally send a best-effort ephemeral notice;
 8. mark the incident `done`.
 

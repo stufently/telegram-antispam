@@ -181,9 +181,46 @@ func TestLLMStageShadowLog(t *testing.T) {
 			s, _, done, logs := stageSetup(stageFake{name: "v"}, tc.provider)
 			s.adjudicate(context.Background(), domain.Message{ChatID: -123, MessageID: 456, Text: "private-text"})
 			stageWait(t, done)
-			want := fmt.Sprintf("llm shadow: chat=-123 msg=456 provider=%s voter=ham shadow=%s score=%s\n", tc.provider.Name(), tc.result, tc.score)
+			want := "llm verdict: chat=-123 msg=456 votes=[v=ham] result=ham\n" +
+				fmt.Sprintf("llm shadow: chat=-123 msg=456 provider=%s voter=ham shadow=%s score=%s\n", tc.provider.Name(), tc.result, tc.score)
 			if got := logs.text(); got != want {
 				t.Fatalf("got %q want %q", got, want)
+			}
+		})
+	}
+}
+
+// The verdict line names every voting provider's answer and the consensus,
+// and never carries the message text.
+func TestLLMStageVerdictLog(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		policy string
+		provs  []llm.Provider
+		want   string
+	}{
+		{"mixed any", "any", []llm.Provider{
+			stageFake{name: "openai"}, stageFake{name: "anthropic", spam: true}, stageFake{name: "dead", err: errors.New("private-error")},
+		}, "llm verdict: chat=-1002845427973 msg=2419 votes=[openai=ham anthropic=spam dead=error] result=spam\n"},
+		{"both ham", "all", []llm.Provider{stageFake{name: "openai"}, stageFake{name: "anthropic"}},
+			"llm verdict: chat=-1002845427973 msg=2419 votes=[openai=ham anthropic=ham] result=ham\n"},
+		{"all failed", "any", []llm.Provider{stageFake{name: "openai", err: errors.New("x")}},
+			"llm verdict: chat=-1002845427973 msg=2419 votes=[openai=error] result=error\n"},
+		{"scored", "any", []llm.Provider{stageScore{stageFake{name: "jev"}}},
+			"llm verdict: chat=-1002845427973 msg=2419 votes=[jev=spam(0.420)] result=spam\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.LLM{Policy: tc.policy, Providers: make([]config.LLMProvider, len(tc.provs))}
+			s := newLLMStage(cfg, tc.provs, ops.NewRegistry(), time.Second)
+			var logs stageLog
+			s.logf = logs.printf
+			s.adjudicate(context.Background(), domain.Message{ChatID: -1002845427973, MessageID: 2419, Text: "private-text разгрузка"})
+			got := logs.text()
+			if i := strings.Index(got, "llm verdict:"); i < 0 || got[i:] != tc.want {
+				t.Fatalf("got %q want suffix %q", got, tc.want)
+			}
+			if strings.Contains(got, "private-text") || strings.Contains(got, "разгрузка") {
+				t.Fatalf("message text leaked into the log: %q", got)
 			}
 		})
 	}

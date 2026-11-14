@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/stufently/telegram-antispam/internal/config"
@@ -89,6 +90,9 @@ func (s *llmStage) adjudicate(ctx context.Context, m domain.Message) bool {
 	// is one spam verdict for one message. Counting each provider here would
 	// stop this metric from meaning "messages the LLM judged".
 	s.reg.IncCounter("tg_antispam_llm_checks_total", 1, "result", voter)
+	// One line per adjudicated message: who voted what, and the verdict.
+	// Never the text — chat and message id are enough to find it.
+	logf("llm verdict: chat=%d msg=%d votes=[%s] result=%s", m.ChatID, m.MessageID, formatVotes(out.Votes), voter)
 	for _, v := range out.Votes {
 		s.providerCheck(v.Provider, "vote", voteLabel(v))
 	}
@@ -116,6 +120,20 @@ func (s *llmStage) adjudicate(ctx context.Context, m domain.Message) bool {
 		}
 	}
 	return out.Spam
+}
+
+// formatVotes renders "name=spam name=ham name=error"; a scorer's score is
+// appended as name=spam(0.812).
+func formatVotes(votes []llm.Vote) string {
+	parts := make([]string, 0, len(votes))
+	for _, v := range votes {
+		p := v.Provider + "=" + voteLabel(v)
+		if v.OK && v.Score != nil {
+			p += fmt.Sprintf("(%.3f)", *v.Score)
+		}
+		parts = append(parts, p)
+	}
+	return strings.Join(parts, " ")
 }
 
 func (s *llmStage) providerCheck(provider, role, result string) {

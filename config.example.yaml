@@ -3,6 +3,11 @@
 bot_token: "REPLACE_WITH_BOTFATHER_TOKEN"
 admin_chat_id: -1000000000000
 action: delete_mute
+# With delete_mute, an UNTRUSTED sender's other messages in the same chat from
+# this far back are deleted too (the first spam message often passes and only
+# the second is caught; ban already revokes earlier messages). In-memory, ids
+# only, no text. "0s" disables. Default: 1h.
+delete_mute_history_window: 1h
 chats:
   mode: auto
   # Observe-first safety: default is true (bot logs verdicts but does NOT

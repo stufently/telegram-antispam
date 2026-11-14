@@ -83,6 +83,17 @@ func (p ChatsPolicy) DryRunDefault() bool {
 // underlying time.Duration.
 type Duration time.Duration
 
+// DefaultDeleteMuteHistoryWindow is delete_mute_history_window when unset.
+const DefaultDeleteMuteHistoryWindow = time.Hour
+
+// HistoryWindow is the effective delete_mute_history_window; 0 means off.
+func (c *Config) HistoryWindow() time.Duration {
+	if c == nil || c.DeleteMuteHistoryWindow == nil {
+		return DefaultDeleteMuteHistoryWindow
+	}
+	return c.DeleteMuteHistoryWindow.Duration()
+}
+
 // Duration returns the underlying time.Duration value.
 func (d Duration) Duration() time.Duration { return time.Duration(d) }
 
@@ -649,13 +660,21 @@ type Config struct {
 	BotToken    string        `yaml:"bot_token"`
 	AdminChatID int64         `yaml:"admin_chat_id"`
 	Action      domain.Action `yaml:"action"`
-	Chats       ChatsPolicy   `yaml:"chats"`
-	Detection   Detection     `yaml:"detection"`
-	Blocklist   Blocklist     `yaml:"blocklist"`
-	Ops         Ops           `yaml:"ops"`
-	LLM         LLM           `yaml:"llm"`
-	Welcome     Welcome       `yaml:"welcome"`
-	Captcha     Captcha       `yaml:"captcha"`
+	// DeleteMuteHistoryWindow: with action delete_mute, an UNTRUSTED
+	// sender's other messages in the same chat from this far back are
+	// deleted together with the one that triggered the incident. A spammer
+	// often posts a first message that passes and is caught only on the
+	// second; ban already revokes earlier messages, delete_mute did not.
+	// Pointer so an explicit "0s" (disabled) is not re-promoted to the
+	// default. Default: 1h. Negative is rejected.
+	DeleteMuteHistoryWindow *Duration   `yaml:"delete_mute_history_window"`
+	Chats                   ChatsPolicy `yaml:"chats"`
+	Detection               Detection   `yaml:"detection"`
+	Blocklist               Blocklist   `yaml:"blocklist"`
+	Ops                     Ops         `yaml:"ops"`
+	LLM                     LLM         `yaml:"llm"`
+	Welcome                 Welcome     `yaml:"welcome"`
+	Captcha                 Captcha     `yaml:"captcha"`
 }
 
 func Load(path string) (*Config, error) {
@@ -672,6 +691,10 @@ func Parse(b []byte) (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	c.applyDetectionDefaults()
+	if c.DeleteMuteHistoryWindow == nil {
+		def := Duration(DefaultDeleteMuteHistoryWindow)
+		c.DeleteMuteHistoryWindow = &def
+	}
 	c.applyBlocklistDefaults()
 	c.applyOpsDefaults()
 	c.applyLLMDefaults()
@@ -1040,6 +1063,9 @@ func (c *Config) Validate() error {
 	case domain.ActionDeleteMute, domain.ActionMute, domain.ActionBan, domain.ActionDeleteOnly:
 	default:
 		return fmt.Errorf("action must be delete_mute|mute|ban|delete_only, got %q", c.Action)
+	}
+	if c.DeleteMuteHistoryWindow != nil && *c.DeleteMuteHistoryWindow < 0 {
+		return fmt.Errorf("delete_mute_history_window must not be negative, got %s", c.DeleteMuteHistoryWindow.Duration())
 	}
 	// Checked even with the stage off: a typo here would otherwise surface
 	// only on the day someone enables it, as a 400 on every call that the
