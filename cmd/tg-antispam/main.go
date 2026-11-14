@@ -588,6 +588,10 @@ func main() {
 	history := recent.New(historyWindow)
 	machine.History = history
 	machine.HistoryWindow = historyWindow
+	// The startup threshold, as the cascade below uses: the cascade is not
+	// rebuilt on reload, so a live value could call a user untrusted whom
+	// detection still treats as trusted.
+	cleanupTrustThreshold := *cfg.Detection.TrustThreshold
 	machine.Trusted = func(chatID, userID int64) (bool, error) {
 		n, err := db.TrustCount(chatID, userID)
 		if err != nil {
@@ -595,7 +599,7 @@ func main() {
 		}
 		// The cascade's own gate (detect.IsTrusted), minus its fail-closed
 		// error handling: an error is returned so nothing is deleted.
-		return n >= *cfgStore.Current().Detection.TrustThreshold, nil
+		return n >= cleanupTrustThreshold, nil
 	}
 	handler = telegram.NewHandler(db, seq, cfgStore, machine)
 	handler.SetRecentRecorder(history.Record)
@@ -632,7 +636,9 @@ func main() {
 		// signals, so without it the resulting line ("no signals") would be
 		// indistinguishable from a detector that fired on nothing.
 		log.Printf("incident %d: enforce requested from the admin chat, action=%s", inc.ID, action)
-		out := machine.Enforce(ctx, inc.ID, domain.Incident{
+		// Without the history cleanup: the press can come hours after the
+		// message, and the button's reply cannot say how many went.
+		out := machine.EnforceWithoutHistory(ctx, inc.ID, domain.Incident{
 			ChatID:     inc.ChatID,
 			MessageIDs: inc.MessageIDs,
 			Sender: domain.Sender{

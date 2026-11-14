@@ -19,7 +19,11 @@ Entries start life under **Unreleased** and are moved under a version heading wh
   memory per (chat, sender), without text, and a restart forgets them. The
   admin card says how many earlier messages go, the `enforced` log line
   carries `prior_deleted=N/M`, and a failed cleanup never fails the incident.
-  The admin-chat enforce button and `/spam` overrides do the same.
+  The window is measured by Telegram's send time, so a backlog processed
+  after a restart does not look fresh. A moderator's `/spam` or `/ban`
+  override of an unsanctioned incident cleans up too; the admin-chat Enforce
+  button does not (the press can come hours later, and its reply cannot
+  report a count).
 - One `llm verdict: chat=… msg=… votes=[provider=spam|ham|error …] result=…`
   log line per message adjudicated by the LLM stage, without the message
   text, so "why did this pass?" can be answered for the LLM stage too.

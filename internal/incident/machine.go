@@ -553,6 +553,13 @@ func (m *Machine) Enforce(ctx context.Context, id int64, inc domain.Incident) Ou
 	return m.enforce(ctx, id, inc, m.priorMessages(id, inc))
 }
 
+// EnforceWithoutHistory is Enforce minus the delete_mute history cleanup,
+// for the admin chat's Enforce button: the press may come long after the
+// message, and its reply has no room to report the count.
+func (m *Machine) EnforceWithoutHistory(ctx context.Context, id int64, inc domain.Incident) Outcome {
+	return m.enforce(ctx, id, inc, nil)
+}
+
 // enforce is Enforce with the sender's earlier messages already resolved,
 // so the automatic path removes exactly what its card announced.
 func (m *Machine) enforce(ctx context.Context, id int64, inc domain.Incident, prior []int) Outcome {

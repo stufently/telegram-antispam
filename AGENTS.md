@@ -211,8 +211,10 @@ runs `go test -race ./...` and golangci-lint; dependency changes require
   unreadable trust count deletes nothing (this is cleanup, not the sanction).
   Those messages are not copied as evidence — the same trade a ban's revoke
   makes — so the card must say how many go. The ids live only in memory
-  (`internal/recent`), never text, never SQLite; a failed cleanup is logged
-  and never fails the incident.
+  (`internal/recent`), never text, never SQLite, timed by Telegram's `Date`;
+  a failed cleanup is logged and never fails the incident. The trust
+  threshold is the cascade's startup value (the cascade is not rebuilt on
+  reload). The admin-chat Enforce button uses `EnforceWithoutHistory`.
 - Trust does not bypass the global blocklist or hard rules. It only skips the
   newcomer-oriented semantic stages such as fake-admin and Bayes checks.
 - `internal/telegram` is the only package allowed to depend on the Telegram

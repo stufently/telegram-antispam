@@ -47,13 +47,13 @@ func historySetup(trusted bool, trustErr error) (*Machine, *deletePort, *stubRep
 	buf := recent.New(func() time.Duration { return 3 * time.Hour })
 	buf.SetClock(func() time.Time { return clock })
 	clock = hNow.Add(-2 * time.Hour)
-	buf.Record(hChat, hUser, 2417)
+	buf.Record(hChat, hUser, 2417, time.Time{})
 	clock = hNow.Add(-30 * time.Minute)
-	buf.Record(hChat, hUser, 2419)
-	buf.Record(hChat, hOther, 2418)
-	buf.Record(-100999, hUser, 3000)
+	buf.Record(hChat, hUser, 2419, time.Time{})
+	buf.Record(hChat, hOther, 2418, time.Time{})
+	buf.Record(-100999, hUser, 3000, time.Time{})
 	clock = hNow
-	buf.Record(hChat, hUser, 2420) // the incident's own message
+	buf.Record(hChat, hUser, 2420, time.Time{}) // the incident's own message
 
 	p := &deletePort{Fake: fake.New()}
 	repo := &stubRepo{fresh: true}
@@ -223,5 +223,16 @@ func TestEarlierMessagesWindowIsInclusiveOfItsEdge(t *testing.T) {
 	}
 	if !strings.Contains(p.LastAdmin.Text, "also deleting 2 earlier message(s) of this sender from the last 2h") {
 		t.Fatalf("card:\n%s", p.LastAdmin.Text)
+	}
+}
+
+func TestEnforceWithoutHistoryKeepsEarlierMessages(t *testing.T) {
+	m, p, _ := historySetup(false, nil)
+	out := m.EnforceWithoutHistory(context.Background(), 1, historyIncident())
+	if out.PriorDeleted != 0 || !out.Deleted || !out.Sanctioned {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if !reflect.DeepEqual(p.deletes, [][]int{{2420}}) {
+		t.Fatalf("deletes = %v, want only the incident's own message", p.deletes)
 	}
 }

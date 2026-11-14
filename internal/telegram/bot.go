@@ -99,7 +99,7 @@ type Handler struct {
 	// recordRecent remembers each new message id per (chat, user), so a
 	// later delete_mute can also remove the sender's earlier messages (see
 	// package recent). nil disables it.
-	recordRecent func(chat, user int64, messageID int)
+	recordRecent func(chat, user int64, messageID int, sent time.Time)
 
 	// rootCtx is the lifecycle context for every job accepted by the per-chat
 	// sequencer, including work flushed by AlbumBuffer. It is deliberately
@@ -257,7 +257,7 @@ func deferModeration(m domain.Message, cause string) {
 }
 
 // SetRecentRecorder installs the per-sender recent-message recorder.
-func (h *Handler) SetRecentRecorder(fn func(chat, user int64, messageID int)) {
+func (h *Handler) SetRecentRecorder(fn func(chat, user int64, messageID int, sent time.Time)) {
 	h.recordRecent = fn
 }
 
@@ -347,7 +347,13 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 	if h.recordRecent != nil && !edited {
 		for _, m := range parts {
 			if m.Sender.Kind == domain.SenderUser && m.Sender.UserID != 0 {
-				h.recordRecent(m.ChatID, m.Sender.UserID, m.MessageID)
+				// Telegram's send time, not ours: a backlog processed
+				// after a restart must not look fresh.
+				sent := time.Now()
+				if m.Date > 0 {
+					sent = time.Unix(m.Date, 0)
+				}
+				h.recordRecent(m.ChatID, m.Sender.UserID, m.MessageID, sent)
 			}
 		}
 	}

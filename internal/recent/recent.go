@@ -44,14 +44,19 @@ func New(window func() time.Duration) *Buffer {
 // SetClock replaces time.Now, for tests.
 func (b *Buffer) SetClock(now func() time.Time) { b.now = now }
 
-// Record notes that user posted messageID in chat now. A repeat of an id
-// already held (an album flushed twice, a reprocessed update) is ignored.
-func (b *Buffer) Record(chat, user int64, messageID int) {
+// Record notes that user posted messageID in chat at sent (Telegram's send
+// time; updates can be processed late and out of order). A message already
+// older than the window is not kept, and a repeat of an id already held (an
+// album flushed twice, a reprocessed update) is ignored.
+func (b *Buffer) Record(chat, user int64, messageID int, sent time.Time) {
 	w := b.window()
 	if w <= 0 || user == 0 || messageID == 0 {
 		return
 	}
 	now := b.now()
+	if sent.IsZero() || sent.After(now) {
+		sent = now
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	k := key{chat, user}
@@ -62,11 +67,19 @@ func (b *Buffer) Record(chat, user int64, messageID int) {
 			return
 		}
 	}
-	es = append(es, entry{id: messageID, at: now})
+	if !sent.Before(now.Add(-w)) {
+		es = append(es, entry{id: messageID, at: sent})
+		// Keep time order so prune and the cap below drop the oldest.
+		sort.SliceStable(es, func(i, j int) bool { return es[i].at.Before(es[j].at) })
+	}
 	if len(es) > MaxPerSender {
 		es = es[len(es)-MaxPerSender:]
 	}
-	b.m[k] = es
+	if len(es) == 0 {
+		delete(b.m, k)
+	} else {
+		b.m[k] = es
+	}
 	// Senders who post once and leave would otherwise stay forever.
 	if now.Sub(b.lastSweep) >= w {
 		b.lastSweep = now
@@ -96,7 +109,7 @@ func (b *Buffer) Since(chat, user int64, since time.Time) []int {
 	return ids
 }
 
-// prune drops entries older than cutoff. Entries are appended in time order.
+// prune drops entries older than cutoff. Entries are kept in time order.
 func prune(es []entry, cutoff time.Time) []entry {
 	i := 0
 	for i < len(es) && es[i].at.Before(cutoff) {
