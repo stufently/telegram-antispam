@@ -510,3 +510,31 @@ func TestStartInDryRunExplicitFalseHonored(t *testing.T) {
 		t.Fatal("explicit start_in_dry_run: false must be honored, not re-defaulted to true")
 	}
 }
+
+func TestDeleteMuteHistoryWindow(t *testing.T) {
+	base := "bot_token: x\nadmin_chat_id: -1\naction: delete_mute\nchats:\n  mode: auto\n"
+	c, err := Parse([]byte(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.HistoryWindow() != time.Hour {
+		t.Fatalf("default = %v, want 1h", c.HistoryWindow())
+	}
+	c, err = Parse([]byte(base + "delete_mute_history_window: 0s\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.HistoryWindow() != 0 {
+		t.Fatalf("explicit 0s = %v, want 0 (disabled), not the default", c.HistoryWindow())
+	}
+	c, err = Parse([]byte(base + "delete_mute_history_window: 30m\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.HistoryWindow() != 30*time.Minute {
+		t.Fatalf("explicit 30m = %v", c.HistoryWindow())
+	}
+	if _, err := Parse([]byte(base + "delete_mute_history_window: -1m\n")); err == nil {
+		t.Fatal("negative window accepted")
+	}
+}

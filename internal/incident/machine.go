@@ -66,6 +66,22 @@ type Machine struct {
 	EphemeralNotice bool
 	// EphemeralText is the notice text sent when EphemeralNotice is true.
 	EphemeralText string
+
+	// History, HistoryWindow and Trusted make a delete_mute also remove the
+	// sender's earlier messages in the chat from the last HistoryWindow(),
+	// while the sender is untrusted. Any of them nil, or a non-positive
+	// window, disables that cleanup.
+	History       HistorySource
+	HistoryWindow func() time.Duration
+	Trusted       func(chatID, userID int64) (bool, error)
+	// Now is the clock for the history window; nil means time.Now.
+	Now func() time.Time
+}
+
+// HistorySource lists a sender's recently seen message ids in a chat
+// (*recent.Buffer satisfies it).
+type HistorySource interface {
+	Since(chatID, userID int64, since time.Time) []int
 }
 
 func New(port telegram.Port, repo Repo, adminChatID int64) *Machine {
@@ -179,6 +195,14 @@ func (m *Machine) process(ctx context.Context, id int64, inc domain.Incident) (s
 	// anything happened, and the sanction waits behind it, so a getChat that
 	// sits in a 429 retry must not hold either one. An error costs the card
 	// its title; the chat id identifies the chat regardless.
+	// The sender's earlier messages that a delete_mute will also remove,
+	// resolved before the card so the card can say how many. Not for a
+	// dry-run or review incident: nothing is enforced there.
+	var prior []int
+	if !inc.DryRun && !inc.Verdict.ReviewOnly {
+		prior = m.priorMessages(id, inc)
+	}
+
 	titleCtx, cancelTitle := context.WithTimeout(ctx, chatTitleBudget)
 	chatTitle, titleErr := m.port.ChatTitle(titleCtx, inc.ChatID)
 	cancelTitle()
@@ -200,6 +224,9 @@ func (m *Machine) process(ctx context.Context, id int64, inc domain.Incident) (s
 		tail := "not acting without evidence — review manually"
 		if acting {
 			tail = "acting without a copied evidence trail"
+			if len(prior) > 0 {
+				tail += "; " + priorNote(len(prior), m.historyWindow())
+			}
 		}
 		msg := telegram.AdminMessage{
 			IncidentKey:      key,
@@ -258,6 +285,12 @@ func (m *Machine) process(ctx context.Context, id int64, inc domain.Incident) (s
 		if got, want := len(adminIDs), len(inc.MessageIDs); got < want {
 			note = fmt.Sprintf("evidence INCOMPLETE: copied %d of %d messages — the part that triggered the verdict may be missing", got, want)
 		}
+		if len(prior) > 0 {
+			if note != "" {
+				note += "; "
+			}
+			note += priorNote(len(prior), m.historyWindow())
+		}
 		msg := telegram.AdminMessage{
 			IncidentKey:      key,
 			SourceChatID:     inc.ChatID,
@@ -301,7 +334,7 @@ func (m *Machine) process(ctx context.Context, id int64, inc domain.Incident) (s
 	}
 
 	// 2-3. sanction, then delete the originals.
-	out := m.Enforce(ctx, id, inc)
+	out := m.enforce(ctx, id, inc, prior)
 	sanctioned = out.Sanctioned
 	if out.Err != nil {
 		return sanctioned, out.Err
@@ -428,8 +461,8 @@ func (m *Machine) override(ctx context.Context, id int64, inc domain.Incident, f
 			// Threaded under existing evidence when there is any (a dry-run
 			// or review incident); evidence_failed incidents have none.
 			CopyMessageIDs: evidenceIDs,
-			Text: formatCard(id, inc, "", fmt.Sprintf("manual override of an incident that applied no sanction: %s",
-				outcomeOf(out)), out.Sanctioned),
+			Text: formatCard(id, inc, "", fmt.Sprintf("manual override of an incident that applied no sanction: %s%s",
+				outcomeOf(out), priorDeletedNote(out)), out.Sanctioned),
 		}
 		if m.buttonsFor != nil {
 			msg.Buttons = m.buttonsFor(key, false)
@@ -497,9 +530,13 @@ func (m *Machine) setState(id int64, st domain.IncidentState) {
 // telling the moderator to finish by hand). A single error return could not
 // express "muted, but the message is still there".
 type Outcome struct {
-	Sanctioned bool  // the ban/mute/restrict call succeeded (or was a no-op)
-	Deleted    bool  // the original messages were removed
-	Err        error // what went wrong, if anything
+	Sanctioned bool // the ban/mute/restrict call succeeded (or was a no-op)
+	Deleted    bool // the original messages were removed
+	// PriorDeleted counts the sender's earlier messages removed along with
+	// a delete_mute (see Machine.History). Failing to remove them is logged
+	// and never fails the incident: the offending message is handled.
+	PriorDeleted int
+	Err          error // what went wrong, if anything
 }
 
 // Enforce applies the sanction and removes the offending message, recording
@@ -513,6 +550,12 @@ type Outcome struct {
 // The caller is responsible for deciding that enforcement is wanted at all;
 // Enforce does not consult DryRun.
 func (m *Machine) Enforce(ctx context.Context, id int64, inc domain.Incident) Outcome {
+	return m.enforce(ctx, id, inc, m.priorMessages(id, inc))
+}
+
+// enforce is Enforce with the sender's earlier messages already resolved,
+// so the automatic path removes exactly what its card announced.
+func (m *Machine) enforce(ctx context.Context, id int64, inc domain.Incident, prior []int) Outcome {
 	var out Outcome
 	actErr := m.applyAction(ctx, inc)
 	// Only Telegram's own refusal proves the sanction did not land. A
@@ -547,6 +590,15 @@ func (m *Machine) Enforce(ctx context.Context, id int64, inc domain.Incident) Ou
 	if delErr == nil {
 		out.Deleted = true
 	}
+	// The sender's earlier messages go after the originals, in their own
+	// call: a failure here must not mark the incident's own deletion failed.
+	if len(prior) > 0 {
+		if err := m.port.DeleteMessages(ctx, inc.ChatID, prior); err != nil {
+			log.Printf("incident %d: deleting %d earlier message(s) of the sender failed: %s", id, len(prior), sanitize(err.Error()))
+		} else {
+			out.PriorDeleted = len(prior)
+		}
+	}
 
 	switch {
 	case actErr != nil && delErr != nil:
@@ -558,9 +610,80 @@ func (m *Machine) Enforce(ctx context.Context, id int64, inc domain.Incident) Ou
 	default:
 		m.setState(id, domain.StateCleaned)
 	}
-	m.logOutcome(id, inc, "enforced", fmt.Sprintf("outcome=%s action_ok=%t deleted=%t",
-		outcomeOf(out), out.Sanctioned, out.Deleted), out.Err)
+	detail := fmt.Sprintf("outcome=%s action_ok=%t deleted=%t", outcomeOf(out), out.Sanctioned, out.Deleted)
+	if len(prior) > 0 {
+		detail += fmt.Sprintf(" prior_deleted=%d/%d", out.PriorDeleted, len(prior))
+	}
+	m.logOutcome(id, inc, "enforced", detail, out.Err)
 	return out
+}
+
+// priorMessages returns the sender's other messages in the chat from the
+// last HistoryWindow() that a delete_mute should also remove: only for a
+// real user (a channel post has no member history here), only while that
+// user is untrusted, and never the incident's own ids. An unreadable trust
+// count removes nothing — this is extra cleanup, not the sanction, and
+// deleting a regular's messages on a database error would be the worse
+// mistake.
+func (m *Machine) priorMessages(id int64, inc domain.Incident) []int {
+	if inc.Verdict.Action != domain.ActionDeleteMute || m.History == nil || m.Trusted == nil {
+		return nil
+	}
+	if inc.Sender.Kind != domain.SenderUser || inc.Sender.UserID == 0 {
+		return nil
+	}
+	w := m.historyWindow()
+	if w <= 0 {
+		return nil
+	}
+	trusted, err := m.Trusted(inc.ChatID, inc.Sender.UserID)
+	if err != nil {
+		log.Printf("incident %d: trust lookup failed, earlier messages kept: %s", id, sanitize(err.Error()))
+		return nil
+	}
+	if trusted {
+		return nil
+	}
+	now := time.Now
+	if m.Now != nil {
+		now = m.Now
+	}
+	own := make(map[int]bool, len(inc.MessageIDs))
+	for _, mid := range inc.MessageIDs {
+		own[mid] = true
+	}
+	var out []int
+	for _, mid := range m.History.Since(inc.ChatID, inc.Sender.UserID, now().Add(-w)) {
+		if !own[mid] {
+			out = append(out, mid)
+		}
+	}
+	return out
+}
+
+func (m *Machine) historyWindow() time.Duration {
+	if m.HistoryWindow == nil {
+		return 0
+	}
+	return m.HistoryWindow()
+}
+
+// priorNote is the card line for the sender's earlier messages.
+func priorNote(n int, w time.Duration) string {
+	return fmt.Sprintf("also deleting %d earlier message(s) of this sender from the last %s", n, shortDuration(w))
+}
+
+// shortDuration prints 1h rather than Go's 1h0m0s.
+func shortDuration(d time.Duration) string {
+	s := d.String()
+	s = strings.TrimSuffix(s, "0s")
+	if strings.HasSuffix(s, "h0m") {
+		s = strings.TrimSuffix(s, "0m")
+	}
+	if s == "" {
+		return d.String()
+	}
+	return s
 }
 
 // logOutcome records what was done about an incident, as the counterpart of
@@ -691,4 +814,11 @@ func (m *Machine) applyAction(ctx context.Context, inc domain.Incident) error {
 	default:
 		return fmt.Errorf("unknown action %q", inc.Verdict.Action)
 	}
+}
+
+func priorDeletedNote(out Outcome) string {
+	if out.PriorDeleted == 0 {
+		return ""
+	}
+	return fmt.Sprintf("; deleted %d earlier message(s) of this sender", out.PriorDeleted)
 }
