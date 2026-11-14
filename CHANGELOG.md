@@ -28,6 +28,10 @@ Entries start life under **Unreleased** and are moved under a version heading wh
   log line per message adjudicated by the LLM stage, without the message
   text, so "why did this pass?" can be answered for the LLM stage too.
 
+### Security
+
+- Build with Go 1.27.4 (GO-2026-6859 in `net/http`, flagged by govulncheck).
+
 ## [0.23.4] - 2026-11-10
 
 ### Fixed

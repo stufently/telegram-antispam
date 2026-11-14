@@ -7,7 +7,7 @@ go 1.27.0
 // Go from this file (setup-go's go-version-file), so without it every build
 // would run on exactly 1.27.0 and miss the standard-library fixes shipped in
 // the patch releases since.
-toolchain go1.27.3
+toolchain go1.27.4
 
 require (
 	github.com/fsnotify/fsnotify v1.10.1
