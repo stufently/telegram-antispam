@@ -8,6 +8,8 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-14
+
 ### Added
 
 - `delete_mute` also deletes the sender's earlier messages in the same chat
