@@ -8,6 +8,8 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-11-20
+
 ### Changed
 
 - The JEV provider's default model is now `jev-latest` (the provider's alias
