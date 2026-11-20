@@ -427,7 +427,7 @@ llm:
   #  - kind: jev
   #    # JEV_TOKEN overrides api_key; keep credentials in a Secret.
   #    api_key: ""
-  #    model: jev-1.13.0       # default; pinned for repeatable decisions
+  #    model: jev-latest       # default; provider alias, follows new releases
   #    shadow: true           # observe without sanctions or moderation delay
   #    prompt: "Is this unsolicited advertising, a scam, phishing or a vague job offer?"
   #    prompt_overrides: {}   # cover all shared chat overrides if configured

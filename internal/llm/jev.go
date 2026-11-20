@@ -91,7 +91,7 @@ func (j JEV) Score(ctx context.Context, text, prompt string) (float64, error) {
 	}
 	model := j.Model
 	if model == "" {
-		model = "jev-1.13.0"
+		model = "jev-latest"
 	}
 	base := j.BaseURL
 	if base == "" {

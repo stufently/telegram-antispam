@@ -156,7 +156,7 @@ func TestJEVInstructionFallbacks(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 					t.Error(err)
 				}
-				if body.Model != "jev-1.13.0" || body.Questions["spam"].Instructions != tc.want {
+				if body.Model != "jev-latest" || body.Questions["spam"].Instructions != tc.want {
 					t.Errorf("unexpected request: %+v", body)
 				}
 				fmt.Fprint(w, `{"answers":{"spam":{"type":"noul","noul":0}}}`)

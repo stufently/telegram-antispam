@@ -8,6 +8,13 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+### Changed
+
+- The JEV provider's default model is now `jev-latest` (the provider's alias
+  for its newest release) instead of the pinned `jev-1.13.0`, so new JEV
+  releases arrive without a config change. Scores may shift with a release;
+  set `model` to a concrete version to keep decisions repeatable.
+
 ## [0.24.0] - 2026-11-14
 
 ### Added

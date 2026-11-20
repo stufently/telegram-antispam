@@ -301,18 +301,22 @@ llm:
   policy: any
   providers:
     - kind: jev
-      model: jev-1.13.0
+      model: jev-latest
       threshold: 0.30
       max_symbols: 6000
 ```
 
 JEV calls the [TypeSafe System One API](https://docs.typesafe.ai/primitives/noul)
 and compares the typed spam probability with `threshold` (inclusive, valid range
-`(0, 1]`). The defaults shown above follow the model and threshold used by
-[Umputun's integration](https://github.com/umputun/tg-spam/blob/master/lib/tgspam/jev.go);
-our question is tailored to this bot, so this is a starting threshold, not an
-accuracy guarantee. Evaluate JEV in shadow mode alongside a voting provider
+`(0, 1]`). The default threshold follows
+[Umputun's integration](https://github.com/umputun/tg-spam/blob/master/lib/tgspam/jev.go),
+which uses `jev-1.13.0`, not whatever release `jev-latest` points to
+now; our question is tailored to this bot too, so this is a starting threshold,
+not an accuracy guarantee. Evaluate JEV in shadow mode alongside a voting provider
 before enforcement, and again when changing the model or instructions.
+`jev-latest` is the provider's alias for its newest release, so a new JEV
+release can shift scores without a config change; pin a concrete version
+(such as `jev-1.14.0`) when decisions must stay repeatable.
 
 `max_symbols` limits the complete outgoing message, including structural metadata,
 to Unicode characters; zero is rejected. `api_base`, if supplied for JEV, is the

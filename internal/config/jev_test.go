@@ -25,7 +25,7 @@ func TestJEVConfigDefaultsAndEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := c.LLM.Providers[0]
-	if p.APIKey != "env-token" || p.Model != "jev-1.13.0" || p.Threshold == nil || *p.Threshold != .3 || p.MaxSymbols == nil || *p.MaxSymbols != 6000 {
+	if p.APIKey != "env-token" || p.Model != "jev-latest" || p.Threshold == nil || *p.Threshold != .3 || p.MaxSymbols == nil || *p.MaxSymbols != 6000 {
 		t.Fatalf("wrong JEV defaults (model=%s)", p.Model)
 	}
 	t.Setenv("JEV_TOKEN", "")

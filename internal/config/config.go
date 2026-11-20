@@ -967,7 +967,7 @@ func (c *Config) applyLLMDefaults() {
 			continue
 		}
 		if p.Model == "" {
-			p.Model = "jev-1.13.0"
+			p.Model = "jev-latest"
 		}
 		if p.Threshold == nil {
 			v := 0.30
