@@ -229,7 +229,7 @@ WHERE id=?`,
 			}
 			if _, err := tx.Exec(
 				"UPDATE audit SET action=?, scope=?, reason=?, signals=? WHERE incident_id=?",
-				string(verdict.Action), string(verdict.Scope), verdict.Reason, string(signals), id,
+				string(verdict.Action), string(verdict.Scope), verdict.Reason, signals, id,
 			); err != nil {
 				return err
 			}
