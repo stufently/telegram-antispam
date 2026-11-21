@@ -8,6 +8,17 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+### Added
+
+- `detection.media_shadow` (off by default): the review card of a captionless
+  photo gets a label with JEV's reading of the picture — advertising or earnings
+  offer, contact / link / QR code, ordinary picture — as probabilities, and the
+  same numbers are stored as the `jev_image` signal in the audit row. Label only:
+  the verdict stays review-only, and any failure leaves the card unchanged. The
+  photo is sent to TypeSafe, an external service.
+- `jev-report` subcommand: the labelled cards with their scores and the
+  moderators' decisions, plus agreement per score bucket.
+
 ## [0.24.1] - 2026-11-20
 
 ### Changed

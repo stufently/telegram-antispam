@@ -70,6 +70,13 @@ type Message struct {
 	// from a captionless promo image, the one shape that reaches no text
 	// detector at all. Empty means no attachment.
 	MediaKinds []string
+	// PhotoFileID is the Telegram file_id of the largest size of an attached
+	// photo, empty when there is none. It exists only so the optional media
+	// shadow can download the picture of a captionless photo while the update
+	// is being handled: it lives in memory with the message and is never
+	// persisted, logged, or sent to a classifier (the picture is, the id is
+	// not).
+	PhotoFileID string
 	// DocumentExtensions and DocumentMIMETypes carry only the non-identifying
 	// type metadata of a file attachment. The original filename is
 	// deliberately discarded: an operator can block executable attachment

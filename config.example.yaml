@@ -254,6 +254,25 @@ detection:
   # excluded — that is ordinary chat use. Default: false.
   review_keyboard: false
 
+  # Label the review card of a captionless PHOTO (the media_caption_min_len
+  # stage above) with what TypeSafe's JEV image classifier sees in it:
+  # "JEV photo (shadow, no effect): ad 0.97 · contact 0.88 · ordinary 0.03".
+  # Label only: the verdict stays review-only and nobody is sanctioned on it;
+  # a download error, timeout, API refusal or missing key leaves the card as
+  # it would have been. The scores are also stored in the incident's audit
+  # row, and `tg-antispam jev-report` compares them with the moderators'
+  # buttons. Off by default: members' pictures go to an external service
+  # (TypeSafe calls image input "dreamer-ready", i.e. not production-grade).
+  # Requires media_caption_min_len > 0.
+  media_shadow:
+    enabled: false
+    # Env JEV_TOKEN overrides it (the same variable as the JEV LLM provider).
+    api_key: ""
+    model: jev-latest
+    # api_base: https://api.typesafe.ai/v1/systemone
+    # Bounds one observation; the card waits for it. 0 < timeout <= 30s.
+    timeout: 8s
+
   # Delete Telegram's own "X joined" / "X left" notices. Pure hygiene, no
   # moderation: in a chat that removes spammers daily they pile up into a
   # wall nobody reads. Some chats use joins as a greeting cue, so both

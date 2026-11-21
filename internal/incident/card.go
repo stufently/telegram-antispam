@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/stufently/telegram-antispam/internal/domain"
+	"github.com/stufently/telegram-antispam/internal/mediashadow"
 )
 
 // maxCardField bounds one attacker-controlled field on the admin card. A
@@ -71,6 +72,16 @@ func formatCard(id int64, inc domain.Incident, chatTitle, note string, willAct b
 	for _, sig := range inc.Verdict.Signals {
 		if sig.Name == "fake_admin" && sig.Detail != "" {
 			fmt.Fprintf(&b, "\nmatch: %s", clip(sanitize(sig.Detail), maxCardNote))
+			break
+		}
+	}
+	// The media shadow's scores: a label for sorting cards, never a reason
+	// for the action above (the verdict was decided before it ran).
+	for _, sig := range inc.Verdict.Signals {
+		if sig.Name == mediashadow.SignalName {
+			if line, ok := mediashadow.CardLine(sig.Detail); ok {
+				fmt.Fprintf(&b, "\n%s", line)
+			}
 			break
 		}
 	}

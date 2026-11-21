@@ -298,6 +298,11 @@ type Detection struct {
 	// excluded. Default: false.
 	ReviewKeyboard bool `yaml:"review_keyboard"`
 
+	// MediaShadow labels the review card of a captionless PHOTO (the
+	// media_caption_min_len stage) with JEV's reading of the picture. It
+	// never changes a verdict; see MediaShadow.
+	MediaShadow MediaShadow `yaml:"media_shadow"`
+
 	// DeleteJoinMessages and DeleteLeaveMessages remove Telegram's own
 	// "X joined" / "X left" service messages. Pure hygiene, no moderation:
 	// in a chat where the bot removes spammers daily, those notices pile up
@@ -392,6 +397,29 @@ type Ops struct {
 	// lesson: a non-positive interval would panic time.NewTicker in the
 	// scheduler goroutine).
 	DigestInterval Duration `yaml:"digest_interval"`
+}
+
+// MediaShadow configures the image shadow of the captionless-media stage:
+// the photo is downloaded, sent to TypeSafe's JEV with image questions
+// (advertising? contact or QR?) and the probabilities are written on the
+// admin card and into the audit row. Label only: the verdict stays review
+// only, and any failure leaves the card as it would have been.
+//
+// Disabled by default because it sends members' pictures to an external
+// service. Enabled is a plain bool: false is both the default and the only
+// value an omitted key may mean.
+type MediaShadow struct {
+	Enabled bool `yaml:"enabled"`
+	// APIKey is the JEV key; env JEV_TOKEN overrides it, as for the JEV
+	// provider. No key means the shadow is not wired (logged at startup).
+	APIKey string `yaml:"api_key"`
+	// Model defaults to jev-latest; APIBase to the official endpoint.
+	Model   string `yaml:"model"`
+	APIBase string `yaml:"api_base"`
+	// Timeout bounds one observation (download, resize, API call). It runs
+	// on the chat's queue before the card is sent, so it is also the most a
+	// card can be delayed. Default 8s; must be between 0 and 30s.
+	Timeout Duration `yaml:"timeout"`
 }
 
 // LLMProvider is one configured LLM backend for the borderline stage (§5.4).
@@ -725,6 +753,9 @@ func Parse(b []byte) (*Config, error) {
 			c.LLM.Providers[i].APIKey = v
 		}
 	}
+	if v := os.Getenv("JEV_TOKEN"); v != "" {
+		c.Detection.MediaShadow.APIKey = v
+	}
 	if v := os.Getenv("CAS_API_KEY"); v != "" {
 		c.Blocklist.CasAPIKey = v
 	}
@@ -752,6 +783,12 @@ func Parse(b []byte) (*Config, error) {
 // nil, so an explicit empty list ([]) is preserved rather than
 // re-defaulted (see Detection doc).
 func (c *Config) applyDetectionDefaults() {
+	if c.Detection.MediaShadow.Model == "" {
+		c.Detection.MediaShadow.Model = "jev-latest"
+	}
+	if c.Detection.MediaShadow.Timeout == 0 {
+		c.Detection.MediaShadow.Timeout = Duration(8 * time.Second)
+	}
 	if c.Detection.TrustThreshold == nil {
 		def := 5
 		c.Detection.TrustThreshold = &def
@@ -1041,6 +1078,14 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("detection.bayes_scope must be %s|%s, got %q",
 			BayesScopeGlobal, BayesScopePerChat, c.Detection.BayesScope)
+	}
+	if ms := c.Detection.MediaShadow; ms.Timeout < 0 || ms.Timeout.Duration() > 30*time.Second {
+		return fmt.Errorf("detection.media_shadow.timeout must be between 0 and 30s, got %s", ms.Timeout.Duration())
+	}
+	// The shadow only ever sees what the captionless-media stage raises, so
+	// enabling it without that stage is a configuration that does nothing.
+	if c.Detection.MediaShadow.Enabled && c.Detection.MediaCaptionMinLen <= 0 {
+		return fmt.Errorf("detection.media_shadow.enabled requires detection.media_caption_min_len > 0")
 	}
 	switch c.Detection.FakeAdminNameMatch {
 	case "", FakeAdminNameMatchReview, FakeAdminNameMatchSanction:

@@ -101,6 +101,10 @@ type Port interface {
 	DeclineJoinRequest(ctx context.Context, chat, user int64) error
 	DeleteEphemeral(ctx context.Context, chat, userID int64, ephemeralID int) error
 	CheckBotRights(ctx context.Context, chat int64) (BotRights, error)
+	// DownloadFile returns at most maxBytes of the file behind fileID
+	// (ErrFileTooLarge past that). It serves the optional media shadow only;
+	// moderation never depends on it, so it runs at low priority.
+	DownloadFile(ctx context.Context, fileID string, maxBytes int64) ([]byte, error)
 }
 
 // ErrEphemeralNotHonored means Telegram published the text (message_id set,
