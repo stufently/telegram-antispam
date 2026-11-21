@@ -908,11 +908,6 @@ func main() {
 		// unresolved admin list means we may not judge this sender at all).
 		if !ok && v.Reason != detect.ReasonAdminLookupUnavailable {
 			if rv, hit := cascade.ReviewCandidate(m); hit {
-				// The media shadow runs on a verdict that is already final
-				// (review only); it can add a label, never change the call.
-				if sig, labelled := mediaShadow.Label(workCtx, m, rv); labelled {
-					rv.Signals = append(rv.Signals, sig)
-				}
 				v, ok = rv, true
 			}
 		}
@@ -927,6 +922,13 @@ func main() {
 	}
 	handler.SetDecide(func(m domain.Message) (domain.Verdict, bool) { return decideWith(m, false) })
 	handler.SetEditedDecide(func(m domain.Message) (domain.Verdict, bool) { return decideWith(m, true) })
+	// The media shadow labels a verdict that is already final (review only)
+	// and runs after the handler's last gates; it never changes the call.
+	if mediaShadow != nil {
+		handler.SetLabel(func(ctx context.Context, m domain.Message, v domain.Verdict) domain.Verdict {
+			return withMediaLabel(ctx, mediaShadow, m, v)
+		})
+	}
 
 	// Moderator commands (/spam, /ham). They exist because the detector is
 	// not the only judge in the room: when it lets spam through, a human

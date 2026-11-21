@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 
 	"github.com/stufently/telegram-antispam/internal/config"
+	"github.com/stufently/telegram-antispam/internal/domain"
 	"github.com/stufently/telegram-antispam/internal/mediashadow"
 	"github.com/stufently/telegram-antispam/internal/ops"
 )
@@ -32,4 +34,14 @@ func newMediaShadow(cfg config.Detection, fetch mediashadow.Fetcher, reg *ops.Re
 			reg.IncCounter("tg_antispam_media_shadow_total", 1, "result", result)
 		},
 	}
+}
+
+// withMediaLabel returns v with the shadow's signal appended when it has one.
+// It copies the signal list rather than appending in place, and touches
+// nothing else: the label must not be able to change the call.
+func withMediaLabel(ctx context.Context, s *mediashadow.Shadow, m domain.Message, v domain.Verdict) domain.Verdict {
+	if sig, ok := s.Label(ctx, m, v); ok {
+		v.Signals = append(append([]domain.Signal(nil), v.Signals...), sig)
+	}
+	return v
 }

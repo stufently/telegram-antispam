@@ -130,7 +130,7 @@ func TestDetailRoundTripAndRejects(t *testing.T) {
 		t.Fatalf("round trip: %+v %v", got, ok)
 	}
 	for _, bad := range []string{"", "promo=0.9 contact=0.1", "promo=1.1 contact=0 ordinary=0",
-		"promo=x contact=0 ordinary=0", "promo=0.1 contact=0.1 ordinary", "promo=-0.1 contact=0 ordinary=0", "promo=0.1 promo=0.2 contact=0"} {
+		"promo=x contact=0 ordinary=0", "promo=0.1 contact=0.1 ordinary", "promo=-0.1 contact=0 ordinary=0", "promo=0.1 promo=0.2 contact=0 ordinary=0"} {
 		if _, ok := ParseDetail(bad); ok {
 			t.Fatalf("accepted %q", bad)
 		}

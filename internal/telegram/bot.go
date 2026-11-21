@@ -77,6 +77,11 @@ type Handler struct {
 	// which keeps pre-M3 behavior (and existing tests that only call
 	// SetDecide) working unchanged.
 	editedDecide func(domain.Message) (domain.Verdict, bool)
+	// label may add observation-only signals to a verdict that is already
+	// final (the media shadow). It runs after every gate that can still drop
+	// the incident — linked channel, disabled chat — so nothing is sent to
+	// an external labeller for a message that will never get a card.
+	label func(context.Context, domain.Message, domain.Verdict) domain.Verdict
 
 	// commands, when set, handles moderator commands typed in a moderated
 	// chat (/spam, /ham). It is an interface rather than a function so the
@@ -138,6 +143,13 @@ func (h *Handler) SetDecide(decide func(domain.Message) (domain.Verdict, bool)) 
 // OnEditedMessage falls back to the SetDecide hook.
 func (h *Handler) SetEditedDecide(decide func(domain.Message) (domain.Verdict, bool)) {
 	h.editedDecide = decide
+}
+
+// SetLabel wires the observation-only labeller (see Handler.label). It must
+// return the verdict with at most extra signals: action, reason and
+// ReviewOnly are decided before it runs.
+func (h *Handler) SetLabel(label func(context.Context, domain.Message, domain.Verdict) domain.Verdict) {
+	h.label = label
 }
 
 // SetContext sets the context used for work triggered off the AlbumBuffer's
@@ -477,6 +489,9 @@ func (h *Handler) process(ctx context.Context, parts []domain.Message, edited bo
 	// that are live.
 	if verdict.ReviewOnly {
 		dryRun = true
+	}
+	if h.label != nil {
+		verdict = h.label(ctx, judged, verdict)
 	}
 
 	ids := make([]int, len(parts))

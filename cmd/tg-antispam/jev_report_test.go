@@ -41,6 +41,18 @@ func TestJEVReportComparesScoresWithDecisions(t *testing.T) {
 	add(5, "promo=0.05 contact=0.93 ordinary=0.90", "enf")     // low, spam (missed by promo, caught by contact)
 	add(6, "promo=0.02 contact=0.01 ordinary=0.97", "lift")    // low, ham
 	add(7, "garbage", "enf")                                   // unparsable: skipped
+	// A review card enforced through /spam: the audit verdict is replaced,
+	// the claim released (decision ''), the row flipped to live and acted.
+	// It must still be reported, and as spam.
+	enforced, _, err := db.InsertPending(-100, 9, 7, 0, true, domain.Verdict{Action: domain.ActionQuarantine, Reason: "captionless_media",
+		Signals: []domain.Signal{{Name: "captionless_media"}, {Name: "jev_image", Detail: "promo=0.99 contact=0.99 ordinary=0.01"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.FinishManualOverride(enforced, domain.Verdict{Action: domain.ActionDeleteMute, Reason: "manual_spam",
+		Signals: []domain.Signal{{Name: "manual_spam"}}}, true); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := db.InsertPending(-100, 8, 7, 0, false, domain.Verdict{Action: domain.ActionQuarantine,
 		Signals: []domain.Signal{{Name: "captionless_media"}}}); err != nil {
 		t.Fatal(err)
@@ -53,8 +65,8 @@ func TestJEVReportComparesScoresWithDecisions(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{
-		"6 labelled photo card(s) in the last 14 day(s)",
-		"agreement (promo >= 0.90, decided): 2/3 = 67%",
+		"7 labelled photo card(s) in the last 14 day(s)",
+		"agreement (promo >= 0.90, decided): 3/4 = 75%",
 		"missed (promo < 0.30 but moderators said spam): 1 of 2 decided",
 	} {
 		if !strings.Contains(got, want) {
@@ -62,10 +74,10 @@ func TestJEVReportComparesScoresWithDecisions(t *testing.T) {
 		}
 	}
 	for bucket, counts := range map[string]string{
-		"promo >= 0.90":            "2  1  0  0",
+		"promo >= 0.90":            "3  1  0  0",
 		"0.30 <= promo < 0.90":     "0  0  1  0",
 		"promo < 0.30":             "1  1  0  0",
-		"promo or contact >= 0.90": "3  1  0  0",
+		"promo or contact >= 0.90": "4  1  0  0",
 	} {
 		if !containsRow(got, bucket, counts) {
 			t.Fatalf("bucket %q want %q in:\n%s", bucket, counts, got)
@@ -103,9 +115,27 @@ func TestJEVReportRejectsBadArguments(t *testing.T) {
 }
 
 func TestDecisionClass(t *testing.T) {
-	for in, want := range map[string]string{"confirm": "spam", "enf": "spam", "fp": "ham", "lift": "ham", "": "undecided", "delevi": "other"} {
+	for in, want := range map[string]string{"enforced": "spam", "confirm": "spam", "enf": "spam", "fp": "ham", "lift": "ham", "": "undecided", "delevi": "other"} {
 		if got := decisionClass(in); got != want {
 			t.Fatalf("%q -> %q, want %q", in, got, fmt.Sprint(want))
+		}
+	}
+}
+
+func TestEffectiveDecisionReadsAnAppliedSanction(t *testing.T) {
+	for _, tc := range []struct {
+		r    store.SignalIncident
+		want string
+	}{
+		{store.SignalIncident{State: "acted"}, "enforced"},
+		{store.SignalIncident{State: "cleaned"}, "enforced"},
+		{store.SignalIncident{State: "done"}, "enforced"},
+		{store.SignalIncident{State: "acted", DryRun: true}, ""},
+		{store.SignalIncident{State: "evidenced"}, ""},
+		{store.SignalIncident{State: "acted", Decision: "fp"}, "fp"},
+	} {
+		if got := effectiveDecision(tc.r); got != tc.want {
+			t.Fatalf("%+v -> %q, want %q", tc.r, got, tc.want)
 		}
 	}
 }

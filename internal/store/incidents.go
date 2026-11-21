@@ -213,12 +213,12 @@ WHERE id=? AND decision=''
 // probabilistic verdict it started as). When it did not land, only the claim
 // is released, leaving the incident eligible for another try.
 func (db *DB) FinishManualOverride(id int64, verdict domain.Verdict, sanctioned bool) error {
-	signals, err := json.Marshal(verdict.Signals)
-	if err != nil {
-		return err
-	}
 	return db.Write(func(tx *sql.Tx) error {
 		if sanctioned {
+			signals, err := withObservations(tx, id, verdict.Signals)
+			if err != nil {
+				return err
+			}
 			if _, err := tx.Exec(`
 UPDATE incidents SET dry_run=0,
   state=CASE WHEN state IN (?,?,?) THEN state ELSE ? END
@@ -237,4 +237,40 @@ WHERE id=?`,
 		_, err := tx.Exec("UPDATE incidents SET decision='' WHERE id=? AND decision=?", id, ManualOverrideClaim)
 		return err
 	})
+}
+
+// observationSignals name signals that record an observation rather than a
+// reason for the verdict (today: the media shadow's jev_image scores). A
+// moderator's verdict replaces the audit row's reasons, but an observation
+// already shown on the card stays: dropping it would silently remove the
+// incident from the shadow's evaluation exactly when a moderator acted on it.
+var observationSignals = map[string]bool{"jev_image": true}
+
+// withObservations returns the JSON for next plus every observation signal of
+// the incident's current audit row that next does not already carry.
+func withObservations(tx *sql.Tx, id int64, next []domain.Signal) (string, error) {
+	out := append([]domain.Signal(nil), next...)
+	var raw string
+	err := tx.QueryRow("SELECT signals FROM audit WHERE incident_id=? LIMIT 1", id).Scan(&raw)
+	if err != nil && err != sql.ErrNoRows {
+		return "", err
+	}
+	if raw != "" {
+		var prev []domain.Signal
+		if err := json.Unmarshal([]byte(raw), &prev); err != nil {
+			return "", err
+		}
+		have := map[string]bool{}
+		for _, s := range next {
+			have[s.Name] = true
+		}
+		for _, s := range prev {
+			if observationSignals[s.Name] && !have[s.Name] {
+				out = append(out, s)
+				have[s.Name] = true
+			}
+		}
+	}
+	b, err := json.Marshal(out)
+	return string(b), err
 }

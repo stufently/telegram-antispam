@@ -403,7 +403,10 @@ have been; `tg_antispam_media_shadow_total{result=ok|failed}` counts attempts.
 
 Enabling it sends members' **pictures** to TypeSafe, an external service, and
 TypeSafe calls image input "dreamer-ready" (format and accuracy may change between
-releases). The image is sent, never the file id, caption or sender.
+releases). The image is sent, never the file id, caption or sender. The shadow
+runs after the linked-channel and disabled-chat gates, so nothing leaves for a
+message that gets no card. An album is judged on one part, as everywhere else; when
+that part is not a photo, the card carries no label.
 
 `tg-antispam jev-report [-days 14] [-threshold 0.9]` prints every labelled card
 (incident, chat and message ids, the three scores, the moderators' decision) and

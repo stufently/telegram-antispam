@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image"
 	"image/color"
+	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"testing"
@@ -92,14 +93,18 @@ func TestPreparePadsWithWhiteAroundTheCentre(t *testing.T) {
 }
 
 func TestPrepareRejectsWhatJEVCannotTake(t *testing.T) {
-	var gif bytes.Buffer
-	gif.WriteString("GIF89a")
+	// A real GIF, with its decoder registered in this test binary: the
+	// format check has to reject it, not the missing decoder.
+	var gifBuf bytes.Buffer
+	if err := gif.Encode(&gifBuf, image.NewPaletted(image.Rect(0, 0, 300, 300), color.Palette{color.Black, color.White}), nil); err != nil {
+		t.Fatal(err)
+	}
 	huge := image.NewGray(image.Rect(0, 0, maxSourceSide+1, 1))
 	var big bytes.Buffer
 	if err := png.Encode(&big, huge); err != nil {
 		t.Fatal(err)
 	}
-	for name, data := range map[string][]byte{"text": []byte("not a picture"), "gif": gif.Bytes(), "too wide": big.Bytes(), "empty": nil} {
+	for name, data := range map[string][]byte{"text": []byte("not a picture"), "gif": gifBuf.Bytes(), "too wide": big.Bytes(), "empty": nil} {
 		if _, _, err := prepare(data); err == nil {
 			t.Fatalf("%s accepted", name)
 		}
@@ -120,5 +125,14 @@ func TestShrinkAveragesBlocks(t *testing.T) {
 	got := shrink(src, 2, 1).(*image.RGBA).RGBAAt(0, 0)
 	if got.R != 100 || got.A != 255 {
 		t.Fatalf("block average = %v, want R=100 A=255", got)
+	}
+}
+
+func TestPrepareKeepsAFittingPNGAsPNG(t *testing.T) {
+	var b bytes.Buffer
+	_ = png.Encode(&b, image.NewGray(image.Rect(0, 0, 300, 300)))
+	out, format, err := prepare(b.Bytes())
+	if err != nil || format != "png" || !bytes.Equal(out, b.Bytes()) {
+		t.Fatalf("format=%s err=%v", format, err)
 	}
 }

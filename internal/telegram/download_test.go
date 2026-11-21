@@ -60,3 +60,17 @@ func TestLargestPhotoFileIDComparesArea(t *testing.T) {
 		t.Fatalf("adapter: %q", got)
 	}
 }
+
+func TestDownloadClientDoesNotFollowRedirects(t *testing.T) {
+	other := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("redirect followed: the token-bearing URL would leak in Referer")
+	}))
+	defer other.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/x", http.StatusFound)
+	}))
+	defer srv.Close()
+	if _, err := fetchFile(context.Background(), downloadClient, srv.URL+"/file/botSECRET/x", 10); err == nil {
+		t.Fatal("redirect accepted as a download")
+	}
+}

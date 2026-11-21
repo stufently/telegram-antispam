@@ -27,7 +27,10 @@ func (p *LivePort) DownloadFile(ctx context.Context, fileID string, maxBytes int
 	fl, err := submitSync(ctx, p.disp, 0, p.prio("DownloadFile"), func(ctx context.Context) (fileLink, error) {
 		f, err := p.b.GetFile(ctx, &bot.GetFileParams{FileID: fileID})
 		if err != nil {
-			return fileLink{}, markRefused(mapRetry(err))
+			// Deliberately NOT mapRetry: a RetryAfter would park the shared
+			// dispatcher for retry_after, holding deletes, sanctions and cards
+			// in every chat for an optional label. A 429 here just fails.
+			return fileLink{}, markRefused(err)
 		}
 		return fileLink{url: p.b.FileDownloadLink(f), size: f.FileSize}, nil
 	})
@@ -37,7 +40,14 @@ func (p *LivePort) DownloadFile(ctx context.Context, fileID string, maxBytes int
 	if fl.size > maxBytes {
 		return nil, ErrFileTooLarge
 	}
-	return fetchFile(ctx, http.DefaultClient, fl.url, maxBytes)
+	return fetchFile(ctx, downloadClient, fl.url, maxBytes)
+}
+
+// downloadClient refuses redirects. Telegram's file server answers directly;
+// following a redirect would send the token-bearing URL to another host in
+// the Referer header.
+var downloadClient = &http.Client{
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 
 type fileLink struct {

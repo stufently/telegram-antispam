@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/stufently/telegram-antispam/internal/domain"
 	"github.com/stufently/telegram-antispam/internal/mediashadow"
 	"github.com/stufently/telegram-antispam/internal/store"
 )
@@ -56,12 +57,28 @@ func runJEVReport(args []string, out io.Writer, open func(string) (*store.DB, er
 	return nil
 }
 
+// effectiveDecision reads the moderators' answer off the incident row. A
+// successful Enforce press RELEASES its "enf" claim (so the undo buttons stay
+// usable) and leaves the decision column empty, as does a /spam takeover; what
+// remains is the row itself: a review card starts as dry-run, and only an
+// applied sanction flips it to live and acted.
+func effectiveDecision(r store.SignalIncident) string {
+	if r.Decision == "" && !r.DryRun {
+		switch domain.IncidentState(r.State) {
+		case domain.StateActed, domain.StateCleaned, domain.StateDone:
+			return "enforced"
+		}
+	}
+	return r.Decision
+}
+
 // decisionClass folds the admin-card decisions into what the shadow is
-// judged against. "enf" (enforce on a review card) and "confirm" say spam;
+// judged against. "enforced" (an applied sanction, see effectiveDecision),
+// "enf" (an enforce claim) and "confirm" say spam;
 // "fp" and "lift" say not spam; no decision yet is undecided.
 func decisionClass(decision string) string {
 	switch decision {
-	case "confirm", "enf":
+	case "enforced", "confirm", "enf":
 		return "spam"
 	case "fp", "lift":
 		return "ham"
@@ -103,8 +120,8 @@ func writeJEVReport(out io.Writer, rows []store.SignalIncident, days int, cut fl
 			continue
 		}
 		parsed++
-		class := decisionClass(r.Decision)
-		decision := r.Decision
+		decision := effectiveDecision(r)
+		class := decisionClass(decision)
 		if decision == "" {
 			decision = "-"
 		}

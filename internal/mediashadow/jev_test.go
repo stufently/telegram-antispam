@@ -66,13 +66,15 @@ func TestJEVFailuresAreErrorsWithoutTheKeyOrBody(t *testing.T) {
 		status int
 		body   string
 	}{
-		"400":            {400, `{"error":"Invalid image dimensions k-secret"}`},
-		"missing answer": {200, `{"answers":{"promo":{"type":"noul","noul":0.9},"contact":{"type":"noul","noul":0.1}}}`},
-		"wrong type":     {200, strings.Replace(okAnswers, `"ordinary":{"type":"noul"`, `"ordinary":{"type":"choice"`, 1)},
-		"out of range":   {200, strings.Replace(okAnswers, "0.97", "1.5", 1)},
-		"negative":       {200, strings.Replace(okAnswers, "0.03", "-0.01", 1)},
-		"null":           {200, strings.Replace(okAnswers, "0.88", "null", 1)},
-		"not json":       {200, `<html>k-secret</html>`},
+		"400":              {400, `{"error":"Invalid image dimensions k-secret"}`},
+		"404 with answers": {404, okAnswers},
+		"302 with answers": {302, okAnswers},
+		"missing answer":   {200, `{"answers":{"promo":{"type":"noul","noul":0.9},"contact":{"type":"noul","noul":0.1}}}`},
+		"wrong type":       {200, strings.Replace(okAnswers, `"ordinary":{"type":"noul"`, `"ordinary":{"type":"choice"`, 1)},
+		"out of range":     {200, strings.Replace(okAnswers, "0.97", "1.5", 1)},
+		"negative":         {200, strings.Replace(okAnswers, "0.03", "-0.01", 1)},
+		"null":             {200, strings.Replace(okAnswers, "0.88", "null", 1)},
+		"not json":         {200, `<html>k-secret</html>`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -119,5 +121,19 @@ func TestJEVHonoursTheDeadline(t *testing.T) {
 	}
 	if time.Since(start) > 2*time.Second {
 		t.Fatal("deadline ignored")
+	}
+}
+
+func TestJEVSendsTheFormatItIsGiven(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(raw), `"format":"png"`) {
+			t.Errorf("format not passed: %s", raw[:min(len(raw), 300)])
+		}
+		_, _ = io.WriteString(w, okAnswers)
+	}))
+	defer srv.Close()
+	if _, err := (JEV{APIKey: "k", Endpoint: srv.URL}).Classify(context.Background(), []byte("x"), "png"); err != nil {
+		t.Fatal(err)
 	}
 }

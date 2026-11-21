@@ -44,3 +44,33 @@ func TestIncidentsWithSignalMatchesTheSignalNameExactly(t *testing.T) {
 		t.Fatalf("wildcard matched: %+v %v", got, err)
 	}
 }
+
+func TestManualOverrideKeepsTheShadowObservation(t *testing.T) {
+	db := newMigrated(t)
+	defer db.Close()
+	id, _, err := db.InsertPending(-100, 20, 7, 0, true, domain.Verdict{Action: domain.ActionQuarantine, Reason: "captionless_media",
+		Signals: []domain.Signal{{Name: "captionless_media"}, {Name: "jev_image", Detail: "promo=0.90 contact=0.10 ordinary=0.10"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manual := domain.Verdict{Action: domain.ActionDeleteMute, Reason: "manual_spam", Signals: []domain.Signal{{Name: "manual_spam"}}}
+	if err := db.FinishManualOverride(id, manual, true); err != nil {
+		t.Fatal(err)
+	}
+	var raw, reason string
+	if err := db.Read().QueryRow("SELECT signals, reason FROM audit WHERE incident_id=?", id).Scan(&raw, &reason); err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"Name":"manual_spam","Detail":""},{"Name":"jev_image","Detail":"promo=0.90 contact=0.10 ordinary=0.10"}]`
+	if raw != want || reason != "manual_spam" {
+		t.Fatalf("audit = %s reason %s", raw, reason)
+	}
+	// Not sanctioned: the audit row is left alone entirely.
+	id2, _, _ := db.InsertPending(-100, 21, 7, 0, true, domain.Verdict{Reason: "captionless_media", Signals: []domain.Signal{{Name: "captionless_media"}}})
+	if err := db.FinishManualOverride(id2, manual, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Read().QueryRow("SELECT signals FROM audit WHERE incident_id=?", id2).Scan(&raw); err != nil || raw != `[{"Name":"captionless_media","Detail":""}]` {
+		t.Fatalf("unsanctioned audit = %s %v", raw, err)
+	}
+}
