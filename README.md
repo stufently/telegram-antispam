@@ -378,6 +378,38 @@ For Helm, set `llmSecret.name` and `llmSecret.jevKey` to reference a pre-existin
 Secret; the token is injected as `JEV_TOKEN`, never into the ConfigMap. Deploy an
 image built from this change when using these settings.
 
+### Captionless photos: JEV image shadow
+
+`detection.media_shadow` labels the review card of a captionless photo (the
+`media_caption_min_len` stage, which no text detector can read) with what JEV sees
+in the picture:
+
+```yaml
+detection:
+  media_caption_min_len: 20
+  media_shadow:
+    enabled: true          # key from JEV_TOKEN (or api_key)
+    timeout: 8s
+```
+
+The largest photo size is downloaded, shrunk or padded into JEV's 280–1568 px
+bounds and sent with three questions: advertising or earnings offer, a contact /
+link / QR code, and the paired control "ordinary picture". The card gets
+`JEV photo (shadow, no effect): ad 0.97 · contact 0.88 · ordinary 0.03`, and the
+same numbers are stored as the `jev_image` signal of the incident's audit row.
+It is a label only: the verdict stays review-only and nobody is sanctioned on it.
+Any failure (download, timeout, API refusal, no key) leaves the card as it would
+have been; `tg_antispam_media_shadow_total{result=ok|failed}` counts attempts.
+
+Enabling it sends members' **pictures** to TypeSafe, an external service, and
+TypeSafe calls image input "dreamer-ready" (format and accuracy may change between
+releases). The image is sent, never the file id, caption or sender.
+
+`tg-antispam jev-report [-days 14] [-threshold 0.9]` prints every labelled card
+(incident, chat and message ids, the three scores, the moderators' decision) and
+how the scores line up with the buttons: `enf`/`confirm` count as spam, `fp`/`lift`
+as not spam. It reads the database only and prints no message text.
+
 See [`config.example.yaml`](config.example.yaml) for every option with documented defaults.
 
 ## Architecture

@@ -122,6 +122,7 @@ func ToDomainMessage(m *models.Message) domain.Message {
 		StructuredTexts:    structuredTexts,
 		EditDate:           int64(m.EditDate),
 		MediaKinds:         mediaKinds,
+		PhotoFileID:        largestPhotoFileID(m.Photo),
 		DocumentExtensions: documentExtensions,
 		DocumentMIMETypes:  documentMIMETypes,
 		Forwarded:          forwarded,
@@ -368,6 +369,19 @@ func sanitizedMIMEType(mimeType string) string {
 		return ""
 	}
 	return mimeType
+}
+
+// largestPhotoFileID picks the biggest of the sizes Telegram offers for a
+// photo. Sizes are compared by area rather than by position: the list is
+// smallest-first in practice, but the Bot API does not promise an order.
+func largestPhotoFileID(sizes []models.PhotoSize) string {
+	best, bestArea := "", -1
+	for _, s := range sizes {
+		if a := s.Width * s.Height; s.FileID != "" && a > bestArea {
+			best, bestArea = s.FileID, a
+		}
+	}
+	return best
 }
 
 // collectMediaKinds lists the attachment types present on a message, using

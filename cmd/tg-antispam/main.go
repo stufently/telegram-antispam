@@ -99,8 +99,9 @@ func priorityFor(method string) queue.Priority {
 	switch method {
 	case "DeleteMessages", "BanMember", "UnbanMember", "RestrictMember", "UnrestrictMember", "BanSenderChat":
 		return queue.PrioHigh
-	case "SendWelcome":
-		// A join raid must not stand in front of deletes and admin cards.
+	case "SendWelcome", "DownloadFile":
+		// A join raid must not stand in front of deletes and admin cards,
+		// and neither must the media shadow, which decides nothing.
 		return queue.PrioLow
 	default:
 		return queue.PrioNormal
@@ -140,7 +141,7 @@ func chatScope(chatID int64) string { return fmt.Sprintf("chat:%d", chatID) }
 
 // knownSubcommands are the only arguments this binary accepts. The bot itself
 // takes none.
-var knownSubcommands = map[string]bool{"import": true, "backup": true, "decide": true}
+var knownSubcommands = map[string]bool{"import": true, "backup": true, "decide": true, "jev-report": true}
 
 // unknownSubcommand returns the offending argument when the command line is
 // not one this binary understands, and "" when it is. Falling through to the
@@ -266,6 +267,16 @@ func main() {
 		os.Exit(0)
 	}
 
+	// jev-report: the media shadow's scores against the moderators' buttons.
+	if len(os.Args) > 1 && os.Args[1] == "jev-report" {
+		if err := runJEVReport(os.Args[2:], os.Stdout, func(p string) (*store.DB, error) {
+			return store.Open(p)
+		}); err != nil {
+			log.Fatalf("jev-report: %v", err)
+		}
+		os.Exit(0)
+	}
+
 	// Anything else on the command line is a mistake, and falling through to
 	// the bot would be an expensive one: the binary would start a SECOND
 	// long-polling instance against the same token, Telegram would hand the
@@ -275,7 +286,7 @@ func main() {
 	// `kubectl exec ... -- /tg-antispam decide` against a binary that had no
 	// such subcommand yet.
 	if bad := unknownSubcommand(os.Args); bad != "" {
-		log.Fatalf("unknown subcommand %q (known: import, backup, decide); "+
+		log.Fatalf("unknown subcommand %q (known: import, backup, decide, jev-report); "+
 			"the bot itself takes no arguments", bad)
 	}
 
@@ -872,6 +883,7 @@ func main() {
 		CaptionMinLen:    cfg.Detection.MediaCaptionMinLen,
 		ReviewKeyboard:   cfg.Detection.ReviewKeyboard,
 	}
+	mediaShadow := newMediaShadow(cfg.Detection, livePort, reg)
 	// decideWith runs the pure cascade, then — for a non-actionable
 	// "bayes_borderline" result and only when the LLM stage is enabled —
 	// consults the LLM judge. A spam consensus upgrades the verdict to an
@@ -896,6 +908,11 @@ func main() {
 		// unresolved admin list means we may not judge this sender at all).
 		if !ok && v.Reason != detect.ReasonAdminLookupUnavailable {
 			if rv, hit := cascade.ReviewCandidate(m); hit {
+				// The media shadow runs on a verdict that is already final
+				// (review only); it can add a label, never change the call.
+				if sig, labelled := mediaShadow.Label(workCtx, m, rv); labelled {
+					rv.Signals = append(rv.Signals, sig)
+				}
 				v, ok = rv, true
 			}
 		}

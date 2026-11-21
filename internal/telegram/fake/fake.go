@@ -25,6 +25,10 @@ type Fake struct {
 	// SendAdminErr fails the admin-chat card, which ends the incident before
 	// any sanction: tests use it to cover that terminal branch.
 	SendAdminErr error
+	// File and FileErr answer DownloadFile; LastDownload records its id.
+	File         []byte
+	FileErr      error
+	LastDownload string
 	SendAdminID  int
 	Admins       []telegram.Member
 	AdminsErr    error
@@ -345,4 +349,15 @@ func (f *Fake) DeleteEphemeral(_ context.Context, chat, userID int64, ephemeralI
 func (f *Fake) CheckBotRights(_ context.Context, _ int64) (telegram.BotRights, error) {
 	f.log("CheckBotRights")
 	return f.Rights, f.RightsErr
+}
+
+func (f *Fake) DownloadFile(_ context.Context, fileID string, _ int64) ([]byte, error) {
+	f.log("DownloadFile")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.LastDownload = fileID
+	if f.FileErr != nil {
+		return nil, f.FileErr
+	}
+	return append([]byte(nil), f.File...), nil
 }
