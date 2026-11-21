@@ -8,6 +8,8 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-21
+
 ### Added
 
 - `detection.media_shadow` (off by default): the review card of a captionless
