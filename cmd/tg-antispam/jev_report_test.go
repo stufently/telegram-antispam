@@ -37,7 +37,7 @@ func TestJEVReportComparesScoresWithDecisions(t *testing.T) {
 	add(1, "promo=0.97 contact=0.95 ordinary=0.02", "enf")     // high, spam
 	add(2, "promo=0.95 contact=0.10 ordinary=0.10", "confirm") // high, spam
 	add(3, "promo=0.92 contact=0.20 ordinary=0.30", "fp")      // high, ham
-	add(4, "promo=0.50 contact=0.10 ordinary=0.50", "")        // mid, undecided
+	add(4, "promo=0.30 contact=0.10 ordinary=0.50", "")        // mid (boundary), undecided
 	add(5, "promo=0.05 contact=0.93 ordinary=0.90", "enf")     // low, spam (missed by promo, caught by contact)
 	add(6, "promo=0.02 contact=0.01 ordinary=0.97", "lift")    // low, ham
 	add(7, "garbage", "enf")                                   // unparsable: skipped

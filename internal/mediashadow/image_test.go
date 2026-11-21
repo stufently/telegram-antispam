@@ -52,6 +52,7 @@ func TestPrepareResizesIntoJEVBounds(t *testing.T) {
 		{100, 50, 280, 280},    // pad both sides
 		{3000, 100, 1568, 280}, // shrink the long side, pad the short one
 		{279, 1000, 280, 1000}, // pad one side only
+		{1000, 279, 1000, 280}, // the other side
 		{2000, 200, 1568, 280}, // 200 -> 156 after shrinking, then padded
 	} {
 		out, format, err := prepare(jpegOf(t, tc.w, tc.h))

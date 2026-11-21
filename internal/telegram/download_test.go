@@ -27,7 +27,7 @@ func TestFetchFileReadsUpToTheLimit(t *testing.T) {
 	if _, err := fetchFile(context.Background(), srv.Client(), srv.URL+"/f", 9); !errors.Is(err, ErrFileTooLarge) {
 		t.Fatalf("over limit: %v", err)
 	}
-	if _, err := fetchFile(context.Background(), srv.Client(), srv.URL+"/missing", 10); err == nil {
+	if _, err := fetchFile(context.Background(), srv.Client(), srv.URL+"/missing", 1000); err == nil {
 		t.Fatal("404 accepted")
 	}
 }
