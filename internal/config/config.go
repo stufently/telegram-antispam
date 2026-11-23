@@ -542,12 +542,14 @@ type LLM struct {
 	// harmful with reasoning models, which spend the budget thinking and
 	// then return an empty answer — which the stage reads as "not spam".
 	MaxTokens int `yaml:"max_tokens"`
-	// ReasoningEffort is sent to OpenAI providers as reasoning_effort, and
-	// only when set (umputun/tg-spam #467). Empty or "none" ⇒ the key is
-	// omitted: models without reasoning support (gpt-4o-mini) reject it.
-	// "low" / "medium" / "high" go out verbatim; "off" sends the API's
+	// ReasoningEffort is sent to OpenAI providers as reasoning_effort
+	// (umputun/tg-spam #467). Unset ⇒ "medium" for reasoning models
+	// (o1/o3/o4, gpt-5, gpt-6; not their -chat/search variants) when
+	// temperature is unset, and no key otherwise: models without reasoning
+	// support (gpt-4o-mini) reject it. "none" always omits the
+	// key; "low" / "medium" / "high" go out verbatim; "off" sends the API's
 	// "none", which disables thinking on models that accept it. Other
-	// providers ignore it. Default: unset.
+	// providers ignore it.
 	ReasoningEffort string `yaml:"reasoning_effort"`
 }
 

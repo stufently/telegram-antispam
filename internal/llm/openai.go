@@ -27,10 +27,12 @@ type OpenAI struct {
 	// which then return an empty answer that classifyReply reads as HAM —
 	// a silently disabled spam check rather than a visible error.
 	MaxTokens int
-	// ReasoningEffort is sent as reasoning_effort only when it is not empty
-	// and not "none": models without reasoning support reject the key, so
-	// sending it by default would fail every call (and fail-open would hide
-	// that). "off" sends the API's "none" to disable thinking.
+	// ReasoningEffort is sent as reasoning_effort. Empty means the default:
+	// "medium" for reasoning models (defaultEffortModel) when Temperature is
+	// unset, nothing otherwise —
+	// models without reasoning support reject the key, so sending it to them
+	// would fail every call (and fail-open would hide that). "none" always
+	// omits the key; "off" sends the API's "none" to disable thinking.
 	ReasoningEffort string
 }
 
@@ -62,7 +64,14 @@ func (o OpenAI) Classify(ctx context.Context, text, prompt string) (bool, error)
 		}
 	}
 	switch o.ReasoningEffort {
-	case "", "none":
+	case "":
+		// An explicit temperature means the operator runs the model without
+		// thinking (gpt-5.x accept temperature only with reasoning off), so
+		// adding the default there would turn a working config into a 400.
+		if o.Temperature == nil && defaultEffortModel(o.Model) {
+			payload["reasoning_effort"] = defaultReasoningEffort
+		}
+	case "none":
 	case "off":
 		payload["reasoning_effort"] = "none"
 	default:
@@ -111,6 +120,18 @@ func (o OpenAI) httpClient() *http.Client {
 // reasoningModel reports whether model is an OpenAI reasoning model, which
 // takes max_completion_tokens instead of max_tokens (the same test as
 // umputun/tg-spam #467).
+// defaultReasoningEffort is sent to reasoning models when
+// llm.reasoning_effort is unset.
+const defaultReasoningEffort = "medium"
+
+// defaultEffortModel narrows reasoningModel for the unset default: the
+// gpt-5 "-chat" and search variants are matched by it but reject
+// reasoning_effort, and an unrequested key must never cost a working call.
+func defaultEffortModel(model string) bool {
+	m := strings.ToLower(model)
+	return reasoningModel(m) && !strings.Contains(m, "chat") && !strings.Contains(m, "search")
+}
+
 func reasoningModel(model string) bool {
 	m := strings.ToLower(model)
 	return strings.HasPrefix(m, "o1") || strings.HasPrefix(m, "o3") || strings.HasPrefix(m, "o4") ||

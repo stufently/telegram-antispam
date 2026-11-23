@@ -120,10 +120,11 @@ func TestOpenAIClassifyOmitsTuningParamsByDefault(t *testing.T) {
 	}
 }
 
-// reasoning_effort is opt-in: "" and "none" omit the key (non-reasoning
-// models reject it), "off" sends the API's "none", the rest go out as is.
+// On a reasoning model "" sends the default "medium", "none" omits the key,
+// "off" sends the API's "none", the rest go out as is. (Non-reasoning models
+// get no key when unset — TestOpenAIClassify covers that with gpt-4o-mini.)
 func TestOpenAIReasoningEffort(t *testing.T) {
-	cases := map[string]string{"": "", "none": "", "off": "none", "low": "low", "medium": "medium", "high": "high"}
+	cases := map[string]string{"": "medium", "none": "", "off": "none", "low": "low", "medium": "medium", "high": "high"}
 	for effort, want := range cases {
 		t.Run("effort="+effort, func(t *testing.T) {
 			var body map[string]any
@@ -145,6 +146,35 @@ func TestOpenAIReasoningEffort(t *testing.T) {
 			}
 			if got != want {
 				t.Errorf("reasoning_effort = %v (present=%v), want %q", got, ok, want)
+			}
+		})
+	}
+}
+
+// The unset default must not reach models that reject reasoning_effort, nor
+// a config with an explicit temperature (gpt-5.x take it only with
+// reasoning off): either would turn a working setup into a 400 per call.
+func TestOpenAIReasoningEffortDefaultSkipped(t *testing.T) {
+	temp := 0.0
+	cases := map[string]OpenAI{
+		"gpt-5-chat-latest":      {Model: "gpt-5-chat-latest"},
+		"gpt-5-search-api":       {Model: "gpt-5-search-api"},
+		"temperature+gpt-6-luna": {Model: "gpt-6-luna", Temperature: &temp},
+	}
+	for name, p := range cases {
+		t.Run(name, func(t *testing.T) {
+			var body map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"HAM"}}]}`))
+			}))
+			defer srv.Close()
+			p.APIKey, p.BaseURL, p.Client = "sk-test", srv.URL, srv.Client()
+			if _, err := p.Classify(context.Background(), "hi", ""); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := body["reasoning_effort"]; ok {
+				t.Errorf("reasoning_effort = %v, want the key omitted", got)
 			}
 		})
 	}

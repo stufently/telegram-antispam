@@ -8,6 +8,14 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+### Changed
+
+- `llm.reasoning_effort` unset now sends `medium` to OpenAI reasoning models
+  (o1/o3/o4, gpt-5, gpt-6) instead of omitting the key, so they no longer run
+  on the API's own default. Not sent when `llm.temperature` is set, nor to
+  other models or the gpt-5 `-chat`/search variants (they reject it). Set
+  `none` to keep the old behaviour of omitting it.
+
 ## [0.25.0] - 2026-11-21
 
 ### Added

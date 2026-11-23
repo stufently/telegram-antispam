@@ -272,11 +272,13 @@ chat; a later press answers "already decided: confirmed spam".
 ## Enable the optional LLM stage
 
 Opt-in only — it sends borderline message text to a paid, official API. The system prompt is
-configurable (`llm.prompt`) and `temperature` / `max_tokens` / `reasoning_effort` (OpenAI only:
-`low`/`medium`/`high`, or `off` to disable thinking) are sent only when you set them,
+configurable (`llm.prompt`) and `temperature` / `max_tokens` are sent only when you set them,
 because reasoning models reject an explicit temperature and spend a small token budget on
-hidden reasoning — returning an empty answer this stage would read as "not spam". In
-`config.yaml`:
+hidden reasoning — returning an empty answer this stage would read as "not spam".
+`reasoning_effort` (OpenAI only: `low`/`medium`/`high`, `off` to disable thinking, `none` to
+omit the key) defaults to `medium` for reasoning models (o1/o3/o4, gpt-5, gpt-6) when
+`temperature` is unset; otherwise the unset key is not sent. Set it explicitly only for
+reasoning models — others (gpt-4o-mini) reject it. In `config.yaml`:
 
 ```yaml
 llm:
