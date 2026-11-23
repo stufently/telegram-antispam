@@ -8,6 +8,8 @@ Entries start life under **Unreleased** and are moved under a version heading wh
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-11-23
+
 ### Changed
 
 - `llm.reasoning_effort` unset now sends `medium` to OpenAI reasoning models
